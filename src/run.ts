@@ -2,44 +2,56 @@
 //
 // 用法（在仓库根）：
 //   TSC_COMPA_CORPUS=/path/to/typescript/tests/cases \
-//   TSC_BIN=/path/to/tsc \
-//   MAAT_ZIG_BIN=/path/to/maat-zig \
-//   bun src/run.ts --adapter maat-zig --mode fixed --cases config/smoke-cases.json
+//   bun src/run.ts --baseline 6.0.3 --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
 //
-// 运行结果写 <out>/metrics.json 与 <out>/details.json，并在 stdout 打印摘要。
+//   # 或显式指定 tsc 与期望参数（不读 config/baselines.json）
+//   TSC_BIN=/path/to/tsc bun src/run.ts --adapter maat-zig --mode fixed --cases config/smoke-cases.json
+//
+// 运行结果写 <out>/metrics.json 与 <details.json>，并在 stdout 打印摘要。
 // v0 没有门禁（--gate 留给后续接入基线）；退出码恒 0，除非运行本身失败。
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createAdapter } from "./adapters/index.ts";
 import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, type RunMeta } from "./compare.ts";
+import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "./baselines.ts";
+import { classifyCase, exclusionOf, parseTagList, runtimeTags } from "./classify.ts";
 import { loadManifest, readCase } from "./discover.ts";
 import { expectationOf, resolveTscPath, shortCaseName, tscVersionOf } from "./tsc.ts";
 import { toTscArgs } from "./case.ts";
 import type { Adapter } from "./types.ts";
 
+const DEFAULT_BASE_ARGS = ["--noEmit", "--ignoreConfig", "--pretty", "false"];
+
 interface Args {
   corpus?: string;
-  cases: string;
+  cases?: string;
   tsc?: string;
   adapter: string;
   mode: "official" | "fixed";
   out: string;
   limit?: number;
   verbose: boolean;
+  baseline?: string;
+  excludeClasses: string[];
+  onlyClasses: string[];
+  /** 追加到基础参数上的覆盖项（--base-arg name=value），两侧与期望都用。 */
+  baseArgsExtra: string[];
 }
-
-const TSC_BASE_ARGS = ["--noEmit", "--ignoreConfig", "--pretty", "false"];
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     corpus: process.env.TSC_COMPA_CORPUS,
-    cases: "config/smoke-cases.json",
+    cases: undefined,
     tsc: process.env.TSC_BIN,
     adapter: process.env.TSC_COMPA_ADAPTER ?? "maat-zig",
     mode: "official",
     out: ".cache/run",
     verbose: false,
+    baseline: process.env.TSC_COMPA_BASELINE,
+    excludeClasses: [],
+    onlyClasses: [],
+    baseArgsExtra: [],
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -57,6 +69,22 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--tsc":
         args.tsc = next();
+        break;
+      case "--baseline":
+        args.baseline = next();
+        break;
+      case "--base-arg": {
+        const value = next();
+        const eq = value.indexOf("=");
+        if (eq <= 0) throw new Error(`--base-arg 需要 name=value，收到 ${value}`);
+        args.baseArgsExtra.push(`--${value.slice(0, eq)}`, value.slice(eq + 1));
+        break;
+      }
+      case "--exclude-class":
+        args.excludeClasses = parseTagList(next(), "--exclude-class");
+        break;
+      case "--only-class":
+        args.onlyClasses = parseTagList(next(), "--only-class");
         break;
       case "--adapter":
         args.adapter = next();
@@ -79,7 +107,12 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--help":
       case "-h":
-        console.log("用法：bun src/run.ts [--corpus <tests/cases>] [--cases <manifest>] [--tsc <bin>] [--adapter <name>] [--mode official|fixed] [--out <dir>] [--limit N] [--verbose]");
+        console.log(
+          "用法：bun src/run.ts [--corpus <tests/cases>] [--baseline <id>] [--cases <manifest>] [--tsc <bin>] " +
+            "[--adapter <name>] [--mode official|fixed] [--base-arg name=value]... [--exclude-class <tags>] [--only-class <tags>] " +
+            "[--out <dir>] [--limit N] [--verbose]",
+        );
+        console.log("基线见 config/baselines.json；标签见 src/classify.ts 的 CASE_TAGS。");
         process.exit(0);
       default:
         throw new Error(`未知参数 ${arg}`);
@@ -93,8 +126,18 @@ function parseArgs(argv: string[]): Args {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const tscBin = resolveTscPath(args.tsc);
+
+  // 基线是 (tsc, baseArgs, 语料 tag, manifest) 的具名组合；不给 --baseline 时
+  // 保持旧行为：--tsc / TSC_BIN 指定期望源，基础参数用 6.0 口径。
+  const config = args.baseline !== undefined ? loadBaselines() : null;
+  const baseline = config !== null ? findBaseline(config, args.baseline!) : null;
+  const baseArgs = [...(baseline?.baseArgs ?? DEFAULT_BASE_ARGS), ...args.baseArgsExtra];
+  const tscBin = resolveTscPath(args.tsc ?? (baseline !== null ? resolveBaselineTsc(baseline) : undefined));
   const tscVersion = tscVersionOf(tscBin);
+  const corpusRef = config !== null && baseline !== null ? corpusRefOf(config, baseline) : undefined;
+  const casesPath =
+    args.cases ?? (baseline !== null ? join(REPO_ROOT, baseline.manifest) : join(REPO_ROOT, "config/smoke-cases.json"));
+
   const adapter: Adapter = await createAdapter(args.adapter);
   await adapter.init?.();
 
@@ -107,29 +150,45 @@ async function main(): Promise<void> {
     );
   }
 
-  const ids = loadManifest(args.cases).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
+  const ids = loadManifest(casesPath).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
   const records: CaseRecord[] = [];
   let optionDirectiveIgnored = 0;
+  let excludedStatic = 0;
+  let excludedRuntime = 0;
 
   for (const id of ids) {
     const parsed = readCase(args.corpus, id);
+    const staticTags = classifyCase(id, parsed);
     if (parsed.skip !== null) {
-      records.push(skipRecord(id, parsed.skip));
+      records.push(skipRecord(id, parsed.skip, staticTags));
       continue;
     }
     if (parsed.unknown.length > 0) {
-      records.push(skipRecord(id, `未知指令 ${parsed.unknown[0]}`));
+      records.push(skipRecord(id, `未知指令 ${parsed.unknown[0]}`, staticTags));
+      continue;
+    }
+    const staticExclusion = exclusionOf(staticTags, args.excludeClasses, args.onlyClasses);
+    if (staticExclusion !== null) {
+      excludedStatic++;
+      records.push(skipRecord(id, `类排除:${staticExclusion}`, staticTags));
       continue;
     }
     const options = args.mode === "fixed" ? adapter.fixedOptions! : parsed.options;
     if (args.mode === "fixed" && parsed.options.length > 0) optionDirectiveIgnored++;
-    const tscArgs = toTscArgs(options, TSC_BASE_ARGS);
+    const tscArgs = toTscArgs(options, baseArgs);
     const expectation = expectationOf(id, parsed.files, options, {
       tscBin,
       tscVersion,
       args: tscArgs,
       cacheDir: join(".cache", "expectations"),
     });
+    const tags = [...staticTags, ...runtimeTags(expectation)];
+    const runtimeExclusion = exclusionOf(tags, args.excludeClasses, args.onlyClasses);
+    if (runtimeExclusion !== null) {
+      excludedRuntime++;
+      records.push(skipRecord(id, `类排除:${runtimeExclusion}`, tags));
+      continue;
+    }
     if (expectation.status !== "ok") {
       const reason =
         expectation.status === "syntax"
@@ -137,23 +196,22 @@ async function main(): Promise<void> {
           : expectation.status === "timeout"
             ? "tsc 侧超时"
             : "tsc 侧异常";
-      records.push(skipRecord(id, reason));
+      records.push(skipRecord(id, reason, tags));
       continue;
     }
     const outcome = await adapter.check({ id, files: parsed.files, options, args: tscArgs });
     if (outcome.status !== "ok") {
-      records.push(skipRecord(id, outcome.skipReason ?? `实现返回 ${outcome.status}`));
+      records.push(skipRecord(id, outcome.skipReason ?? `实现返回 ${outcome.status}`, tags));
       continue;
     }
+    const record = compareCase(id, expectation.diagnostics, outcome.diagnostics, tags);
     if (args.verbose) {
-      const record = compareCase(id, expectation.diagnostics, outcome.diagnostics);
       console.log(
-        `${shortCaseName(id)}: expect=${record.expected.length} actual=${record.actual.length} fp=${record.fp.length} miss=${record.missed.length}`,
+        `${shortCaseName(id)}: [${tags.join(" ")}] expect=${record.expected.length} actual=${record.actual.length} ` +
+          `fp=${record.fp.length} miss=${record.missed.length} misanchor=${record.misanchor}`,
       );
-      records.push(record);
-    } else {
-      records.push(compareCase(id, expectation.diagnostics, outcome.diagnostics));
     }
+    records.push(record);
   }
   await adapter.close?.();
 
@@ -165,12 +223,17 @@ async function main(): Promise<void> {
     verdictEligible: args.mode === "official" && adapter.supportsOptions,
     tscVersion,
     tscBin,
+    baseline: args.baseline,
+    corpusRef,
     generatedAt: new Date().toISOString(),
     selectedCases: ids.length,
   };
   const metrics = summarize(records, meta);
   if (args.mode === "fixed") {
     console.warn(`提示：--mode fixed 下共忽略 ${optionDirectiveIgnored} 个用例的编译选项指令；结果只用于验证流水线。`);
+  }
+  if (excludedStatic + excludedRuntime > 0) {
+    console.log(`类排除：静态 ${excludedStatic} 例、运行期 ${excludedRuntime} 例（--exclude-class / --only-class）`);
   }
 
   mkdirSync(args.out, { recursive: true });
@@ -182,6 +245,7 @@ async function main(): Promise<void> {
         id: r.id,
         status: r.status,
         skipReason: r.skipReason,
+        classes: r.classes,
         expected: r.expected.length,
         actual: r.actual.length,
         hits: r.hits,
