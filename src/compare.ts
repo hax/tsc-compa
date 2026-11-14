@@ -15,6 +15,22 @@
 
 import type { Diagnostic } from "./types.ts";
 
+/**
+ * 与官方基线的四级一致性（对齐 reference/tsc-rs 的 Agreement 枚举）：
+ * - location（T0）：file / line / col / code 多重集相同，不看文案与 category；
+ * - category（T1）：+ severity（error/warning）；
+ * - text（T2）：+ 首行 message 完全相同；
+ * - full（T3）：整份 `.errors.txt` 字节相等（含 elaboration、related 与顺序）。
+ *
+ * 无官方基线文件（官方只在有诊断时写基线）时：两侧都为空记 full（无期望错误
+ * 且实现沉默）；否则最多到 text。
+ */
+export type Tier = "none" | "location" | "category" | "text" | "full";
+
+export const TIER_RANK: Record<Tier, number> = { none: 0, location: 1, category: 2, text: 3, full: 4 };
+
+export const TIERS: readonly Tier[] = ["none", "location", "category", "text", "full"];
+
 export interface CaseRecord {
   id: string;
   status: "ran" | "skip";
@@ -30,14 +46,64 @@ export interface CaseRecord {
   hits: number;
   /** 同文件同码、位置不同：成对计数，既不算 fp 也不算 miss。 */
   misanchor: number;
+  /** 与官方基线的四级一致性（T0~T3）；非 official-baseline 期望源时用「实际诊断 vs 期望诊断」同样计算。 */
+  tier: Tier;
 }
 
 const isError = (d: Diagnostic): boolean => d.severity === "error";
 
+const fmtDiagLine = (d: Diagnostic): string =>
+  `${d.file}(${d.line + 1},${d.col + 1}): ${d.severity} TS${d.code}: ${d.message ?? ""}`;
+
+/** 把实现返回的诊断渲染成官方 `.errors.txt` 摘要块的形态（T3 用）。 */
+export function renderErrorBlock(diagnostics: Diagnostic[]): string {
+  return diagnostics.map(fmtDiagLine).join("\n");
+}
+
+const normalizeBlock = (text: string): string =>
+  text
+    .split(/\r\n|\r|\n/)
+    .filter((line) => !line.startsWith("===="))
+    .join("\n")
+    .replace(/\n+$/, "");
+
+const sortedKey = (items: Diagnostic[], include: (d: Diagnostic) => string): string[] =>
+  items.map(include).sort((a, b) => a.localeCompare(b));
+
+/**
+ * 计算期望（官方基线或 tsc 现场生成）与实际诊断的四级一致性。
+ *
+ * @param expectedText 官方基线原文（缺失时为 null）；只在 T3 评估中使用。
+ */
+export function tierOf(
+  expected: Diagnostic[],
+  actual: Diagnostic[],
+  expectedText: string | null = null,
+): Tier {
+  const exp = expected;
+  const act = actual;
+  const loc = (d: Diagnostic): string => `${d.file}\u0000${d.line}\u0000${d.col}\u0000${d.code}`;
+  if (sortedKey(exp, loc).join("\n") !== sortedKey(act, loc).join("\n")) return "none";
+  const cat = (d: Diagnostic): string => `${loc(d)}\u0000${d.severity}`;
+  if (sortedKey(exp, cat).join("\n") !== sortedKey(act, cat).join("\n")) return "location";
+  const full = (d: Diagnostic): string => `${cat(d)}\u0000${d.message ?? ""}`;
+  if (sortedKey(exp, full).join("\n") !== sortedKey(act, full).join("\n")) return "category";
+  // T3：整份基线字节相等（行尾归一后）；没有基线文件时，两侧都空即视为 full。
+  if (expectedText === null) return exp.length === 0 && act.length === 0 ? "full" : "text";
+  if (normalizeBlock(expectedText) === normalizeBlock(renderErrorBlock(act))) return "full";
+  return "text";
+}
+
 const bucketKey = (d: Diagnostic): string => `${d.file}\u0000${d.code}`;
 const spotKey = (d: Diagnostic): string => `${d.line}:${d.col}`;
 
-export function compareCase(id: string, expected: Diagnostic[], actual: Diagnostic[], classes: string[] = []): CaseRecord {
+export function compareCase(
+  id: string,
+  expected: Diagnostic[],
+  actual: Diagnostic[],
+  classes: string[] = [],
+  baselineText: string | null = null,
+): CaseRecord {
   const exp = expected.filter(isError);
   const act = actual.filter(isError);
 
@@ -84,11 +150,34 @@ export function compareCase(id: string, expected: Diagnostic[], actual: Diagnost
     missed.push(...restExp.slice(pairs));
   }
 
-  return { id, status: "ran", classes, expected: exp, actual: act, fp, missed, hits, misanchor };
+  return {
+    id,
+    status: "ran",
+    classes,
+    expected: exp,
+    actual: act,
+    fp,
+    missed,
+    hits,
+    misanchor,
+    tier: tierOf(expected, actual, baselineText),
+  };
 }
 
 export function skipRecord(id: string, reason: string, classes: string[] = []): CaseRecord {
-  return { id, status: "skip", skipReason: reason, classes, expected: [], actual: [], fp: [], missed: [], hits: 0, misanchor: 0 };
+  return {
+    id,
+    status: "skip",
+    skipReason: reason,
+    classes,
+    expected: [],
+    actual: [],
+    fp: [],
+    missed: [],
+    hits: 0,
+    misanchor: 0,
+    tier: "none",
+  };
 }
 
 export interface RunMeta {
@@ -108,6 +197,13 @@ export interface RunMeta {
   expectationSource?: "tsc" | "official-baseline";
   generatedAt: string;
   selectedCases: number;
+  /** 设置了 --ratchet 时的对比结果。 */
+  ratchet?: {
+    path: string;
+    regressions: number;
+    improvements: number;
+    wrote: boolean;
+  };
 }
 
 export interface ClassTotals {
@@ -142,14 +238,18 @@ export interface Metrics {
     expectTotal: number;
     hitTotal: number;
     missTotal: number;
+    /** 位置命中但首行文案不同的诊断条数（T0 与 T2 的差）。 */
+    messageMismatch: number;
     /** hit / expect；无期望诊断时记 null。 */
     coverage: number | null;
+    /** 与官方基线的四级一致性分布（只统计跑完的用例）。 */
+    byTier: Record<Tier, number>;
   };
   /** 按标签聚合；标签正交，数字不可相加。 */
   byClass: Record<string, ClassTotals>;
   byCode: { fp: [string, number][]; miss: [string, number][] };
   skips: [string, number][];
-  samples: { fp: string[]; miss: string[] };
+  samples: { fp: string[]; miss: string[]; textDiff: string[]; messageDiff: string[] };
 }
 
 const fmtDiag = (id: string, d: Diagnostic): string => `${id} ${d.file}:${d.line + 1}:${d.col + 1} TS${d.code}`;
@@ -189,7 +289,29 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
   const skips = new Map<string, number>();
   const fpSamples: string[] = [];
   const missSamples: string[] = [];
+  const textDiffSamples: string[] = [];
+  const messageDiffSamples: string[] = [];
+  let messageMismatch = 0;
+  const byTier: Record<Tier, number> = { none: 0, location: 0, category: 0, text: 0, full: 0 };
   const classAcc = new Map<string, ClassAcc>();
+
+  /** T2 未达（T0/T1 已达、文案不同）的样例，供「文案对齐待办」用。 */
+  const textDiffSample = (r: CaseRecord): string | null => {
+    if (r.tier !== "category") return null;
+    const actualByKey = new Map<string, Diagnostic>();
+    for (const d of r.actual) {
+      const key = `${d.file}\u0000${d.line}\u0000${d.col}\u0000${d.code}`;
+      if (!actualByKey.has(key)) actualByKey.set(key, d);
+    }
+    const trunc = (s: string | undefined): string => (s ?? "(无)").slice(0, 100);
+    for (const d of r.expected) {
+      const actual = actualByKey.get(`${d.file}\u0000${d.line}\u0000${d.col}\u0000${d.code}`);
+      if (actual !== undefined && (actual.message ?? "") !== (d.message ?? "")) {
+        return `${r.id} ${d.file}:${d.line + 1}:${d.col + 1} TS${d.code} expected="${trunc(d.message)}" actual="${trunc(actual.message)}"`;
+      }
+    }
+    return `${r.id}（诊断位置一致但文案不同）`;
+  };
 
   for (const r of records) {
     for (const tag of r.classes) {
@@ -234,6 +356,31 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
     hitTotal += r.hits;
     missTotal += r.missed.length;
     misanchorTotal += r.misanchor;
+    byTier[r.tier]++;
+    // 诊断级「文案差」：位置（file/line/col/code）命中但首行 message 不同。
+    {
+      const actualByKey = new Map<string, Diagnostic>();
+      for (const d of r.actual) {
+        const key = `${d.file}\u0000${d.line}\u0000${d.col}\u0000${d.code}`;
+        if (!actualByKey.has(key)) actualByKey.set(key, d);
+      }
+      for (const d of r.expected) {
+        const actual = actualByKey.get(`${d.file}\u0000${d.line}\u0000${d.col}\u0000${d.code}`);
+        if (actual === undefined) continue;
+        if ((actual.message ?? "") === (d.message ?? "")) continue;
+        messageMismatch++;
+        if (messageDiffSamples.length < 40) {
+          const trunc = (x: string | undefined): string => (x ?? "(无)").slice(0, 100);
+          messageDiffSamples.push(
+            `${r.id} ${d.file}:${d.line + 1}:${d.col + 1} TS${d.code} expected="${trunc(d.message)}" actual="${trunc(actual.message)}"`,
+          );
+        }
+      }
+    }
+    if (textDiffSamples.length < 40) {
+      const sample = textDiffSample(r);
+      if (sample !== null) textDiffSamples.push(sample);
+    }
     if (r.misanchor > 0) misanchorCases++;
     if (r.fp.length === 0) fpFreeCases++;
     if (r.fp.length === 0 && r.missed.length === 0 && r.misanchor === 0) passCases++;
@@ -274,12 +421,14 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
       expectTotal,
       hitTotal,
       missTotal,
+      messageMismatch,
       coverage: expectTotal === 0 ? null : hitTotal / expectTotal,
+      byTier,
     },
     byClass,
     byCode: { fp: topEntries(fpByCode, 15), miss: topEntries(missByCode, 15) },
     skips: [...skips.entries()].sort((a, b) => b[1] - a[1]),
-    samples: { fp: fpSamples, miss: missSamples },
+    samples: { fp: fpSamples, miss: missSamples, textDiff: textDiffSamples, messageDiff: messageDiffSamples },
   };
 }
 
@@ -292,6 +441,8 @@ export function formatSummary(m: Metrics): string {
   ];
   if (m.byCode.fp.length > 0) lines.push(`top fp：${m.byCode.fp.map(([c, n]) => `${c}×${n}`).join(" ")}`);
   if (m.byCode.miss.length > 0) lines.push(`top miss：${m.byCode.miss.map(([c, n]) => `${c}×${n}`).join(" ")}`);
+  const tierText = TIERS.map((t) => `${t}=${m.totals.byTier[t]}`).join(" ");
+  lines.push(`分档（T0~T3）：${tierText}；命中位置但文案不同 ${m.totals.messageMismatch} 条`);
   for (const tag of ["suite:compiler", "suite:conformance"]) {
     const cls = m.byClass[tag];
     if (cls === undefined) continue;
