@@ -17,9 +17,13 @@ run the same suite against any TSC-compatible implementation.
 
 v0 skeleton is in place (2026-11): case-directive parsing, tsc-generated
 expectations with caching, a per-case CLI adapter and a batch-adapter protocol
-(with reference implementation), and a smoke runner that emits fp/coverage/skip
-metrics. Design and open questions: [docs/DESIGN.md](docs/DESIGN.md). Work is
-tracked in the [maat](https://github.com/hax/maat/issues/6) repository.
+(with reference implementation), a **reference adapter that runs real `tsc`**
+(`--adapter tsc-cli`, used to self-check the harness), and a smoke runner that
+emits fp/coverage/skip metrics. A GitHub Actions workflow runs unit tests plus a
+tsc self-compare smoke on every push/PR. Design and open questions:
+[docs/DESIGN.md](docs/DESIGN.md); self-compare and cross-version numbers:
+[docs/RESULTS.md](docs/RESULTS.md). Work is tracked in the
+[maat](https://github.com/hax/maat/issues/6) repository.
 
 ## Quick start
 
@@ -42,6 +46,10 @@ bun src/run.ts --adapter maat-zig --mode fixed --cases config/smoke-cases.json
 # the target mode: honor the official case directives
 bun src/run.ts --adapter maat-zig --mode official
 
+# reference adapter: run tsc itself (self-compare should be ~100% coverage, 0 fp)
+TSC_COMPA_ADAPTER_TSC=$TSC_BIN \
+bun src/run.ts --adapter tsc-cli --mode official --cases config/smoke-cases.json
+
 # unit tests
 bun test
 ```
@@ -63,9 +71,10 @@ set, so its numbers are for pipeline validation only. `--mode official` honors
 case directives; a run is only a compatibility verdict (`verdictEligible`) when
 the adapter also accepts external options.
 
-Other adapters: `none` (reports nothing), `mock-batch` (reference batch
-protocol, see `src/adapters/mock-batch.ts`), `cli:<bin>` (generic per-case CLI;
-extra args via `TSC_COMPA_CLI_ARGS`).
+Other adapters: `tsc-cli` (reference implementation, see
+[docs/RESULTS.md](docs/RESULTS.md)), `none` (reports nothing), `mock-batch`
+(reference batch protocol, see `src/adapters/mock-batch.ts`), `cli:<bin>`
+(generic per-case CLI; extra args via `TSC_COMPA_CLI_ARGS`).
 
 Regenerate the smoke manifest from a corpus checkout:
 
@@ -82,9 +91,11 @@ bun scripts/select-smoke.ts --corpus "$TSC_COMPA_CORPUS"
 | `src/tsc.ts` | expected diagnostics from a pinned tsc CLI (cached) |
 | `src/compare.ts` | matching and metrics |
 | `src/run.ts` | smoke runner entry |
-| `src/adapters/` | per-case CLI adapter, batch protocol client, mock batch implementation |
+| `src/adapters/` | reference `tsc-cli` adapter, per-case CLI adapter, batch protocol client, mock batch implementation |
 | `config/smoke-cases.json` | reproducible smoke case list |
 | `scripts/select-smoke.ts` | regenerate the smoke case list |
+| `.github/workflows/smoke.yml` | CI: unit tests + tsc self-compare smoke |
+| `docs/RESULTS.md` | self-compare and cross-version smoke numbers |
 | `test/` | unit tests (`bun test`) |
 
 ## Licensing of the test corpus
