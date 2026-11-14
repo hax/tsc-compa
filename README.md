@@ -25,8 +25,13 @@ explicitly encode the official harness defaults; a per-case CLI adapter plus a
 batch-adapter protocol (with reference implementation); and a
 **reference adapter that runs real `tsc`** (`--adapter tsc-cli`, used to
 self-check the harness). Metrics cover false positives, coverage, mismatched
-anchors and per-class breakdowns. A GitHub Actions workflow runs unit tests plus
-a self-compare smoke for every baseline on push/PR.
+anchors and per-class breakdowns. For the official TypeScript 7 repository
+layout (`tsc/testdata/...`) the suite consumes the official `.errors.txt`
+baselines directly, grades every case on the T0–T3 agreement ladder
+(location → category → text → whole-baseline-bytes) and maintains a
+`--ratchet` list that only goes up. A GitHub Actions workflow runs unit tests
+plus a self-compare smoke for every baseline on push/PR, and a manually
+triggered workflow runs the TS7 official-baseline smoke.
 
 Design: [docs/DESIGN.md](docs/DESIGN.md). Self-compare and cross-version numbers
 (including the default-option drift between tsc versions):
@@ -52,6 +57,14 @@ bun src/run.ts --baseline 6.0.3 \
 
 # expectations from the official .errors.txt baselines (curated subset)
 bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --expectation-source official-baseline --cases config/official-baseline-cases.json --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
+
+# TS7 official baselines (Go repo layout, T0-T3 + ratchet)
+export TSC_COMPA_CORPUS=/path/to/typescript-go/tsc/testdata/tests/cases
+bun src/run.ts --baseline 7.1.0-beta-official --corpus "$TSC_COMPA_CORPUS" \
+  --expectation-source official-baseline \
+  --cases config/smoke-cases-ts71-official.json \
+  --ratchet config/ratchet-ts71-official.tsv \
+  --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc
 
 # the same suite against another implementation (per-case CLI adapter)
 MAAT_BIN=/path/to/maat \
@@ -82,6 +95,7 @@ default manifest and the base CLI args (e.g. 5.9 does not accept
 | `5.9.3` | `typescript-5-9` | `v5.9.3` tag | `config/smoke-cases-5.9.json` |
 | `6.0.3` | `typescript-6-0` | strada `b465fdbf` | `config/smoke-cases.json` |
 | `7.1.0-beta` | `typescript-7-1` | strada `b465fdbf` | `config/smoke-cases.json` |
+| `7.1.0-beta-official` | `typescript-7-1` | TS7 Go pin `aa814927` | `config/smoke-cases-ts71-official.json` |
 
 Each baseline's `baseArgs` explicitly encode the **official harness defaults**
 (see `docs/DESIGN.md` section 3.3): 5.9 -> target ES5 / module CommonJS /
@@ -140,17 +154,22 @@ adapter also accepts external options.
 | `src/baselines.ts` | baseline config (tsc × corpus tag) |
 | `src/discover.ts` | corpus scanning and manifests |
 | `src/tsc.ts` | expected diagnostics from a pinned tsc CLI (cached) |
-| `src/officialBaseline.ts` | expectation source reading official `.errors.txt` baselines (curated subset) |
-| `src/compare.ts` | matching (incl. mis-anchor pairing) and metrics |
+| `src/officialBaseline.ts` | expectation source reading official `.errors.txt` baselines (strada flat layout + TS7 Go nested layout; missing baseline = no errors) |
+| `src/compare.ts` | matching (incl. mis-anchor pairing), T0-T3 agreement ladder and metrics |
+| `src/ratchet.ts` | `--ratchet` list: only goes up, regression fails the run |
 | `src/run.ts` | smoke runner entry |
 | `src/adapters/` | reference `tsc-cli` adapter, per-case CLI adapter, batch protocol client, mock batch implementation |
 | `config/baselines.json` | baseline definitions (three tsc versions × two corpora) |
 | `config/smoke-cases*.json` | reproducible smoke case lists per corpus |
 | `config/anchor-cases.json` | cases with known cross-version anchor differences |
 | `config/official-baseline-cases.json` | sample case list consumable from official baselines |
+| `config/smoke-cases-ts71-official.json` | TS7 official-baseline smoke list (18 error cases + 10 clean) |
+| `config/official-baseline-cases-ts71.json` | 120 error-bearing TS7 cases (extended local sample) |
+| `config/ratchet-ts71-official.tsv` | T0–T3 ratchet list for the TS7 official baselines |
 | `scripts/select-smoke.ts` | regenerate class-filtered smoke case lists |
 | `scripts/select-official-baseline-cases.ts` | scan a corpus for cases consumable from official baselines |
 | `.github/workflows/smoke.yml` | CI: unit tests + self-compare smoke matrix |
+| `.github/workflows/ts7-official.yml` | manual CI: TS7 official-baseline smoke (T0–T3 + ratchet) |
 | `docs/RESULTS.md` | self-compare, default drift and cross-version numbers |
 | `test/` | unit tests (`bun test ./test`) |
 

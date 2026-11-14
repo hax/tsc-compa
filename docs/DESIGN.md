@@ -139,25 +139,50 @@ v0 用「固定版本的 tsc CLI 现场生成」：
   「实现还不接受外部选项」时的流水线冒烟。运行器会打印警告，指标里
   `verdictEligible=false`。
 
-### 4.2 官方基线期望源（v0 子集）
+### 4.2 官方基线期望源
 
-`--expectation-source official-baseline` 直接消费官方
-`tests/baselines/reference/<case>.errors.txt` 的错误摘要块
-（`file(line,col): error TSxxxx: msg`，位置 1-based），指标层不变。v0 可用子集的条件
-（与 `src/officialBaseline.ts` 头注一致）：
+`--expectation-source official-baseline` 直接消费官方 errors 基线的错误摘要块
+（`file(line,col): error TSxxxx: msg`，位置 1-based），指标层不变。支持两种布局：
 
-- 基线名是 plain 名（没有 `(key=value)` 配置后缀）：带后缀的基线来自**多值指令**的
-  变体展开，需要复刻官方 harness 的配置命名，v0 暂不接；
-- 用例不含绝对路径 `@filename`（官方虚拟 FS 根，磁盘物化不安全）与 `.d.ts` 用例；
-- 基线摘要块只有带文件位置的诊断：无位置的配置错误与语法错误（TS1xxx）整体跳过，
-  它们与当前「语法即整案 SKIP」口径不兼容。
+- **strada / 6.0 线**：基线在 `tests/baselines/reference/` 下按 basename 平铺；
+- **TS7 官方 Go 布局**（pin `microsoft/TypeScript@aa814927…`，取自 reference/tsc-rs 的
+  `vendor/typescript-native/7.1.0-dev-aa814927/manifest.json`）：cases 在
+  `tsc/testdata/tests/cases/`，基线在 `tsc/testdata/baselines/reference/` 下按
+  用例相对目录分层（`compiler/Foo.errors.txt`）。
 
-`bun scripts/select-official-baseline-cases.ts --corpus <repo>/tests/cases` 扫描语料
-生成可消费清单（strada 6.0 上约 3,816 例可消费，示例 191 例入库为
-`config/official-baseline-cases.json`）。
+官方 harness 只在用例有诊断时写 `.errors.txt`，因此**缺基线 = 期望零错误**（不是
+跳过）：无错用例也进入指标，参与假阳性检查。仍跳过的子集：
+
+- 多值指令（基线带 `(key=value)` 配置后缀）——需复刻官方 harness 的配置命名；
+- 绝对路径 `@filename` 与 `.d.ts` 用例；
+- 基线含配置错误（无位置）或语法错误（TS1xxx）。
+
+`bun scripts/select-smoke.ts --corpus <tests/cases> --errors 18 --clean 10` 可按
+「有 errors 基线 / 无错」分组生成官方基线冒烟集（TS7 版入库为
+`config/smoke-cases-ts71-official.json`；120 例错误用例扩展样本见
+`config/official-baseline-cases-ts71.json`）。
 
 已知偏差：官方基线来自仓库源码快照，与 npm 上发布的补丁版本不一定逐条一致
-（见 docs/RESULTS.md）。
+（见 docs/RESULTS.md；同源编译器生成期望是 #34 的待办）。
+
+### 4.3 T0–T3 一致性分档与 ratchet
+
+对齐 reference/tsc-rs 的 Agreement 口径，每个用例在官方基线上的最深一致档位：
+
+| 档位 | 含义 |
+| --- | --- |
+| T0 `location` | file / line / col / code 多重集相同 |
+| T1 `category` | + severity（error/warning） |
+| T2 `text` | + 首行 message 完全相同 |
+| T3 `full` | 整份 `.errors.txt` 摘要块字节相等（含 elaboration、related 与顺序） |
+
+无基线文件（官方无错用例）时，两侧都空记 `full`，否则最多到 `text`。
+`totals.byTier` 给分布；`totals.messageMismatch` 给「位置命中但首行文案不同」的
+诊断条数（诊断级 T0−T2 差）；`samples.messageDiff` 给逐条文案差异样例。
+
+`--ratchet <file>` 维护 TSV 清单（`<case id>\t<tier>`，只登记 ≥T0 的用例）：
+改善自动写回、回落退出非零、先前登记的用例变成 SKIP 也视为回落。清单入库
+（`config/ratchet-ts71-official.tsv`），CI 用同一份做门禁。
 
 ## 5. 适配器协议
 
@@ -211,6 +236,10 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 - `totals.passCases`：fp 与漏报都为 0 的用例数；`fpFreeCases`：只要求不误报；
 - `totals.misanchorCases` / `misanchorTotal`：**错锚**——同文件、同错误码、
   位置不同。这类差异先成对抵消，**不计入 fp 也不计入 miss**，单独报告；
+- `totals.byTier`：官方基线 T0–T3 一致性分布（只统计跑完的用例，见 §4.3）；
+- `totals.messageMismatch` / `samples.messageDiff`：位置命中但首行文案不同的
+  诊断条数与逐条样例（诊断级 T0−T2 差）；
+- `samples.textDiff`：用例级「T0/T1 达成、T2 未达」的样例；
 - `byClass`：按 §3.2 标签聚合的同一组指标（含每类的覆盖率、fp、漏报、错锚）；
 - `totals.passCases`：fp、漏报、错锚都为 0 的用例数；
 - `byCode`：fp / miss 的码族 Top 15；
@@ -218,9 +247,9 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 - `meta.verdictEligible`：本次运行能否作为兼容性结论（`fixed` 模式、实现忽略
   选项时为 false）。
 
-判定粒度：**错误码 + 文件 + 行 + 列**（L1）。宽度只有部分实现给得出，缺省时
-跳过比较；消息文案（L3）不比较。后续按需要增加 L2（位置/宽度）与 L3（文案）
-档位，并作为指标输出的一部分。
+判定粒度：**错误码 + 文件 + 行 + 列**（L1）决定 fp/覆盖；官方基线另给 T0–T3
+分档（§4.3）承载 category 与文案/整份基线的比较。宽度只有部分实现给得出，
+缺省时跳过比较。
 
 错锚的正式口径：同一文件、同一错误码、位置不同的 expected × actual 各取一条
 成对抵消，计入 `misanchor`；剩余的 actual 才计 fp，剩余的 expected 才计 miss。
@@ -232,7 +261,9 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 
 ## 7. 基线与多版本
 
-「tsc 版本 × 语料 tag」是两条独立配置轴，在 `config/baselines.json` 里成对定义：
+「tsc 版本 × 语料 tag」是两条独立配置轴，在 `config/baselines.json` 里成对定义
+（另有 `7.1.0-beta-official`：同一 tsc 版本，但期望源为 `ts71-official` 语料的
+官方 `.errors.txt`，用于 §4.2 的 TS7 官方基线路径）：
 
 ```json
 {
@@ -295,6 +326,9 @@ config/smoke-cases.json  strada 冒烟用例集（入库、可复现）
 config/smoke-cases-5.9.json  5.9 语料冒烟集
 config/anchor-cases.json     锚点专用用例集
 config/official-baseline-cases.json  官方基线子集用例（示例清单）
+config/smoke-cases-ts71-official.json  TS7 官方基线冒烟集（18 有错 + 10 无错）
+config/official-baseline-cases-ts71.json  错误用例扩展样本（120 例，本地口径）
+config/ratchet-ts71-official.tsv      TS7 官方基线 T0–T3 ratchet 清单
 test/                  单测（bun test）
 ```
 
@@ -303,11 +337,14 @@ test/                  单测（bun test）
 - [x] 批量适配器接真实实现：maat 主线新增 `--batch`（NDJSON，见 maat README），tsc-compa 注册 `maat-batch`（固定口径，与逐案 CLI 结果逐字段一致）；
 - [ ] 期望生成本身进程内化（用各基线 typescript API 取代每案 CLI spawn，冷跑大头在这里）；
 - [x] 官方 harness 默认值对齐（§3.3：三档 baseArgs 显式化，期望/适配器参数分离）；
-- [x] 官方基线作为期望来源的 v0 子集（§4.2；多值变体、语法/配置错误基线待接）；
+- [x] 官方基线作为期望来源（§4.2；strada 平铺 + TS7 Go 分层两种布局，缺基线=无错）；
+- [x] TS7 官方基线 T0–T3 分档与 ratchet（§4.3）；
+- [ ] 同源编译器生成期望（消除 npm 补丁版本与仓库基线的偏差，见 #34）；
+- [ ] 官方基线多值指令变体与配置命名复刻（#34）；
 - [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
 - [ ] 基线守门 `--gate` / `--update-baseline`；
 - [ ] 更大规模的用例选择策略（按码族/目录分层抽样，避免只覆盖编译器用例）；
 - [ ] 并行执行与结果合并（shard / merge）；
 - [ ] L2/L3 判定粒度（宽度、消息文案）；
 - [ ] 实现声明「已知不支持的错误码/能力」，用于 SKIP 而非算漏报；
-- [ ] CI workflow（私仓 build → release asset → dispatch，见 §8）。
+- [x] CI workflow（私仓 build → release asset → dispatch，见 §8；官方基线冒烟见 `.github/workflows/ts7-official.yml`）。

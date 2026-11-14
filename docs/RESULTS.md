@@ -122,13 +122,45 @@ miss 两侧**，跨版本对照时可以直接看出「判定一致、位置口�
 `typescript@6.0.3` 补丁不完全一致，所以「基线期望 × 同版本 npm tsc 适配器」仍有
 2 例假阳性、4 条漏报。正式口径前要么改用与基线同源的编译器，要么把这些点位登记豁免。
 
+## 结论 7：TS7 官方基线（T0–T3）与 ratchet（v0）
+
+配置：`7.1.0-beta-official`——tsc 仍用 7.1.0-beta，但期望源换成 TS7 Go 仓
+`microsoft/TypeScript@aa814927…` 的官方 `tsc/testdata/baselines/reference`
+（pin 取自 reference/tsc-rs 的 `vendor/typescript-native/7.1.0-dev-aa814927/manifest.json`）。
+冒烟集 28 例（18 有错 + 10 无错，`select-smoke.ts --errors 18 --clean 10` 生成）；
+另跑 120 例错误用例做扩展样本（`config/official-baseline-cases-ts71.json`）。
+
+| 运行 | 用例 | ≥T0 location | ≥T2 text | T3 full | messageMismatch | 备注 |
+| --- | --- | --- | --- | --- | --- | --- |
+| tsc 7.1.0-beta 自比（冒烟 28） | 28 | 22（78.6%） | 22 | 4 | 0 | 6 例 none 来自 npm 补丁与仓库快照漂移（TS18050×8 等） |
+| tsc 7.1.0-beta 自比（错误样本 120） | 120 | 119（99.2%） | 118（98.3%） | 0 | 1 | T3 全灭：adapter 不产出 elaboration/related 行 |
+| maat 主线 fixed 口径（冒烟 28） | 28 | 10（35.7%） | 8（28.6%） | 6 | 5 | 位置不一致 18 例属检查面差异，掩盖了文案差 |
+| maat 主线 fixed 口径（错误样本 120） | 120 | 26（21.7%） | 19（15.8%） | 0 | 17 | 漏报 286 条是主因 |
+
+读法：T0−T2 = 判定/锚点一致但首行文案不同；T2−T3 = elaboration/related 文本与
+顺序未对齐（adapter 协议目前只回单行 message，T3 要等「整份基线渲染」能力）。
+120 例自比 T3=0 正说明这一点。
+
+文案差异样例（maat vs 官方基线，17 条代表）：
+- int 显示：`number` → `int`（functionCall12、inheritedConstructorWithRestParams、numberToString 等 5 条）；
+- 泛型实参丢失：`PullTypeSymbol<A, B, C>` → `PullTypeSymbol`、`List<U>` → `List`、`M<unknown>` → `M`、`Bar<string>` 截断；
+- elaboration 内联进首行（`A & B` / `never` 一行带 Property 说明）；
+- 联合收窄与操作数类型差：`"c" | "d"` vs 更宽联合、`number` vs `1 | 3`、`""` vs `''`。
+
+ratchet：`--ratchet config/ratchet-ts71-official.tsv` 首次运行登记 22 例（≥T0），
+复跑无回落、清单幂等；回落会以非零退出，CI 用同一份清单门禁。
+
 ## 局限
 
 - 冒烟集每档只有 28 例、官方基线子集只抽了 191 例，指标不能外推；报「通过率」之前必须先对齐口径。
 - 官方基线只接了 plain 名子集：多值指令变体（约 1,200 例）、语法错误基线（约 1,065 例）、
   配置错误基线（约 309 例）、绝对路径 `@filename`（约 659 例）暂不可消费。
-- 官方基线来自仓库源码快照，与 npm 补丁版本存在少量逐条差异（见结论 6），暂未做豁免登记。
-- 7.1 基线暂时复用 strada 语料。
+- 官方基线来自仓库源码快照，与 npm 补丁版本存在少量逐条差异（见结论 6/7），暂未做豁免登记；
+  这一偏差要靠「同源编译器生成期望」消除（#34）。
+- T3 需要 adapter 能产出整份基线渲染（含 elaboration/related 与顺序）；当前协议只回
+  单行 message，因此 T3 目前是目标档而不是门禁档。
+- 7.1 的普通基线（`7.1.0-beta`）仍复用 strada 语料；官方基线走单独的
+  `ts71-official` 语料 pin。
 
 ## 复现
 
@@ -158,6 +190,15 @@ bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" \
   --expectation-source official-baseline --cases config/official-baseline-cases.json \
   --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
 
+# TS7 官方基线冒烟（T0–T3 + ratchet）
+# 语料：microsoft/TypeScript@aa814927，layout tsc/testdata/{tests/cases,baselines/reference}
+bun src/run.ts --baseline 7.1.0-beta-official \
+  --corpus /tmp/ts71-corpus/tsc/testdata/tests/cases \
+  --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc \
+  --expectation-source official-baseline --mode official \
+  --cases config/smoke-cases-ts71-official.json \
+  --ratchet config/ratchet-ts71-official.tsv
+
 # 锚点用例
 bun src/run.ts --baseline 6.0.3 --corpus ../reference/typescript-strada/tests/cases \
   --cases config/anchor-cases.json --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc
@@ -169,6 +210,7 @@ bun src/run.ts --baseline 6.0.3 --corpus ../reference/typescript-strada/tests/ca
 
 - [x] 对齐官方 harness 默认值（结论 2/5）；
 - [x] 官方基线 v0 子集接入（结论 6）；
+- [x] TS7 官方 Go 布局基线（缺基线=无错）、T0–T3 分档与 ratchet（结论 7）；
 - [ ] 多值指令变体基线与官方配置命名（扩大官方基线覆盖面）；
 - [ ] 与基线同源的编译器构建，消除「仓库快照 vs npm 补丁」偏差；
 - 扩大样本（按码族/目录分层抽样）并接到公开仓 workflow 矩阵；
