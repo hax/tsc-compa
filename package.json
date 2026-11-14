@@ -10,6 +10,9 @@
     "test": "bun test",
     "select-smoke": "bun scripts/select-smoke.ts"
   },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  },
   "engines": {
     "bun": ">=1.3"
   }
