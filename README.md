@@ -54,8 +54,10 @@ bun src/run.ts --baseline 6.0.3 \
 bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --expectation-source official-baseline --cases config/official-baseline-cases.json --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
 
 # the same suite against another implementation (per-case CLI adapter)
-MAAT_ZIG_BIN=/path/to/maat-zig \
-bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter maat-zig
+MAAT_BIN=/path/to/maat \
+bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter maat-batch
+# 对照：同样的二进制用逐案 CLI 模式
+MAAT_ZIG_BIN=/path/to/maat bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter maat-zig
 ```
 
 Runs write `.cache/run/metrics.json` and `.cache/run/details.json` and print a
@@ -121,7 +123,8 @@ bun scripts/select-smoke.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --out 
 `tsc-cli` (reference implementation, see [docs/RESULTS.md](docs/RESULTS.md)),
 `none` (reports nothing), `mock-batch` (reference batch protocol, see
 `src/adapters/mock-batch.ts`), `cli:<bin>` (generic per-case CLI; extra args via
-`TSC_COMPA_CLI_ARGS`), `maat-zig` (per-case CLI, fixed option set).
+`TSC_COMPA_CLI_ARGS`), `maat-zig` (per-case CLI, fixed option set), `maat-batch`
+(batch NDJSON mode of the same binary, `MAAT_BIN`/`MAAT_ZIG_BIN`).
 
 `--mode fixed` ignores case directives and forces the adapter's fixed option
 set, so its numbers are pipeline validation only. `--mode official` honors case

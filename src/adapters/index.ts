@@ -66,6 +66,23 @@ export async function createAdapter(name: string): Promise<Adapter> {
       supportsOptions: false,
     });
   }
+  if (name === "maat-batch") {
+    // maat 主线（Zig）的批量模式：一个常驻进程吃完整 --cases，协议见 batch.ts。
+    // 只支持固定口径（与 maat-zig 逐案 CLI 一致），故 supportsOptions=false。
+    const raw = process.env.MAAT_BIN ?? process.env.MAAT_ZIG_BIN;
+    if (raw === undefined || raw.length === 0) {
+      throw new Error("适配器 maat-batch 需要环境变量 MAAT_BIN（或 MAAT_ZIG_BIN）指向 maat 可执行文件");
+    }
+    const adapter = new BatchAdapter({
+      name: "maat-batch",
+      command: raw.includes("/") ? resolve(raw) : raw,
+      args: ["--batch"],
+      fixedOptions: FIXED_STRICT_ESNEXT,
+      supportsOptions: false,
+    });
+    await adapter.init();
+    return adapter;
+  }
   if (name === "none") return new NoopAdapter();
   if (name === "mock-batch") {
     const adapter = new BatchAdapter({

@@ -22,7 +22,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
-import type { Adapter, CaseInput, CaseOutcome, Diagnostic } from "../types.ts";
+import type { Adapter, CaseInput, CaseOutcome, CompilerOptions, Diagnostic } from "../types.ts";
 
 export interface BatchRequest {
   protocol: 1;
@@ -54,6 +54,13 @@ export interface BatchAdapterOptions {
   command: string;
   args?: string[];
   timeoutMs?: number;
+  /**
+   * 实现是否接受 per-case 编译选项。缺省 true（协议本来就能带 options）；
+   * 像 maat 这样只支持固定口径的实现应显式设 false，配合 fixedOptions 使用。
+   */
+  supportsOptions?: boolean;
+  /** supportsOptions=false 时实现实际采用的选项（用于 --mode fixed）。 */
+  fixedOptions?: CompilerOptions;
   /** hello 消息里的实现名（若实现发送了 hello）。 */
   onHello?: (impl: { name?: string; version?: string }) => void;
 }
@@ -66,7 +73,8 @@ interface Pending {
 export class BatchAdapter implements Adapter {
   readonly name: string;
   readonly kind = "batch" as const;
-  readonly supportsOptions = true;
+  readonly supportsOptions: boolean;
+  readonly fixedOptions?: CompilerOptions;
   private readonly command: string;
   private readonly args: string[];
   private readonly timeoutMs: number;
@@ -82,6 +90,8 @@ export class BatchAdapter implements Adapter {
     this.command = options.command;
     this.args = options.args ?? [];
     this.timeoutMs = options.timeoutMs ?? 30_000;
+    this.supportsOptions = options.supportsOptions ?? true;
+    this.fixedOptions = options.fixedOptions;
     this.onHello = options.onHello;
   }
 

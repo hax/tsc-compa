@@ -184,7 +184,7 @@ v0 用「固定版本的 tsc CLI 现场生成」：
  "diagnostics":[{"file":"a.ts","line":0,"col":4,"code":2322,"severity":"error","message":"..."}]}
 {"protocol":1,"type":"result","id":"...","status":"skip","skipReason":"@jsx"}
 {"protocol":1,"type":"result","id":"...","status":"crash","message":"..."}
-{"protocol":1,"type":"hello","implementation":{"name":"maat-zig","version":"..."}}
+{"protocol":1,"type":"hello","implementation":{"name":"maat","version":"..."}}
 ```
 
 约定：行列 0-based；诊断文件路径用请求里的 `path`；`severity` 缺省 `error`；
@@ -300,7 +300,8 @@ test/                  单测（bun test）
 
 ## 10. v0 限制与 TODO
 
-- [ ] 批量适配器接真实实现（maat-zig 需要先提供 batch 模式或 shim）；
+- [x] 批量适配器接真实实现：maat 主线新增 `--batch`（NDJSON，见 maat README），tsc-compa 注册 `maat-batch`（固定口径，与逐案 CLI 结果逐字段一致）；
+- [ ] 期望生成本身进程内化（用各基线 typescript API 取代每案 CLI spawn，冷跑大头在这里）；
 - [x] 官方 harness 默认值对齐（§3.3：三档 baseArgs 显式化，期望/适配器参数分离）；
 - [x] 官方基线作为期望来源的 v0 子集（§4.2；多值变体、语法/配置错误基线待接）；
 - [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
