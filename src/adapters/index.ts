@@ -2,7 +2,8 @@
 //
 // v0 内置：
 //   tsc-cli     参考实现：直接用真实 tsc 跑逐案 CLI（TSC_COMPA_ADAPTER_TSC 覆盖二进制）
-//   maat-zig    逐案 CLI（环境变量 MAAT_ZIG_BIN），固定 strict+esnext 口径
+//   maat        原生二进制（Zig 主线）逐案 CLI（MAAT_BIN 或 maat:<bin>），固定 strict+esnext 口径
+//   maat-zig    旧 maat-zig 二进制逐案 CLI（环境变量 MAAT_ZIG_BIN），固定 strict+esnext 口径
 //   none        永远不报诊断（用于跑通流水线/看漏报全貌）
 //   mock-batch  批量协议的参考实现（src/adapters/mock-batch.ts）
 //   cli:<bin>   通用逐案 CLI（参数取 TSC_COMPA_CLI_ARGS，按空白切分）
@@ -12,6 +13,7 @@ import { FIXED_STRICT_ESNEXT } from "../case.ts";
 import type { Adapter, CaseInput, CaseOutcome } from "../types.ts";
 import { BatchAdapter } from "./batch.ts";
 import { CliAdapter } from "./cli.ts";
+import { MaatAdapter } from "./maat.ts";
 import { TscCliAdapter } from "./tsc-cli.ts";
 
 class NoopAdapter implements Adapter {
@@ -23,7 +25,7 @@ class NoopAdapter implements Adapter {
   }
 }
 
-export const ADAPTER_NAMES = ["tsc-cli", "maat-zig", "none", "mock-batch", "cli:<bin>"] as const;
+export const ADAPTER_NAMES = ["tsc-cli", "maat", "maat:<bin>", "maat-zig", "none", "mock-batch", "cli:<bin>"] as const;
 
 export async function createAdapter(name: string): Promise<Adapter> {
   if (name === "tsc-cli" || name.startsWith("tsc-cli:")) {
@@ -38,6 +40,18 @@ export async function createAdapter(name: string): Promise<Adapter> {
     const bin = raw.includes("/") ? resolve(raw) : raw;
     const extraArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter((s) => s.length > 0);
     return new TscCliAdapter({ name: embedded.length > 0 ? name : "tsc-cli", bin, extraArgs });
+  }
+  if (name === "maat" || name.startsWith("maat:")) {
+    // maat 原生二进制（Zig 主线）；maat:<bin> 显式指定路径，缺省读 MAAT_BIN。
+    const embedded = name.startsWith("maat:") ? name.slice("maat:".length) : "";
+    const raw = embedded.length > 0 ? embedded : (process.env.MAAT_BIN ?? "");
+    if (raw.length === 0) {
+      throw new Error("适配器 maat 需要 MAAT_BIN 或 maat:<bin> 指向可执行文件");
+    }
+    return new MaatAdapter({
+      name: embedded.length > 0 ? name : "maat",
+      bin: raw.includes("/") ? resolve(raw) : raw,
+    });
   }
   if (name === "maat-zig") {
     const raw = process.env.MAAT_ZIG_BIN;

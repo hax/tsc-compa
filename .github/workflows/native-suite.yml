@@ -1,0 +1,145 @@
+# 公开仓：接收远程二进制并跑兼容性套件（native-suite）
+#
+# 两种入口：
+#   1) repository_dispatch（自动，event_type = maat-binary，由 hax/maat 的
+#      release-native workflow 发起）：payload 带 implementation / source_sha /
+#      release_tag / asset_name / platform / baseline。
+#   2) workflow_dispatch（手动回退）：release_tag + asset_name 从本仓 release
+#      下载；或 binary_url 直接下载任意实现的二进制。
+#
+# 本仓不需要任何私有凭据：repo 自己的 GITHUB_TOKEN 即可下载自己的 release asset。
+#
+# 用法示例（手动回退）：
+#   release_tag: binary-maat-9962a4f-linux-x64
+#   asset_name:  maat-9962a4f-linux-x64
+name: native-suite
+
+on:
+  repository_dispatch:
+    types: [maat-binary]
+  workflow_dispatch:
+    inputs:
+      implementation:
+        description: "实现名（报告用）"
+        default: "maat"
+      release_tag:
+        description: "本仓 release tag（binary-<impl>-<sha>-<platform>）"
+        default: ""
+      asset_name:
+        description: "release 里的 asset 文件名"
+        default: ""
+      binary_url:
+        description: "直接下载二进制的 URL（给了它则忽略 release_tag）"
+        default: ""
+      baseline:
+        description: "tsc 基线与对应语料"
+        type: choice
+        options: ["7.1.0-beta", "6.0.3", "5.9.3"]
+        default: "7.1.0-beta"
+      mode:
+        description: "fixed（固定 strict+esnext 口径，maat 当前只支持这个）或 official"
+        type: choice
+        options: ["fixed", "official"]
+        default: "fixed"
+      limit:
+        description: "只跑前 N 个用例（0 = 该基线的冒烟集全部）"
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IN_IMPL: ${{ github.event.client_payload.implementation || inputs.implementation || 'maat' }}
+      IN_SHA: ${{ github.event.client_payload.source_sha || '' }}
+      IN_TAG: ${{ github.event.client_payload.release_tag || inputs.release_tag }}
+      IN_ASSET: ${{ github.event.client_payload.asset_name || inputs.asset_name }}
+      IN_URL: ${{ github.event.client_payload.binary_url || inputs.binary_url }}
+      IN_BASELINE: ${{ github.event.client_payload.baseline || inputs.baseline || '7.1.0-beta' }}
+      IN_MODE: ${{ inputs.mode || 'fixed' }}
+      IN_LIMIT: ${{ inputs.limit || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Resolve corpus ref from baseline
+        id: corpus
+        run: |
+          REF=$(bun -e 'const c=require("./config/baselines.json"); const b=c.baselines.find((x)=>x.id===process.env.IN_BASELINE); if(!b){console.error("unknown baseline: "+process.env.IN_BASELINE);process.exit(1)}; console.log(c.corpora[b.corpus].ref)')
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "baseline=$IN_BASELINE corpus_ref=$REF"
+
+      - name: Checkout TypeScript corpus (${{ steps.corpus.outputs.ref }})
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/TypeScript
+          ref: ${{ steps.corpus.outputs.ref }}
+          path: reference/corpus
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Fetch implementation binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p bin
+          if [ -n "$IN_URL" ]; then
+            curl -fsSL "$IN_URL" -o "bin/$IN_IMPL"
+          else
+            [ -n "$IN_TAG" ] && [ -n "$IN_ASSET" ] || { echo "需要 release_tag+asset_name 或 binary_url"; exit 1; }
+            gh release download "$IN_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$IN_ASSET" --dir bin
+            mv "bin/$IN_ASSET" "bin/$IN_IMPL"
+          fi
+          chmod +x "bin/$IN_IMPL"
+          file "bin/$IN_IMPL"
+          "bin/$IN_IMPL" --version 2>/dev/null || true
+
+      - name: Run compatibility suite
+        run: |
+          BIN="$GITHUB_WORKSPACE/bin/$IN_IMPL"
+          LIMIT_ARGS=""
+          if [ "${IN_LIMIT}" != "0" ] && [ -n "${IN_LIMIT}" ]; then LIMIT_ARGS="--limit ${IN_LIMIT}"; fi
+          echo "impl=$IN_IMPL sha=$IN_SHA baseline=$IN_BASELINE mode=$IN_MODE"
+          bun src/run.ts \
+            --baseline "$IN_BASELINE" \
+            --corpus "$GITHUB_WORKSPACE/reference/corpus/tests/cases" \
+            --adapter "maat:$BIN" \
+            --mode "$IN_MODE" \
+            $LIMIT_ARGS \
+            --out out
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "## native-suite: $IN_IMPL"
+            echo ""
+            echo "- source SHA: ${IN_SHA:-unknown}"
+            echo "- baseline: $IN_BASELINE"
+            echo "- mode: $IN_MODE"
+            echo ""
+            if [ -f out/metrics.json ]; then
+              echo '```json'
+              jq '{verdictEligible: .meta.verdictEligible, totals: .totals, fpByCode: .byCode.fp, missByCode: .byCode.miss, skips: .skips}' out/metrics.json 2>/dev/null || head -c 2000 out/metrics.json
+              echo '```'
+            else
+              echo "（没有 metrics.json，运行失败或超时）"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-${{ env.IN_IMPL }}-${{ env.IN_BASELINE }}
+          path: |
+            out/metrics.json
+            out/details.json
+          retention-days: 30
