@@ -199,7 +199,24 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `.github/workflows/ts7-official.yml` | manual CI: TS7 official-baseline smoke (T0–T3 + ratchet) |
 | `.github/workflows/third-party.yml` | manual CI: third-party implementation × baseline smoke |
 | `docs/RESULTS.md` | self-compare, default drift and cross-version numbers |
+| `src/perf.ts` | optional performance appendix: fixed sample × official tsc reference ratio |
 | `test/` | unit tests (`bun test ./test`) |
+
+## Optional performance appendix
+
+`--perf-ratio` adds a performance *appendix* to a normal compatibility run. It does
+not change pass/fail: the implementation's per-case wall time is recorded for free
+during the usual run, and a fixed stratified sample (default 300 cases) is run once
+through the official tsc with `--extendedDiagnostics` to produce a same-run ratio.
+
+```bash
+bun src/run.ts --baseline 7.1.0-beta-official --expectation-source official-baseline \
+  --cases config/smoke-cases-ts71-official.json --adapter maat:<bin> --perf-ratio
+```
+
+Ratios are wall-adjusted (baseline = empty program, measured 3× and min-taken) unless
+the implementation reports a Check phase. Numbers are written to `metrics.json` under
+`perf`; see `docs/DESIGN.md §11` for the caveats.
 
 ## Licensing of the test corpus
 

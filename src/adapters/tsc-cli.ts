@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { materializeCase } from "../case.ts";
+import { parseExtendedDiagnostics } from "../perf.ts";
 import type { Adapter, CaseInput, CaseOutcome, Diagnostic } from "../types.ts";
 
 const CLI_DIAG = /^(.+?)\((\d+),(\d+)\):\s+(error|warning)\s+TS(\d+):\s?(.*)$/;
@@ -64,7 +65,9 @@ export class TscCliAdapter implements Adapter {
     this.bin = options.bin;
     // 适配器侧不再继承期望基线的 baseArgs（跨版本时必须用实现自己的默认值），
     // 因此这里自带解析输出所必需的两个参数：不 emit、pretty false。
-    this.extraArgs = ["--noEmit", "--pretty", "false", ...(options.extraArgs ?? [])];
+    // --extendedDiagnostics 让参考实现自报 Parse/Bind/Check 相位；诊断解析会忽略
+    // 这些统计行，性能附录则用它拿 Check 时间（缺失时退 wall 口径）。
+    this.extraArgs = ["--noEmit", "--pretty", "false", "--extendedDiagnostics", ...(options.extraArgs ?? [])];
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
@@ -100,10 +103,12 @@ export class TscCliAdapter implements Adapter {
           message: `${r.stdout ?? ""}${r.stderr ?? ""}`.slice(0, 200),
         };
       }
+      const text = `${r.stdout ?? ""}${r.stderr ?? ""}`;
       return {
         id: input.id,
         status: "ok",
-        diagnostics: parseTscOutput(tmp, `${r.stdout ?? ""}${r.stderr ?? ""}`),
+        diagnostics: parseTscOutput(tmp, text),
+        checkMs: parseExtendedDiagnostics(text)?.checkMs,
       };
     } finally {
       rmSync(tmp, { recursive: true, force: true });

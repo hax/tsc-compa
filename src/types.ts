@@ -58,6 +58,12 @@ export interface CaseOutcome {
   diagnostics: Diagnostic[];
   skipReason?: string;
   message?: string;
+  /**
+   * 实现自报的检查耗时（毫秒，可选）：性能附录的 Check 相位口径。
+   * 只有能给出 `--extendedDiagnostics` 类相位数据的适配器才填；
+   * 缺失时性能附录退回 wall − 空程序基线的降级口径。
+   */
+  checkMs?: number;
 }
 
 /**

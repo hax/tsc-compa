@@ -13,7 +13,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createAdapter } from "./adapters/index.ts";
-import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, type RunMeta } from "./compare.ts";
+import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, type Metrics, type RunMeta } from "./compare.ts";
 import { checkRatchet, readRatchet, writeRatchet } from "./ratchet.ts";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "./baselines.ts";
 import { classifyCase, exclusionOf, parseTagList, runtimeTags } from "./classify.ts";
@@ -21,7 +21,8 @@ import { loadManifest, readCase } from "./discover.ts";
 import { expectationOf, resolveTscPath, shortCaseName, tscVersionOf, type ExpectationResult } from "./tsc.ts";
 import { expectationFromOfficialBaseline } from "./officialBaseline.ts";
 import { toTscArgs } from "./case.ts";
-import type { Adapter } from "./types.ts";
+import { buildPerfReport, runReference, selectPerfSample, type ReferenceRun } from "./perf.ts";
+import type { Adapter, CaseFile } from "./types.ts";
 
 const DEFAULT_BASE_ARGS = ["--noEmit", "--ignoreConfig", "--pretty", "false"];
 
@@ -45,6 +46,11 @@ interface Args {
   expectationSource: "tsc" | "official-baseline";
   /** 一致性 ratchet 清单（TSV）；设置后：回落退出非零、改善写回。 */
   ratchet?: string;
+  /** 附带性能附录：固定样本上跑官方 tsc 参考，输出实现/官方比值（不作门禁）。 */
+  perfRatio: boolean;
+  perfSample: number;
+  perfSeed: string;
+  perfTimeoutMs: number;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -62,6 +68,10 @@ function parseArgs(argv: string[]): Args {
     baseArgsExtra: [],
     adapterArgsExtra: [],
     expectationSource: "tsc",
+    perfRatio: false,
+    perfSample: 300,
+    perfSeed: "tsc-compa-v1",
+    perfTimeoutMs: 120_000,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -130,6 +140,24 @@ function parseArgs(argv: string[]): Args {
         args.limit = Number(next());
         if (!Number.isInteger(args.limit!) || args.limit! <= 0) throw new Error("--limit 需要正整数");
         break;
+      case "--perf-ratio":
+        args.perfRatio = true;
+        break;
+      case "--perf-sample": {
+        const value = Number(next());
+        if (!Number.isInteger(value) || value <= 0) throw new Error("--perf-sample 需要正整数");
+        args.perfSample = value;
+        break;
+      }
+      case "--perf-seed":
+        args.perfSeed = next();
+        break;
+      case "--perf-timeout": {
+        const value = Number(next());
+        if (!Number.isInteger(value) || value <= 0) throw new Error("--perf-timeout 需要正整数（毫秒）");
+        args.perfTimeoutMs = value;
+        break;
+      }
       case "--verbose":
         args.verbose = true;
         break;
@@ -139,7 +167,8 @@ function parseArgs(argv: string[]): Args {
           "用法：bun src/run.ts [--corpus <tests/cases>] [--baseline <id>] [--cases <manifest>] [--tsc <bin>] " +
             "[--adapter <name>] [--mode official|fixed] [--base-arg name=value]... [--adapter-arg name=value]... " +
             "[--expectation-source tsc|official-baseline] [--exclude-class <tags>] [--only-class <tags>] " +
-            "[--ratchet <file>] [--out <dir>] [--limit N] [--verbose]",
+            "[--ratchet <file>] [--perf-ratio] [--perf-sample N] [--perf-seed <s>] [--perf-timeout ms] " +
+            "[--out <dir>] [--limit N] [--verbose]",
         );
         console.log("基线见 config/baselines.json；标签见 src/classify.ts 的 CASE_TAGS。");
         process.exit(0);
@@ -151,6 +180,85 @@ function parseArgs(argv: string[]): Args {
     throw new Error("缺少语料目录：用 --corpus 或环境变量 TSC_COMPA_CORPUS 指定 tests/cases");
   }
   return args;
+}
+
+/** 性能附录：固定样本上跑官方 tsc 参考，与实现侧免费计时算比值（不参与退出码）。
+ *
+ * 参考 tsc 的逐案调用与实现侧逐案调用**交错**在同一循环里（每案 impl check
+ * 之后立刻跑同案 tsc），避免实现侧早跑、参考侧晚跑带来的页缓存/JIT 系统偏差。
+ */
+async function runPerfAppendix(opts: {
+  adapter: Adapter;
+  args: Args;
+  tscBin: string;
+  perfBaseArgs: string[];
+  implWalls: Map<string, number>;
+  implCheckMs: Map<string, number>;
+  reference: Map<string, ReferenceRun>;
+  records: CaseRecord[];
+  failed: number;
+}): Promise<ReturnType<typeof buildPerfReport>> {
+  const { adapter, args, tscBin, perfBaseArgs, implWalls, implCheckMs, reference, records, failed } = opts;
+  const warnings: string[] = [];
+  if (args.mode === "fixed") warnings.push("fixed 模式下实现忽略用例选项，性能比值仅作流水线参考");
+  const sampleIds = [...reference.keys()];
+  const emptyFiles: CaseFile[] = [{ path: "empty.ts", text: "export {};\n" }];
+
+  // 空程序基线取多次的最小值：单次会被冷启动/负载噪声放大，可能把分母推成负数。
+  const EMPTY_REPS = 3;
+  let implEmptyWallMs: number | null = null;
+  try {
+    const emptyArgs = toTscArgs(args.mode === "fixed" ? (adapter.fixedOptions ?? []) : [], [...args.baseArgsExtra]);
+    for (let i = 0; i < EMPTY_REPS; i++) {
+      const started = performance.now();
+      const outcome = await adapter.check({ id: `__perf_empty_${i}__`, files: emptyFiles, options: [], args: emptyArgs });
+      if (outcome.status !== "ok") {
+        warnings.push(`实现空程序基线返回 ${outcome.status}，wall-adjusted ratio 不可用`);
+        implEmptyWallMs = null;
+        break;
+      }
+      const wall = performance.now() - started;
+      if (implEmptyWallMs === null || wall < implEmptyWallMs) implEmptyWallMs = wall;
+    }
+  } catch (e) {
+    warnings.push(`实现空程序基线运行抛错：${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // 参考空程序基线与实现侧相邻测量（都在样本之后），多次取最小。
+  let refEmptyBest: ReferenceRun | null = null;
+  for (let i = 0; i < 5; i++) {
+    const run = runReference(tscBin, emptyFiles, [...perfBaseArgs, "--extendedDiagnostics"], args.perfTimeoutMs);
+    if (run.status !== "ok") continue;
+    if (refEmptyBest === null || run.wallMs < refEmptyBest.wallMs) refEmptyBest = run;
+  }
+  if (refEmptyBest !== null) reference.set("__empty__", refEmptyBest);
+
+  const agreementIds = new Set(
+    records
+      .filter((r) => r.status === "ran" && r.fp.length === 0 && r.missed.length === 0 && r.misanchor === 0)
+      .map((r) => r.id),
+  );
+  const report = buildPerfReport({
+    seed: args.perfSeed,
+    requested: args.perfSample,
+    sampleIds,
+    implWalls,
+    implCheckMs,
+    implEmptyWallMs,
+    reference,
+    agreementIds,
+    warnings,
+  });
+
+  const fmt = (v: number | null): string => (v === null ? "n/a" : v.toFixed(3));
+  console.log(
+    `性能附录（样本 ${report.sample.size}/${sampleIds.length}、参考失败 ${failed}）：` +
+      `实现 ${report.impl.meanWallMs.toFixed(1)}ms/案、tsc ${report.reference.meanWallMs.toFixed(1)}ms/案、` +
+      `wall-adj ratio=${fmt(report.ratio.wallAdjusted)}；一致子集 ${report.ratio.agreementSubset.cases} 例 ` +
+      `ratio=${fmt(report.ratio.agreementSubset.wallAdjusted)}`,
+  );
+  for (const w of report.warnings) console.warn(`性能附录警告：${w}`);
+  return report;
 }
 
 async function main(): Promise<void> {
@@ -185,10 +293,22 @@ async function main(): Promise<void> {
   }
 
   const ids = loadManifest(casesPath).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
+  // 性能附录的样本在跑之前定下来（确定性分层抽样），参考 tsc 在逐案循环里交错跑。
+  const perfSampleIds = args.perfRatio ? new Set(selectPerfSample(ids, args.perfSample, args.perfSeed)) : null;
+  const perfReference = new Map<string, ReferenceRun>();
+  const perfCaseArgs = new Map<string, string[]>();
+  // 参考侧与实现侧必须拿到同一组 CLI 参数：这里用「适配器侧参数」（用例指令 +
+  // --base-arg/--adapter-arg），不含期望侧的官方默认值（那是给期望生成用的，
+  // 例如 skipDefaultLibCheck 会让 tsc 少做 lib 检查，混入会系统性压低参考时间）。
+  const perfBaseArgs = toTscArgs([], [...args.baseArgsExtra, ...args.adapterArgsExtra]);
+  let perfReferenceFailed = 0;
   const records: CaseRecord[] = [];
   let optionDirectiveIgnored = 0;
   let excludedStatic = 0;
   let excludedRuntime = 0;
+  // 性能附录的数据在正常兼容跑里免费收集：实现每案 wall + 参考 tsc 需要的输入。
+  const perfImplWalls = new Map<string, number>();
+  const perfImplChecks = new Map<string, number>();
 
   for (const id of ids) {
     const parsed = readCase(args.corpus, id);
@@ -248,7 +368,20 @@ async function main(): Promise<void> {
       records.push(skipRecord(id, reason, tags));
       continue;
     }
+    const implStarted = performance.now();
     const outcome = await adapter.check({ id, files: parsed.files, options, args: adapterArgs });
+    const implWallMs = performance.now() - implStarted;
+    if (args.perfRatio && outcome.status === "ok") {
+      perfImplWalls.set(id, implWallMs);
+      if (typeof outcome.checkMs === "number") perfImplChecks.set(id, outcome.checkMs);
+      if (perfSampleIds!.has(id)) {
+        // 同案交错：实现刚跑完，紧接着跑官方 tsc（同参数），两侧经历同一时间窗。
+        perfCaseArgs.set(id, adapterArgs);
+        const refRun = runReference(tscBin, parsed.files, [...adapterArgs, "--extendedDiagnostics"], args.perfTimeoutMs);
+        perfReference.set(id, refRun);
+        if (refRun.status !== "ok") perfReferenceFailed++;
+      }
+    }
     if (outcome.status !== "ok") {
       records.push(skipRecord(id, outcome.skipReason ?? `实现返回 ${outcome.status}`, tags));
       continue;
@@ -261,6 +394,20 @@ async function main(): Promise<void> {
       );
     }
     records.push(record);
+  }
+  let perf: ReturnType<typeof buildPerfReport> | undefined;
+  if (args.perfRatio) {
+    perf = await runPerfAppendix({
+      adapter,
+      args,
+      tscBin,
+      perfBaseArgs,
+      implWalls: perfImplWalls,
+      implCheckMs: perfImplChecks,
+      reference: perfReference,
+      records,
+      failed: perfReferenceFailed,
+    });
   }
   await adapter.close?.();
 
@@ -278,7 +425,8 @@ async function main(): Promise<void> {
     generatedAt: new Date().toISOString(),
     selectedCases: ids.length,
   };
-  const metrics = summarize(records, meta);
+  const metrics = summarize(records, meta) as Metrics & { perf?: ReturnType<typeof buildPerfReport> };
+  if (perf !== undefined) metrics.perf = perf;
   let exitCode = 0;
   if (args.ratchet !== undefined) {
     const previous = readRatchet(args.ratchet);

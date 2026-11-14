@@ -379,3 +379,21 @@ test/                  单测（bun test）
 - [ ] L2/L3 判定粒度（宽度、消息文案）；
 - [ ] 实现声明「已知不支持的错误码/能力」，用于 SKIP 而非算漏报；
 - [x] CI workflow（私仓 build → release asset → dispatch，见 §8；官方基线冒烟见 `.github/workflows/ts7-official.yml`）。
+
+
+## 11. 性能附录（`--perf-ratio`，v0）
+
+兼容性跑的主目标是正确性；性能只是**附录**：不参与退出码、不设门禁、不改变判定。
+打开 `--perf-ratio` 后：
+
+- **实现侧计时免费**：正常兼容跑里在 `adapter.check` 前后计时，不额外跑实现；适配器若在
+  `CaseOutcome.checkMs` 里自报检查耗时（`tsc-cli` 适配器用 `--extendedDiagnostics` 解析），
+  性能附录优先用 Check 相位口径；
+- **参考侧只跑固定样本**：按 suite（路径第一段）分层的确定性抽样（默认 300 例，`--perf-sample` 可调），每案用官方 tsc 以 `--extendedDiagnostics` 跑一次新进程；成本约 20 秒量级；
+- **空程序基线**：两边各测 3 次空程序、取最小 wall，作固定开销估计（COST 项）；
+- **比值**：`(Σ实现 − N·实现基线) / (Σtsc − N·tsc基线)`，只报比值不报绝对结论；同时给原始累加时间、样本量、参考失败数、以及「判定完全一致（fp/miss/错锚=0）子集」上的比值；
+- **口径**：两侧都拿到 Check 相位时用 Check 累加比（tsc 风格实现均可）；实现没有相位时退到 wall−基线，并在 `warnings` 里标注「含用户 parse/bind/渲染、不可与 Check 横比」；参考侧每案固定成本占主导时 wall 差分会被守卫判为 null（不给不可靠的值）；
+- **公平性**：样本同一批、两边都按每案新进程（CLI one-shot）执行；固定 seed 跨轮可比；tsc 计数（Symbols/Types/Instantiations 等）有就记在 `perf.reference.counts` 作为工作量线索。
+- **已知局限**：空程序基线是近似，若分母/分子非正则比值标 null 并警告；跨实现比较只在同口径、同执行模式、同基线版本下成立。
+
+输出在 `metrics.json` 的 `perf` 字段：`sample / metric / impl / reference / ratio / warnings`。
