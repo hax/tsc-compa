@@ -11,7 +11,8 @@
     "smoke:5.9": "bun src/run.ts --baseline 5.9.3 --adapter tsc-cli:node_modules/typescript-5-9/bin/tsc",
     "smoke:6.0": "bun src/run.ts --baseline 6.0.3 --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc",
     "smoke:7.1": "bun src/run.ts --baseline 7.1.0-beta --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc",
-    "select-smoke": "bun scripts/select-smoke.ts"
+    "select-smoke": "bun scripts/select-smoke.ts",
+    "smoke:baseline": "bun src/run.ts --baseline 6.0.3 --expectation-source official-baseline --cases config/official-baseline-cases.json --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc"
   },
   "devDependencies": {
     "typescript-5-9": "npm:typescript@5.9.3",

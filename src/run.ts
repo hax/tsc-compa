@@ -17,7 +17,8 @@ import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, typ
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "./baselines.ts";
 import { classifyCase, exclusionOf, parseTagList, runtimeTags } from "./classify.ts";
 import { loadManifest, readCase } from "./discover.ts";
-import { expectationOf, resolveTscPath, shortCaseName, tscVersionOf } from "./tsc.ts";
+import { expectationOf, resolveTscPath, shortCaseName, tscVersionOf, type ExpectationResult } from "./tsc.ts";
+import { expectationFromOfficialBaseline } from "./officialBaseline.ts";
 import { toTscArgs } from "./case.ts";
 import type { Adapter } from "./types.ts";
 
@@ -35,8 +36,12 @@ interface Args {
   baseline?: string;
   excludeClasses: string[];
   onlyClasses: string[];
-  /** 追加到基础参数上的覆盖项（--base-arg name=value），两侧与期望都用。 */
+  /** 追加到基础参数上的覆盖项（--base-arg name=value），期望与适配器两侧都用。 */
   baseArgsExtra: string[];
+  /** 只加给适配器侧的参数（--adapter-arg name=value），用于跨版本对齐实验。 */
+  adapterArgsExtra: string[];
+  /** 期望来源：现场跑 tsc CLI，或直接消费官方 errors 基线子集。 */
+  expectationSource: "tsc" | "official-baseline";
 }
 
 function parseArgs(argv: string[]): Args {
@@ -52,6 +57,8 @@ function parseArgs(argv: string[]): Args {
     excludeClasses: [],
     onlyClasses: [],
     baseArgsExtra: [],
+    adapterArgsExtra: [],
+    expectationSource: "tsc",
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -78,6 +85,21 @@ function parseArgs(argv: string[]): Args {
         const eq = value.indexOf("=");
         if (eq <= 0) throw new Error(`--base-arg 需要 name=value，收到 ${value}`);
         args.baseArgsExtra.push(`--${value.slice(0, eq)}`, value.slice(eq + 1));
+        break;
+      }
+      case "--expectation-source": {
+        const value = next();
+        if (value !== "tsc" && value !== "official-baseline") {
+          throw new Error(`--expectation-source 只接受 tsc / official-baseline，收到 ${value}`);
+        }
+        args.expectationSource = value;
+        break;
+      }
+      case "--adapter-arg": {
+        const value = next();
+        const eq = value.indexOf("=");
+        if (eq <= 0) throw new Error(`--adapter-arg 需要 name=value，收到 ${value}`);
+        args.adapterArgsExtra.push(`--${value.slice(0, eq)}`, value.slice(eq + 1));
         break;
       }
       case "--exclude-class":
@@ -109,7 +131,8 @@ function parseArgs(argv: string[]): Args {
       case "-h":
         console.log(
           "用法：bun src/run.ts [--corpus <tests/cases>] [--baseline <id>] [--cases <manifest>] [--tsc <bin>] " +
-            "[--adapter <name>] [--mode official|fixed] [--base-arg name=value]... [--exclude-class <tags>] [--only-class <tags>] " +
+            "[--adapter <name>] [--mode official|fixed] [--base-arg name=value]... [--adapter-arg name=value]... " +
+            "[--expectation-source tsc|official-baseline] [--exclude-class <tags>] [--only-class <tags>] " +
             "[--out <dir>] [--limit N] [--verbose]",
         );
         console.log("基线见 config/baselines.json；标签见 src/classify.ts 的 CASE_TAGS。");
@@ -129,6 +152,11 @@ async function main(): Promise<void> {
 
   // 基线是 (tsc, baseArgs, 语料 tag, manifest) 的具名组合；不给 --baseline 时
   // 保持旧行为：--tsc / TSC_BIN 指定期望源，基础参数用 6.0 口径。
+  //
+  // 注意：baseline.baseArgs 是「期望侧的官方默认值」，只喂给期望生成；适配器
+  // 侧只接用例指令与显式的 --base-arg / --adapter-arg，用自己的版本默认值，
+  // 否则跨版本对照会把期望版本的默认口径强加到实现上（5.9 的 --target es5
+  // 会被 6.0/7.1 直接判成配置错误）。
   const config = args.baseline !== undefined ? loadBaselines() : null;
   const baseline = config !== null ? findBaseline(config, args.baseline!) : null;
   const baseArgs = [...(baseline?.baseArgs ?? DEFAULT_BASE_ARGS), ...args.baseArgsExtra];
@@ -175,13 +203,25 @@ async function main(): Promise<void> {
     }
     const options = args.mode === "fixed" ? adapter.fixedOptions! : parsed.options;
     if (args.mode === "fixed" && parsed.options.length > 0) optionDirectiveIgnored++;
-    const tscArgs = toTscArgs(options, baseArgs);
-    const expectation = expectationOf(id, parsed.files, options, {
-      tscBin,
-      tscVersion,
-      args: tscArgs,
-      cacheDir: join(".cache", "expectations"),
-    });
+    const expectationArgs = toTscArgs(options, baseArgs);
+    // 适配器侧：用例指令 + 显式 --base-arg/--adapter-arg；不含基线的官方默认值。
+    const adapterArgs = toTscArgs(options, [...args.baseArgsExtra, ...args.adapterArgsExtra]);
+    let expectation: ExpectationResult;
+    if (args.expectationSource === "official-baseline") {
+      const official = expectationFromOfficialBaseline(args.corpus, id, parsed);
+      if (official.status === "skip") {
+        records.push(skipRecord(id, `官方基线:${official.reason}`, staticTags));
+        continue;
+      }
+      expectation = { status: "ok", diagnostics: official.diagnostics };
+    } else {
+      expectation = expectationOf(id, parsed.files, options, {
+        tscBin,
+        tscVersion,
+        args: expectationArgs,
+        cacheDir: join(".cache", "expectations"),
+      });
+    }
     const tags = [...staticTags, ...runtimeTags(expectation)];
     const runtimeExclusion = exclusionOf(tags, args.excludeClasses, args.onlyClasses);
     if (runtimeExclusion !== null) {
@@ -199,7 +239,7 @@ async function main(): Promise<void> {
       records.push(skipRecord(id, reason, tags));
       continue;
     }
-    const outcome = await adapter.check({ id, files: parsed.files, options, args: tscArgs });
+    const outcome = await adapter.check({ id, files: parsed.files, options, args: adapterArgs });
     if (outcome.status !== "ok") {
       records.push(skipRecord(id, outcome.skipReason ?? `实现返回 ${outcome.status}`, tags));
       continue;
@@ -225,6 +265,7 @@ async function main(): Promise<void> {
     tscBin,
     baseline: args.baseline,
     corpusRef,
+    expectationSource: args.expectationSource,
     generatedAt: new Date().toISOString(),
     selectedCases: ids.length,
   };

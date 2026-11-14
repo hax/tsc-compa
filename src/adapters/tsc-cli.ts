@@ -62,7 +62,9 @@ export class TscCliAdapter implements Adapter {
   constructor(options: TscCliAdapterOptions) {
     this.name = options.name ?? "tsc-cli";
     this.bin = options.bin;
-    this.extraArgs = options.extraArgs ?? [];
+    // 适配器侧不再继承期望基线的 baseArgs（跨版本时必须用实现自己的默认值），
+    // 因此这里自带解析输出所必需的两个参数：不 emit、pretty false。
+    this.extraArgs = ["--noEmit", "--pretty", "false", ...(options.extraArgs ?? [])];
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 

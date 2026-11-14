@@ -122,6 +122,8 @@ export interface ParsedCase {
   skip: string | null;
   ignored: string[];
   unknown: string[];
+  multiValueDirectives: string[];
+  absoluteFiles: string[];
 }
 
 function parseValue(kind: OptionSpec["kind"], raw: string): OptionValue | null {
@@ -153,15 +155,21 @@ export function parseCase(raw: string, id: string): ParsedCase {
     skip: null,
     ignored: [],
     unknown: [],
+    multiValueDirectives: [],
+    absoluteFiles: [],
   };
   const directives = new Map<string, string>();
-  const lines = raw.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const lines = raw.replace(/^\uFEFF/, "").split(/\r\n|\r|\n/);
   let currentPath: string | null = null;
   let buffer: string[] = [];
 
   for (const line of lines) {
     const m = META.exec(line);
     if (m === null) {
+      // 与官方 harness 的 makeUnitsFromTest 对齐：每个单元的首个非空行之前
+      // 的空行不进入内容（harness 里 content 在首行之前保持空串，空行被吞），
+      // 否则基线行号会整体 +1。
+      if (buffer.length === 0 && line.length === 0) continue;
       buffer.push(line);
       continue;
     }
@@ -171,6 +179,7 @@ export function parseCase(raw: string, id: string): ParsedCase {
       if (currentPath !== null) result.files.push({ path: currentPath, text: buffer.join("\n") });
       const normalized = normalizeVirtualPath(value);
       if (normalized.escapes) result.skip ??= "虚拟文件路径越出用例根";
+      if (value.startsWith("/")) result.absoluteFiles.push(value);
       currentPath = normalized.path.length > 0 ? normalized.path : null;
       buffer = [];
       continue;
@@ -183,6 +192,7 @@ export function parseCase(raw: string, id: string): ParsedCase {
     if (SKIP_DIRECTIVES[key] !== undefined) {
       result.skip ??= SKIP_DIRECTIVES[key]!;
     } else if (OPTION_DIRECTIVES[key] !== undefined) {
+      if (value.includes(",")) result.multiValueDirectives.push(`@${key}`);
       directives.set(key, value);
     } else if (IGNORED_DIRECTIVES.has(key)) {
       result.ignored.push(key);

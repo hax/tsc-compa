@@ -85,23 +85,37 @@ v0 分四类处理：
 `shape:parser`、`lang:js`、`lang:jsx`、`options:*`、`env:skip`，并用目标基线的
 tsc 现场核对、剔除 `expect:syntax` 用例。
 
-### 3.3 版本默认值（已实测，仍是待对齐项）
+### 3.3 版本默认值（已对齐官方 harness）
 
-`OFFICIAL_DEFAULTS` 仍是空集：指令没写到的选项用**该基线 tsc 的 CLI 默认值**。
-实测三档默认值不同（详见 docs/RESULTS.md §结论 2）：
+指令没写到的选项使用**官方 harness 的默认值**，逐条核对源码后显式写进
+`config/baselines.json` 的 `baseArgs`（不再依赖各版本 CLI 的隐含默认，避免版本漂移）：
 
-| tsc | 默认 target（由 `--listFiles` 的 lib 链推断） | 默认 strict | `--target es5` |
+| 项 | 5.9 | 6.0（strada） | 7.1（Go） |
 | --- | --- | --- | --- |
-| 5.9.3 | ES5（lib.es5 + dom） | false | 支持 |
-| 6.0.3 | ES2015（lib.es5 + es2015 + …） | true | 弃用（TS5107） |
-| 7.1.0-beta | ES2015 | true | 已移除（TS5108） |
+| 默认 target | ES5 | ES2025（`ScriptTarget.LatestStandard`） | ES2026（`ScriptTarget.LatestStandard`） |
+| 默认 module | 由 target 推出 CommonJS | 由 target 推出 ES2022 | 由 target 推出 ES2022 |
+| 默认 moduleResolution | Node10 | Bundler | Bundler |
+| strict 系默认 | false | **true** | **true** |
+| harness 固定项 | `noResolve=false`、`newLine=CRLF`、`noErrorTruncation=true`、`skipDefaultLibCheck=true` | 同左 | 同左（Go harness：`NewLine=CRLF`、`SkipDefaultLibCheck=true`、`NoErrorTruncation=true`） |
 
-多基线的处理原则：
+来源：
+- 5.9 / 6.0（JS 实现）：`src/compiler/utilities.ts` 的 `_computedOptions`（target /
+  module / moduleResolution 的计算与 `getStrictOptionValue`）、`src/compiler/types.ts`
+  的 `ScriptTarget.LatestStandard`、`src/harness/harnessIO.ts` 的 `compileFiles`（固定项）。
+  5.9 的 `getStrictOptionValue` 是 `!!compilerOptions.strict`（默认 false），6.0 改成
+  `compilerOptions.strict !== false`（默认 true）。
+- 7.1（Go 实现）：`reference/typescript/tsc/internal/core/compileroptions.go`
+  （`GetEmitScriptTarget`、`GetEmitModuleKind`、`GetModuleResolutionKind`、
+  `GetStrictOptionValue`）与 `tsc/internal/testutil/harnessutil/harnessutil.go` 的 `CompileFiles`。
+- case 指令经 `setCompilerOptionsFromHarnessSetting`（JS）/ `SetOptionsFromTestConfig`
+  （Go）覆盖上述默认值。
 
-1. **单基线自比是 harness 正确性检查**，必须 100%；
-2. 跨版本对照必须显式对齐口径：`--base-arg target=es2015 --base-arg strict=false`
-   会同时作用于期望生成与适配器输入（放在用例参数之前，case 指令仍优先）；
-3. 官方 harness 的 `defaultOptions` 尚未对齐（§10 待办）；对齐后本节改为官方默认值。
+**参数只作用于期望侧**：`baseline.baseArgs` 喂给期望生成；适配器只接用例指令与显式的
+`--base-arg` / `--adapter-arg`，用实现自己的默认值。跨版本对照时不能把期望版本的
+`--target es5` 强加给 6.0/7.1（会被直接判成配置错误 TS5107/TS5108）。
+
+注意 6.0 起默认 target 与 strict 同时翻转（5.9 → 6.0），官方基线因此**不能跨版本通用**：
+跨版本对照要么同版本自比，要么显式对齐选项后再比（见 docs/RESULTS.md）。
 
 ## 4. 期望来源
 
@@ -124,6 +138,26 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 - `--mode fixed`：忽略用例指令，统一用适配器声明的 `fixedOptions`；只用于
   「实现还不接受外部选项」时的流水线冒烟。运行器会打印警告，指标里
   `verdictEligible=false`。
+
+### 4.2 官方基线期望源（v0 子集）
+
+`--expectation-source official-baseline` 直接消费官方
+`tests/baselines/reference/<case>.errors.txt` 的错误摘要块
+（`file(line,col): error TSxxxx: msg`，位置 1-based），指标层不变。v0 可用子集的条件
+（与 `src/officialBaseline.ts` 头注一致）：
+
+- 基线名是 plain 名（没有 `(key=value)` 配置后缀）：带后缀的基线来自**多值指令**的
+  变体展开，需要复刻官方 harness 的配置命名，v0 暂不接；
+- 用例不含绝对路径 `@filename`（官方虚拟 FS 根，磁盘物化不安全）与 `.d.ts` 用例；
+- 基线摘要块只有带文件位置的诊断：无位置的配置错误与语法错误（TS1xxx）整体跳过，
+  它们与当前「语法即整案 SKIP」口径不兼容。
+
+`bun scripts/select-official-baseline-cases.ts --corpus <repo>/tests/cases` 扫描语料
+生成可消费清单（strada 6.0 上约 3,816 例可消费，示例 191 例入库为
+`config/official-baseline-cases.json`）。
+
+已知偏差：官方基线来自仓库源码快照，与 npm 上发布的补丁版本不一定逐条一致
+（见 docs/RESULTS.md）。
 
 ## 5. 适配器协议
 
@@ -227,8 +261,8 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 差异主要是默认值漂移（strict、target）加少量模块上下文差异，保留成本主要在
 语料与期望维护。该决策留待接入官方基线、扩大样本后再定。
 
-**官方基线对接**（未做）：优先消费官方 `tests/baselines` 中的期望，逐步评估与
-「现场生成」的差异，再决定正式口径。
+**官方基线对接**：已接 v0 子集（§4.2），与「现场生成」并列、指标层不变；
+多值变体基线、语法/配置错误基线、`.d.ts` 用例仍待后续。
 
 ## 8. 二进制分发
 
@@ -248,26 +282,28 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 src/case.ts            指令解析 / 选项推导 / 虚拟文件
 src/discover.ts        manifest 与语料扫描
 src/tsc.ts             期望生成（tsc CLI + 缓存）
+src/officialBaseline.ts 官方基线期望源（.errors.txt 子集）
 src/compare.ts         匹配与指标（含错锚配对、按类聚合）
 src/classify.ts        用例分类标签与过滤
 src/baselines.ts       多基线配置（tsc × 语料 tag）
 src/run.ts             运行器入口
 src/adapters/          cli / batch / mock-batch / 工厂
 scripts/select-smoke.ts  生成冒烟 manifest
+scripts/select-official-baseline-cases.ts  生成官方基线可消费清单
 config/baselines.json    基线配置（三个 tsc × 两套语料）
 config/smoke-cases.json  strada 冒烟用例集（入库、可复现）
 config/smoke-cases-5.9.json  5.9 语料冒烟集
 config/anchor-cases.json     锚点专用用例集
+config/official-baseline-cases.json  官方基线子集用例（示例清单）
 test/                  单测（bun test）
 ```
 
 ## 10. v0 限制与 TODO
 
 - [ ] 批量适配器接真实实现（maat-zig 需要先提供 batch 模式或 shim）；
-- [ ] 官方 harness 默认选项对齐（§3.3）；
-- [ ] 官方基线作为期望来源（§7）；
+- [x] 官方 harness 默认值对齐（§3.3：三档 baseArgs 显式化，期望/适配器参数分离）；
+- [x] 官方基线作为期望来源的 v0 子集（§4.2；多值变体、语法/配置错误基线待接）；
 - [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
-- [ ] 用官方 harness 的 `defaultOptions` 替换 CLI 默认值（§3.3）；
 - [ ] 基线守门 `--gate` / `--update-baseline`；
 - [ ] 更大规模的用例选择策略（按码族/目录分层抽样，避免只覆盖编译器用例）；
 - [ ] 并行执行与结果合并（shard / merge）；

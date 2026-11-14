@@ -104,6 +104,8 @@ export interface RunMeta {
   baseline?: string;
   /** 语料来源版本（repo@ref），用于多基线时区分语料。 */
   corpusRef?: string;
+  /** 期望来源；缺省（旧记录）视为 tsc。 */
+  expectationSource?: "tsc" | "official-baseline";
   generatedAt: string;
   selectedCases: number;
 }

@@ -15,25 +15,47 @@
     {
       "id": "5.9.3",
       "tsc": "node_modules/typescript-5-9/bin/tsc",
-      "baseArgs": ["--noEmit", "--pretty", "false"],
+      "baseArgs": [
+        "--noEmit", "--pretty", "false",
+        "--target", "es5",
+        "--module", "commonjs",
+        "--moduleResolution", "node10",
+        "--strict", "false",
+        "--skipDefaultLibCheck", "--noErrorTruncation"
+      ],
       "corpus": "v5.9.3",
       "manifest": "config/smoke-cases-5.9.json",
-      "note": "5.9 CLI 不认 --ignoreConfig（TS5023）；用例在临时目录里没有 tsconfig，省略该参数口径不变"
+      "note": "官方 harness 默认值：target=ES5、module=CommonJS、moduleResolution=Node10、strict 系默认 false；harness 固定项 noResolve=false、newLine=CRLF、noErrorTruncation=true、skipDefaultLibCheck=true。来源：src/compiler/utilities.ts（target 计算、getStrictOptionValue）+ src/harness/harnessIO.ts compileFiles。5.9 CLI 不认 --ignoreConfig（TS5023），临时目录无 tsconfig，省略口径不变。"
     },
     {
       "id": "6.0.3",
       "tsc": "node_modules/typescript-6-0/bin/tsc",
-      "baseArgs": ["--noEmit", "--ignoreConfig", "--pretty", "false"],
+      "baseArgs": [
+        "--noEmit", "--ignoreConfig", "--pretty", "false",
+        "--target", "es2025",
+        "--module", "es2022",
+        "--moduleResolution", "bundler",
+        "--strict", "true",
+        "--skipDefaultLibCheck", "--noErrorTruncation"
+      ],
       "corpus": "strada",
-      "manifest": "config/smoke-cases.json"
+      "manifest": "config/smoke-cases.json",
+      "note": "官方 harness 默认值：target=ES2025（ScriptTarget.LatestStandard）、module 由 target 推出 ES2022、moduleResolution=Bundler、strict 系默认 true（strict !== false）；harness 固定项 noResolve=false、newLine=CRLF、noErrorTruncation=true、skipDefaultLibCheck=true。来源：src/compiler/types.ts（LatestStandard=ES2025）、src/compiler/utilities.ts（计算默认与 getStrictOptionValue）、src/harness/harnessIO.ts compileFiles。"
     },
     {
       "id": "7.1.0-beta",
       "tsc": "node_modules/typescript-7-1/bin/tsc",
-      "baseArgs": ["--noEmit", "--ignoreConfig", "--pretty", "false"],
+      "baseArgs": [
+        "--noEmit", "--ignoreConfig", "--pretty", "false",
+        "--target", "es2026",
+        "--module", "es2022",
+        "--moduleResolution", "bundler",
+        "--strict", "true",
+        "--skipDefaultLibCheck", "--noErrorTruncation"
+      ],
       "corpus": "strada",
       "manifest": "config/smoke-cases.json",
-      "note": "TS7 原生实现；语料暂与 6.0 共用 strada 线"
+      "note": "Go 官方 test runner 默认值：target=ES2026（ScriptTarget.LatestStandard）、module 由 target 推出 ES2022、moduleResolution=Bundler、strict 系默认 true（Strict != false）；harness 固定项 NewLine=CRLF、SkipDefaultLibCheck=true、NoErrorTruncation=true。来源：reference/typescript/tsc/internal/core/compileroptions.go（GetEmitScriptTarget / GetEmitModuleKind / GetModuleResolutionKind / GetStrictOptionValue）+ tsc/internal/testutil/harnessutil/harnessutil.go CompileFiles。TS7 原生实现；语料暂与 6.0 共用 strada 线。"
     }
   ]
 }

@@ -17,10 +17,12 @@ run the same suite against any TSC-compatible implementation.
 
 ## Status
 
-v1 (2026-11): case-directive parsing, tsc-generated expectations with caching,
-case classification/filtering, three tsc baselines (5.9.3 / 6.0.3 / 7.1.0-beta,
-each paired with its own corpus tag in `config/baselines.json`), a per-case CLI
-adapter plus a batch-adapter protocol (with reference implementation), and a
+v1 (2026-11): case-directive parsing; two expectation sources (tsc-generated and cached,
+official `tests/baselines` subset via `--expectation-source official-baseline`);
+case classification/filtering; three tsc baselines (5.9.3 / 6.0.3 / 7.1.0-beta,
+each paired with its own corpus tag in `config/baselines.json`) whose base args
+explicitly encode the official harness defaults; a per-case CLI adapter plus a
+batch-adapter protocol (with reference implementation); and a
 **reference adapter that runs real `tsc`** (`--adapter tsc-cli`, used to
 self-check the harness). Metrics cover false positives, coverage, mismatched
 anchors and per-class breakdowns. A GitHub Actions workflow runs unit tests plus
@@ -47,6 +49,9 @@ export TSC_COMPA_CORPUS=/path/to/typescript/tests/cases
 bun src/run.ts --baseline 6.0.3 \
   --corpus "$TSC_COMPA_CORPUS" \
   --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
+
+# expectations from the official .errors.txt baselines (curated subset)
+bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --expectation-source official-baseline --cases config/official-baseline-cases.json --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
 
 # the same suite against another implementation (per-case CLI adapter)
 MAAT_ZIG_BIN=/path/to/maat-zig \
@@ -76,15 +81,18 @@ default manifest and the base CLI args (e.g. 5.9 does not accept
 | `6.0.3` | `typescript-6-0` | strada `b465fdbf` | `config/smoke-cases.json` |
 | `7.1.0-beta` | `typescript-7-1` | strada `b465fdbf` | `config/smoke-cases.json` |
 
-Default compiler options differ between tsc versions (notably: 6.0/7.1 default
-`strict` to true and target ES2015, 5.9 defaults them to false / ES5). Cross-
-version comparisons must align these explicitly:
+Each baseline's `baseArgs` explicitly encode the **official harness defaults**
+(see `docs/DESIGN.md` section 3.3): 5.9 -> target ES5 / module CommonJS /
+moduleResolution Node10 / strict off; 6.0 -> target ES2025 / module ES2022 /
+moduleResolution Bundler / strict on; 7.1 -> target ES2026 / same module settings /
+strict on. These defaults apply to the **expectation side only** - the adapter
+receives case directives plus any explicit `--base-arg` / `--adapter-arg`, so it
+uses its own defaults. Cross-version comparisons must align options explicitly
+when you want to isolate semantic differences:
 
 ```bash
 # 5.9 expectations vs 6.0.3 adapter, with defaults pinned on both sides
-bun src/run.ts --baseline 5.9.3 --corpus /path/to/v5.9.3/tests/cases \
-  --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc \
-  --base-arg strict=false --base-arg target=es2015
+bun src/run.ts --baseline 5.9.3 --corpus /path/to/v5.9.3/tests/cases --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc --base-arg strict=false --base-arg target=es2015 --base-arg module=es2015 --base-arg moduleResolution=bundler
 ```
 
 See [docs/RESULTS.md](docs/RESULTS.md) for what changes between baselines and why
@@ -129,13 +137,16 @@ adapter also accepts external options.
 | `src/baselines.ts` | baseline config (tsc × corpus tag) |
 | `src/discover.ts` | corpus scanning and manifests |
 | `src/tsc.ts` | expected diagnostics from a pinned tsc CLI (cached) |
+| `src/officialBaseline.ts` | expectation source reading official `.errors.txt` baselines (curated subset) |
 | `src/compare.ts` | matching (incl. mis-anchor pairing) and metrics |
 | `src/run.ts` | smoke runner entry |
 | `src/adapters/` | reference `tsc-cli` adapter, per-case CLI adapter, batch protocol client, mock batch implementation |
 | `config/baselines.json` | baseline definitions (three tsc versions × two corpora) |
 | `config/smoke-cases*.json` | reproducible smoke case lists per corpus |
 | `config/anchor-cases.json` | cases with known cross-version anchor differences |
+| `config/official-baseline-cases.json` | sample case list consumable from official baselines |
 | `scripts/select-smoke.ts` | regenerate class-filtered smoke case lists |
+| `scripts/select-official-baseline-cases.ts` | scan a corpus for cases consumable from official baselines |
 | `.github/workflows/smoke.yml` | CI: unit tests + self-compare smoke matrix |
 | `docs/RESULTS.md` | self-compare, default drift and cross-version numbers |
 | `test/` | unit tests (`bun test ./test`) |
