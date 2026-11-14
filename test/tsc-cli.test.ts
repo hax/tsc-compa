@@ -43,8 +43,17 @@ describe("TscCliAdapter", () => {
       });
       expect(outcome.status).toBe("ok");
       expect(outcome.diagnostics).toEqual([
-        { file: "x.ts", line: 0, col: 1, code: 9999, severity: "error", message: "fake" },
+        {
+          file: "x.ts",
+          line: 0,
+          col: 1,
+          code: 9999,
+          severity: "error",
+          message: "fake",
+          fullText: "x.ts(1,2): error TS9999: fake",
+        },
       ]);
+      expect(outcome.fullText).toBe("x.ts(1,2): error TS9999: fake");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

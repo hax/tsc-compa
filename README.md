@@ -180,10 +180,10 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `src/discover.ts` | corpus scanning and manifests |
 | `src/tsc.ts` | expected diagnostics from a pinned tsc CLI (cached) |
 | `src/officialBaseline.ts` | expectation source reading official `.errors.txt` baselines (strada flat layout + TS7 Go layout incl. flattened suites; missing baseline = no errors) |
-| `src/compare.ts` | matching (incl. mis-anchor pairing), T0-T3 agreement ladder and metrics |
+| `src/compare.ts` | matching (incl. mis-anchor pairing), T0-T3 agreement ladder (T3 compares the `.errors.txt` summary block before `====`, with per-case failure reason) and metrics |
 | `src/ratchet.ts` | `--ratchet` / `--ratchet-impl` lists: only go up, regression fails the run (per implementation × baseline) |
 | `src/run.ts` | smoke runner entry |
-| `src/adapters/` | reference `tsc-cli` adapter, per-case CLI adapter, batch protocol client, mock batch implementation |
+| `src/adapters/` | reference `tsc-cli` adapter (keeps multi-line elaboration/related text for T3), per-case CLI adapter, batch protocol client, mock batch implementation |
 | `config/baselines.json` | baseline definitions (three tsc versions × two corpora) |
 | `config/implementations.json` | third-party implementation registry (acquisition, CLI args, pins) |
 | `config/smoke-cases*.json` | reproducible smoke case lists per corpus |

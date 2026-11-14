@@ -186,6 +186,14 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 `totals.byTier` 给分布；`totals.messageMismatch` 给「位置命中但首行文案不同」的
 诊断条数（诊断级 T0−T2 差）；`samples.messageDiff` 给逐条文案差异样例。
 
+**T3 的整份渲染**：期望侧只取基线文件第一个 `====` 之前的摘要块（`====` 之后
+是用例源码标注，不属于诊断文本）；实现侧优先用适配器提供的 `CaseOutcome.fullText`
+（`tsc-cli` 适配器保留首行 + 缩进阐述/related 续行与顺序，`Diagnostic.fullText`
+同步携带），缺失时退回由诊断首行拼接（只可能到 `text`）。`totals.t3Failures` 给
+未达原因分布：`missing`（实现少报）/`extra`（多报）/`diagnostics`（集合不同）/
+`order`（次序不同）/`elaboration`（首行一致、缩进阐述不同）/`related`
+（related information 不同）/`other`；`samples.t3` 给样例。T3 是报告档不是门禁档。
+
 `--ratchet <file>` 维护 TSV 清单（`<case id>\t<tier>`，只登记 ≥T0 的用例）：
 改善自动写回、回落退出非零、先前登记的用例变成 SKIP 也视为回落。
 
@@ -272,6 +280,7 @@ adapter、不改它的源码；获取方式与能力差异登记在 `config/impl
 - `totals.misanchorCases` / `misanchorTotal`：**错锚**——同文件、同错误码、
   位置不同。这类差异先成对抵消，**不计入 fp 也不计入 miss**，单独报告；
 - `totals.byTier`：官方基线 T0–T3 一致性分布（只统计跑完的用例，见 §4.3）；
+- `totals.t3Failures` / `samples.t3`：T3 未达用例的原因分布与样例（见 §4.3）；
 - `totals.messageMismatch` / `samples.messageDiff`：位置命中但首行文案不同的
   诊断条数与逐条样例（诊断级 T0−T2 差）；
 - `samples.textDiff`：用例级「T0/T1 达成、T2 未达」的样例；
@@ -374,6 +383,7 @@ test/                  单测（bun test）
 - [x] 官方 harness 默认值对齐（§3.3：三档 baseArgs 显式化，期望/适配器参数分离）；
 - [x] 官方基线作为期望来源（§4.2；strada 平铺 + TS7 Go 分层两种布局，缺基线=无错）；
 - [x] TS7 官方基线 T0–T3 分档与 ratchet（§4.3）；
+- [x] T3 整份基线渲染：adapter `fullText` 保留 elaboration/related 续行，期望只比摘要块，失败按 missing/extra/diagnostics/order/elaboration/related 归因（§4.3，RESULTS 结论 10）；
 - [ ] 同源编译器生成期望（消除 npm 补丁版本与仓库基线的偏差，见 #34）；
 - [ ] 官方基线多值指令变体与配置命名复刻（#34）；
 - [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
