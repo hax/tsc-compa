@@ -104,13 +104,14 @@ jobs:
       - name: Run compatibility suite
         run: |
           BIN="$GITHUB_WORKSPACE/bin/$IN_IMPL"
+          export MAAT_BIN="$BIN"
           LIMIT_ARGS=""
           if [ "${IN_LIMIT}" != "0" ] && [ -n "${IN_LIMIT}" ]; then LIMIT_ARGS="--limit ${IN_LIMIT}"; fi
           echo "impl=$IN_IMPL sha=$IN_SHA baseline=$IN_BASELINE mode=$IN_MODE"
           bun src/run.ts \
             --baseline "$IN_BASELINE" \
             --corpus "$GITHUB_WORKSPACE/reference/corpus/tests/cases" \
-            --adapter "maat:$BIN" \
+            --adapter "maat-batch" \
             --mode "$IN_MODE" \
             $LIMIT_ARGS \
             --out out
