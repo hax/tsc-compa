@@ -6,12 +6,17 @@
   "description": "Implementation-agnostic compatibility test suite for TypeScript type checkers",
   "license": "Apache-2.0",
   "scripts": {
-    "check": "bun src/run.ts",
     "test": "bun test ./test",
+    "smoke": "bun src/run.ts",
+    "smoke:5.9": "bun src/run.ts --baseline 5.9.3 --adapter tsc-cli:node_modules/typescript-5-9/bin/tsc",
+    "smoke:6.0": "bun src/run.ts --baseline 6.0.3 --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc",
+    "smoke:7.1": "bun src/run.ts --baseline 7.1.0-beta --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc",
     "select-smoke": "bun scripts/select-smoke.ts"
   },
   "devDependencies": {
-    "typescript": "6.0.3"
+    "typescript-5-9": "npm:typescript@5.9.3",
+    "typescript-6-0": "npm:typescript@6.0.3",
+    "typescript-7-1": "npm:typescript@7.1.0-beta"
   },
   "engines": {
     "bun": ">=1.3"

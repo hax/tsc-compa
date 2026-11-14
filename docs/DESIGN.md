@@ -12,8 +12,9 @@ tsc-compa 是一个**与实现无关**的 TSC 兼容性测试套件：输入是�
 不绑定的东西：实现语言（Zig / Rust / Go / TS 均可）、tsc 基线版本（5.9.x /
 6.0.3 / 7.1.0-beta，规划中）、语料来源（官方 `tests/cases`，后续可对接官方基线）。
 
-v0 只做两件事：把协议、口径、指标固化下来；用一个小规模 smoke 集跑通全链路。
-v0 不做门禁、不跑全量、不接 CI。
+v0 把协议、口径、指标固化下来并用小规模 smoke 集跑通全链路；当前版本加入
+用例分类、多 tsc 基线（5.9.3 / 6.0.3 / 7.1.0-beta）与错锚口径。门禁、全量
+运行与官方基线仍未做，见 §10。
 
 ## 2. 流水线
 
@@ -21,7 +22,7 @@ v0 不做门禁、不跑全量、不接 CI。
 语料 tests/cases
    │  发现（discover.ts：scanCorpus / manifest）
    ▼
-用例（case.ts：指令解析 → 虚拟文件 + 有效编译选项）
+用例（case.ts：指令解析 → 虚拟文件 + 有效编译选项；classify.ts：分类标签）
    │
    ├──► 期望（tsc.ts：固定版本 tsc CLI + 选项 → 诊断列表，按内容哈希缓存）
    │
@@ -55,21 +56,52 @@ v0 分四类处理：
 完整表在 `src/case.ts` 的 `OPTION_DIRECTIVES` / `SKIP_DIRECTIVES` /
 `IGNORED_DIRECTIVES`，改表即改口径，需同时更新本节与测试。
 
-### 3.2 用例集范围
+### 3.2 用例集范围与分类
 
 - 只取 `compiler/` 与 `conformance/`（类型检查口径）。`fourslash/` 是 IDE
   语言服务用例，`project(s)/`、`transpile/`、`unittests/` 不在类型检查口径内，
   默认排除；后续若要覆盖 IDE 面，单独立一套 runner，不混进兼容性指标。
 - 虚拟文件只允许 `.ts` / `.mts` / `.cts`（`.d.ts` 以 `.ts` 结尾自然包含）；
-  含 `.js` / `.jsx` / `.json` 的用例 v0 SKIP。
+  含 `.js` / `.jsx` / `.json` 的用例 SKIP。
 - 虚拟路径不得含 `..`（防越界），违者 SKIP。
 
-### 3.3 默认编译选项（待对齐项）
+用例按**正交标签**分类（`src/classify.ts` 的 `CASE_TAGS`）：
 
-v0 的 `OFFICIAL_DEFAULTS` 是空集：指令没写到的选项用 **tsc CLI 的默认值**。
-官方 harness 的默认值（`testRunner` 里的 `defaultOptions`）与 CLI 默认值未必
-一致，这是 v0 已知的待对齐项；在 smoke 阶段不构成本结论，等接官方基线时统一
-核对（见 §7）。
+| 标签 | 含义 |
+| --- | --- |
+| `suite:compiler` / `suite:conformance` / `suite:other` | 语料大类（互斥，可覆盖全部用例） |
+| `files:single` / `files:multi` | 虚拟文件数 |
+| `lang:js` / `lang:jsx` | 含 JS/JSX 虚拟文件，或带 `@jsx` 指令 |
+| `shape:parser` | parser 目录/文件名（语法错误高发） |
+| `options:module` / `options:lib` / `options:emit` | 指令涉及模块解析 / lib / emit |
+| `env:skip` | 依赖 @types、工程布局的环境类用例 |
+| `expect:syntax` / `expect:no-errors`（运行期） | tsc 期望是语法错误 / 零诊断 |
+
+标签可重叠，`byClass` 里各标签的数字**不能相加**（`suite:*` 三类除外）。
+过滤用 `--exclude-class a,b`（命中任意即排除）与 `--only-class`（要求全部命中）；
+被排除的用例记 SKIP，原因写 `类排除:<tag>`，不进入兼容性分母。
+
+冒烟 manifest 生成（`scripts/select-smoke.ts`）时排除
+`shape:parser`、`lang:js`、`lang:jsx`、`options:*`、`env:skip`，并用目标基线的
+tsc 现场核对、剔除 `expect:syntax` 用例。
+
+### 3.3 版本默认值（已实测，仍是待对齐项）
+
+`OFFICIAL_DEFAULTS` 仍是空集：指令没写到的选项用**该基线 tsc 的 CLI 默认值**。
+实测三档默认值不同（详见 docs/RESULTS.md §结论 2）：
+
+| tsc | 默认 target（由 `--listFiles` 的 lib 链推断） | 默认 strict | `--target es5` |
+| --- | --- | --- | --- |
+| 5.9.3 | ES5（lib.es5 + dom） | false | 支持 |
+| 6.0.3 | ES2015（lib.es5 + es2015 + …） | true | 弃用（TS5107） |
+| 7.1.0-beta | ES2015 | true | 已移除（TS5108） |
+
+多基线的处理原则：
+
+1. **单基线自比是 harness 正确性检查**，必须 100%；
+2. 跨版本对照必须显式对齐口径：`--base-arg target=es2015 --base-arg strict=false`
+   会同时作用于期望生成与适配器输入（放在用例参数之前，case 指令仍优先）；
+3. 官方 harness 的 `defaultOptions` 尚未对齐（§10 待办）；对齐后本节改为官方默认值。
 
 ## 4. 期望来源
 
@@ -143,29 +175,60 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 - `totals.expectTotal` / `hitTotal` / `coverage`：官方期望诊断数、命中数、
   覆盖率（`hit / expect`，无期望时 `null`）；
 - `totals.passCases`：fp 与漏报都为 0 的用例数；`fpFreeCases`：只要求不误报；
-- `totals.misanchorTotal`：同文件同码但位置不同的条数（错锚噪声，同时体现在
-  fp 与 miss 两侧）；
+- `totals.misanchorCases` / `misanchorTotal`：**错锚**——同文件、同错误码、
+  位置不同。这类差异先成对抵消，**不计入 fp 也不计入 miss**，单独报告；
+- `byClass`：按 §3.2 标签聚合的同一组指标（含每类的覆盖率、fp、漏报、错锚）；
+- `totals.passCases`：fp、漏报、错锚都为 0 的用例数；
 - `byCode`：fp / miss 的码族 Top 15；
 - `skips`：跳过原因分类计数；
 - `meta.verdictEligible`：本次运行能否作为兼容性结论（`fixed` 模式、实现忽略
   选项时为 false）。
 
-v0 判定粒度：**错误码 + 文件 + 行 + 列**（L1）。宽度只有部分实现给得出，缺省
-时跳过比较；消息文案（L3）不比较。后续按需要增加 L2（位置/宽度）与 L3（文案）
+判定粒度：**错误码 + 文件 + 行 + 列**（L1）。宽度只有部分实现给得出，缺省时
+跳过比较；消息文案（L3）不比较。后续按需要增加 L2（位置/宽度）与 L3（文案）
 档位，并作为指标输出的一部分。
+
+错锚的正式口径：同一文件、同一错误码、位置不同的 expected × actual 各取一条
+成对抵消，计入 `misanchor`；剩余的 actual 才计 fp，剩余的 expected 才计 miss。
+覆盖率分母仍是全部期望诊断，分子只数「位置也一致」的命中，所以错锚会让覆盖率
+略低于 100%，差额由 misanchor 数字解释。自比时出现错锚即 harness 的 bug；
+跨版本时错锚是「判定一致、锚点口径不同」的信号，不能算成兼容性差异。
 
 `details.json` 保留逐用例的 fp/miss 点位，便于归因。
 
-## 7. 基线与多版本（后续）
+## 7. 基线与多版本
 
-- 基线文件按 `tsc 版本 × 语料版本 × 子集` 组织（`baselines/<tsc>-<corpus>.json`），
-  记录在册假阳性用例与码计数；`--gate` 用基线守门（新增 fp 即失败），
-  `--update-baseline` 收编。
-- 多 tsc 基线：5.9.x / 6.0.3 / 7.1.0-beta。同一份 harness 通过 `--tsc` 切换
-  期望来源；语料 tag 与 tsc 版本是两条独立配置轴，是否长期保留 5.9 需按差异
-  分析结果决定。
-- 官方基线对接：优先消费官方 `tests/baselines` 中的期望，逐步评估与「现场生成」
-  的差异，再决定正式口径。
+「tsc 版本 × 语料 tag」是两条独立配置轴，在 `config/baselines.json` 里成对定义：
+
+```json
+{
+  "corpora": { "strada": {"repo": "microsoft/TypeScript", "ref": "b465fdbf…"},
+               "v5.9.3": {"repo": "microsoft/TypeScript", "ref": "v5.9.3"} },
+  "baselines": [
+    { "id": "5.9.3", "tsc": "node_modules/typescript-5-9/bin/tsc",
+      "baseArgs": ["--noEmit", "--pretty", "false"],
+      "corpus": "v5.9.3", "manifest": "config/smoke-cases-5.9.json" },
+    { "id": "6.0.3", … },
+    { "id": "7.1.0-beta", … }
+  ]
+}
+```
+
+- 三个 tsc 版本用 npm alias 并存安装（`typescript-5-9` / `typescript-6-0` /
+  `typescript-7-1`），互不覆盖；`bun src/run.ts --baseline <id>` 自动取该版本的
+  tsc、基础参数、语料来源（进 `metrics.meta.corpusRef`）与默认 manifest。
+- 每个基线有自己的冒烟集（语料 tag 不同，用例 id 也不同）：strada 用
+  `config/smoke-cases.json`，5.9 用 `config/smoke-cases-5.9.json`。
+- 锚点专用用例集 `config/anchor-cases.json`：已知跨版本锚点不同的用例，用来
+  验证 misanchor 口径。
+- CI 用 workflow matrix 跑三档自比（每档 checkout 自己的语料 tag）。
+
+**是否长期保留 5.9**：目前的差异分析（docs/RESULTS.md）显示 5.9 与 6.0/7.1 的
+差异主要是默认值漂移（strict、target）加少量模块上下文差异，保留成本主要在
+语料与期望维护。该决策留待接入官方基线、扩大样本后再定。
+
+**官方基线对接**（未做）：优先消费官方 `tests/baselines` 中的期望，逐步评估与
+「现场生成」的差异，再决定正式口径。
 
 ## 8. 二进制分发
 
@@ -185,11 +248,16 @@ v0 判定粒度：**错误码 + 文件 + 行 + 列**（L1）。宽度只有部�
 src/case.ts            指令解析 / 选项推导 / 虚拟文件
 src/discover.ts        manifest 与语料扫描
 src/tsc.ts             期望生成（tsc CLI + 缓存）
-src/compare.ts         匹配与指标
+src/compare.ts         匹配与指标（含错锚配对、按类聚合）
+src/classify.ts        用例分类标签与过滤
+src/baselines.ts       多基线配置（tsc × 语料 tag）
 src/run.ts             运行器入口
 src/adapters/          cli / batch / mock-batch / 工厂
 scripts/select-smoke.ts  生成冒烟 manifest
-config/smoke-cases.json  冒烟用例集（入库、可复现）
+config/baselines.json    基线配置（三个 tsc × 两套语料）
+config/smoke-cases.json  strada 冒烟用例集（入库、可复现）
+config/smoke-cases-5.9.json  5.9 语料冒烟集
+config/anchor-cases.json     锚点专用用例集
 test/                  单测（bun test）
 ```
 
@@ -198,7 +266,8 @@ test/                  单测（bun test）
 - [ ] 批量适配器接真实实现（maat-zig 需要先提供 batch 模式或 shim）；
 - [ ] 官方 harness 默认选项对齐（§3.3）；
 - [ ] 官方基线作为期望来源（§7）；
-- [ ] 多 tsc 基线与语料 tag 组合（§7）；
+- [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
+- [ ] 用官方 harness 的 `defaultOptions` 替换 CLI 默认值（§3.3）；
 - [ ] 基线守门 `--gate` / `--update-baseline`；
 - [ ] 更大规模的用例选择策略（按码族/目录分层抽样，避免只覆盖编译器用例）；
 - [ ] 并行执行与结果合并（shard / merge）；

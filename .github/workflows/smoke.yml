@@ -1,5 +1,10 @@
-# 只跑冒烟：单元测试 + 用 tsc 自身作参考实现的自比，验证 harness 正确性。
-# 全量多基线套件后续单独接（见 docs/DESIGN.md）。
+# 单元测试 + 三档基线自比冒烟。
+#
+# 每个基线用 npm alias 装的 tsc 版本与它自己的语料 tag：
+#   5.9.3      -> microsoft/TypeScript@v5.9.3
+#   6.0.3      -> microsoft/TypeScript@b465fdbf…（strada）
+#   7.1.0-beta -> microsoft/TypeScript@b465fdbf…（strada）
+# 自比（期望源 = 实现）是 harness 正确性检查，不是兼容性结论。
 
 name: smoke
 
@@ -12,32 +17,56 @@ permissions:
   contents: read
 
 jobs:
-  smoke:
+  unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
-      - name: Checkout TypeScript corpus (pinned)
-        uses: actions/checkout@v4
-        with:
-          repository: microsoft/TypeScript
-          ref: b465fdbfe175304d9b977da137b2c178ae1091d3
-          path: reference/typescript-strada
       - name: Install deps
         run: bun install --frozen-lockfile
       - name: Unit tests
         run: bun test ./test
-      - name: Smoke — tsc self-compare (reference adapter)
-        env:
-          TSC_COMPA_CORPUS: ${{ github.workspace }}/reference/typescript-strada/tests/cases
-          TSC_BIN: ${{ github.workspace }}/node_modules/.bin/tsc
-          TSC_COMPA_ADAPTER_TSC: ${{ github.workspace }}/node_modules/.bin/tsc
-        run: bun src/run.ts --adapter tsc-cli --mode official --cases config/smoke-cases.json
+
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - baseline: 5.9.3
+            tsc: node_modules/typescript-5-9/bin/tsc
+            corpus-ref: v5.9.3
+          - baseline: 6.0.3
+            tsc: node_modules/typescript-6-0/bin/tsc
+            corpus-ref: b465fdbfe175304d9b977da137b2c178ae1091d3
+          - baseline: 7.1.0-beta
+            tsc: node_modules/typescript-7-1/bin/tsc
+            corpus-ref: b465fdbfe175304d9b977da137b2c178ae1091d3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout TypeScript corpus (${{ matrix.corpus-ref }})
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/TypeScript
+          ref: ${{ matrix.corpus-ref }}
+          path: reference/corpus
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Install deps
+        run: bun install --frozen-lockfile
+      - name: Smoke — self-compare (${{ matrix.baseline }})
+        run: >-
+          bun src/run.ts
+          --baseline ${{ matrix.baseline }}
+          --corpus ${{ github.workspace }}/reference/corpus/tests/cases
+          --adapter tsc-cli:${{ matrix.tsc }}
+          --out .cache/run
       - name: Upload metrics
         uses: actions/upload-artifact@v4
         with:
-          name: metrics
+          name: metrics-${{ matrix.baseline }}
           path: .cache/run/metrics.json
           retention-days: 7
