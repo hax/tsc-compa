@@ -1,0 +1,43 @@
+> 本 workflow 只跑冒烟：单元测试 + 用 tsc 自身作参考实现的自比，验证 harness 正确性。
+> 全量多基线套件后续单独接（见 docs/DESIGN.md）。
+
+name: smoke
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Checkout TypeScript corpus (pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/TypeScript
+          ref: b465fdbfe175304d9b977da137b2c178ae1091d3
+          path: reference/typescript-strada
+      - name: Install deps
+        run: bun install --frozen-lockfile
+      - name: Unit tests
+        run: bun test
+      - name: Smoke — tsc self-compare (reference adapter)
+        env:
+          TSC_COMPA_CORPUS: ${{ github.workspace }}/reference/typescript-strada/tests/cases
+          TSC_BIN: ${{ github.workspace }}/node_modules/.bin/tsc
+          TSC_COMPA_ADAPTER_TSC: ${{ github.workspace }}/node_modules/.bin/tsc
+        run: bun src/run.ts --adapter tsc-cli --mode official --cases config/smoke-cases.json
+      - name: Upload metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics
+          path: .cache/run/metrics.json
+          retention-days: 7
