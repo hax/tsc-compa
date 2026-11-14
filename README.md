@@ -214,9 +214,12 @@ bun src/run.ts --baseline 7.1.0-beta-official --expectation-source official-base
   --cases config/smoke-cases-ts71-official.json --adapter maat:<bin> --perf-ratio
 ```
 
-Ratios are wall-adjusted (baseline = empty program, measured 3× and min-taken) unless
-the implementation reports a Check phase. Numbers are written to `metrics.json` under
-`perf`; see `docs/DESIGN.md §11` for the caveats.
+The reference tsc runs on a fixed stratified sample (suite × lines bucket × expected-errors,
+default 300 cases, `--perf-sample`), each case once per side, with half of the sample
+reference-first and half implementation-first. The headline ratio is the accumulated
+Check phase when both sides report `--extendedDiagnostics`; otherwise wall-adjusted by an
+empty-program baseline (guarded to null when the reference's fixed cost dominates). Numbers
+are written to `metrics.json` under `perf`; see `docs/DESIGN.md §11` for the caveats.
 
 ## Licensing of the test corpus
 

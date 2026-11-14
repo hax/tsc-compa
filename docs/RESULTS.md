@@ -178,21 +178,22 @@ ratchet：`--ratchet config/ratchet-ts71-official.tsv` 当前登记 28 例（≥
 
 ## 结论 9：兼容性跑附带的性能附录（v0，2026-11-15）
 
-`--perf-ratio` 的本地演示（TS7 官方基线冒烟 28 例；语料为本地 `reference/typescript` 快照，与
-配置 pin 不同，仅验证管线）：
+本地演示（TS7 官方基线冒烟 28 例；语料是本地 `reference/typescript` 快照，与配置 pin 不同，
+仅验证管线；性能样本 20 例、seed 固定、顺序对半对冲）：
 
-- **Check 口径可用**：`tsc-cli` 适配器现在会解析 `--extendedDiagnostics` 并回填每案 `checkMs`；
-  自比（实现 = tsc 7.1.0-beta，参考 = 同一 tsc）10 例样本得到 **Check ratio 0.984**（≈1，符合预期），
-  `metric=check`。这意味着任何 tsc 风格、支持 `--extendedDiagnostics` 的实现（tsrs / tsc-rs /
-  ts-rust）都能直接得到 Check 相位比。
-- **maat 侧暂不可比**：maat 适配器不提供 Check 相位，wall 差分在「参考 tsc 每案固定成本
-  （启动/lib）占主导」时被守卫判为不可靠 → ratio=null，并给出 warning；这是有意为之，
-  不是数据缺失。要得到 maat 的附带性能比，需要 maat 侧增加相位输出（每案检查耗时/Check time），
-  或用批量协议自报 `checkMs`。
-- **成本**：参考 tsc 只跑固定分层样本（默认 300 例），实现侧计时在正常兼容跑里免费；幂等 seed、
-  同案交错（实现跑完立即跑同案 tsc），避免早晚时间窗带来的页缓存/JIT 偏差。
-- **不门禁**：性能附录不参与退出码与判定；输出在 `metrics.json` 的 `perf` 字段（sample / metric /
-  impl / reference / ratio / warnings）。
+| 实现（适配器） | 正确性 | Check 累加比 | 逐案 Check 中位数 | 备注 |
+| --- | --- | ---: | ---: | --- |
+| tsc 7.1.0-beta 自比（tsc-cli） | 自洽 | 0.992 | 0.995 | sanity，≈1 |
+| tsrs 0.25.0（tsc-cli:<bin>） | 28/28 通过、覆盖 100% | 0.365 | 0.366 | P25 0.359 / P75 0.373 |
+| maat 主线（maat:<bin>） | 固定口径 10/28 | n/a | n/a | 无 Check 相位，wall 差分被守卫判不可靠 |
+
+- 用时增量：28 例正确性 + 20 例样本，自比 10.7s、tsrs 6.7s、maat 5.7s；参考跑约 3.7s（≈185ms/案），
+  按 300 例约 55s，在「≤1 分钟」预算内。样本组成示例：compiler 16 / conformance 4，行数档 <=50 18 / 51–200 2，
+  错误 17 / 无错 3，对冲顺序 10/10。
+- tsc-cli 适配器解析 `--extendedDiagnostics` 回填 `checkMs`，因此任何 tsc 风格实现（tsrs/tsc-rs/ts-rust）
+  都能直接得到 Check 比值；maat 要进同一张表，需要 maat 侧自报每案检查耗时（或批量协议 `checkMs`），
+  这是 M 级后续。
+- 不门禁：不参与退出码；结果只在 `metrics.json.perf`。
 
 ## 局限
 

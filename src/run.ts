@@ -10,7 +10,7 @@
 // 运行结果写 <out>/metrics.json 与 <details.json>，并在 stdout 打印摘要。
 // v0 没有门禁（--gate 留给后续接入基线）；退出码恒 0，除非运行本身失败。
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createAdapter } from "./adapters/index.ts";
 import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, type Metrics, type RunMeta } from "./compare.ts";
@@ -19,9 +19,16 @@ import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT
 import { classifyCase, exclusionOf, parseTagList, runtimeTags } from "./classify.ts";
 import { loadManifest, readCase } from "./discover.ts";
 import { expectationOf, resolveTscPath, shortCaseName, tscVersionOf, type ExpectationResult } from "./tsc.ts";
-import { expectationFromOfficialBaseline } from "./officialBaseline.ts";
+import { baselineFileOf, expectationFromOfficialBaseline } from "./officialBaseline.ts";
 import { toTscArgs } from "./case.ts";
-import { buildPerfReport, runReference, selectPerfSample, type ReferenceRun } from "./perf.ts";
+import {
+  buildPerfReport,
+  planPerfOrder,
+  runReference,
+  selectPerfSample,
+  type PerfCaseMeta,
+  type ReferenceRun,
+} from "./perf.ts";
 import type { Adapter, CaseFile } from "./types.ts";
 
 const DEFAULT_BASE_ARGS = ["--noEmit", "--ignoreConfig", "--pretty", "false"];
@@ -195,10 +202,12 @@ async function runPerfAppendix(opts: {
   implWalls: Map<string, number>;
   implCheckMs: Map<string, number>;
   reference: Map<string, ReferenceRun>;
+  meta: Map<string, PerfCaseMeta> | null;
+  order: Map<string, "ref-first" | "impl-first">;
   records: CaseRecord[];
   failed: number;
 }): Promise<ReturnType<typeof buildPerfReport>> {
-  const { adapter, args, tscBin, perfBaseArgs, implWalls, implCheckMs, reference, records, failed } = opts;
+  const { adapter, args, tscBin, perfBaseArgs, implWalls, implCheckMs, reference, meta, order, records, failed } = opts;
   const warnings: string[] = [];
   if (args.mode === "fixed") warnings.push("fixed 模式下实现忽略用例选项，性能比值仅作流水线参考");
   const sampleIds = [...reference.keys()];
@@ -247,15 +256,25 @@ async function runPerfAppendix(opts: {
     implEmptyWallMs,
     reference,
     agreementIds,
+    meta: meta ?? undefined,
+    order,
     warnings,
   });
 
   const fmt = (v: number | null): string => (v === null ? "n/a" : v.toFixed(3));
+  const agg = (a: { median: number; geomean: number; p25: number; p75: number } | null): string =>
+    a === null ? "n/a" : `median=${fmt(a.median)} geomean=${fmt(a.geomean)} P25=${fmt(a.p25)} P75=${fmt(a.p75)}`;
   console.log(
     `性能附录（样本 ${report.sample.size}/${sampleIds.length}、参考失败 ${failed}）：` +
-      `实现 ${report.impl.meanWallMs.toFixed(1)}ms/案、tsc ${report.reference.meanWallMs.toFixed(1)}ms/案、` +
-      `wall-adj ratio=${fmt(report.ratio.wallAdjusted)}；一致子集 ${report.ratio.agreementSubset.cases} 例 ` +
-      `ratio=${fmt(report.ratio.agreementSubset.wallAdjusted)}`,
+      `实现 ${report.impl.meanWallMs.toFixed(1)}ms/案、tsc ${report.reference.meanWallMs.toFixed(1)}ms/案；` +
+      `累加 Check=${fmt(report.ratio.check)}、wall-adj=${fmt(report.ratio.wallAdjusted)}；` +
+      `逐案 check[${agg(report.ratio.perCase.check)}]、wall[${agg(report.ratio.perCase.wallAdjusted)}]；` +
+      `一致子集 ${report.ratio.agreementSubset.cases} 例 check=${fmt(report.ratio.agreementSubset.check)}`,
+  );
+  const comp = report.sample.composition;
+  console.log(
+    `性能样本组成：suite=${JSON.stringify(comp.suite)} 行数档=${JSON.stringify(comp.lineBucket)} ` +
+      `错误=${JSON.stringify(comp.errorPresence)} 顺序=${JSON.stringify(comp.order)}`,
   );
   for (const w of report.warnings) console.warn(`性能附录警告：${w}`);
   return report;
@@ -293,10 +312,30 @@ async function main(): Promise<void> {
   }
 
   const ids = loadManifest(casesPath).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
-  // 性能附录的样本在跑之前定下来（确定性分层抽样），参考 tsc 在逐案循环里交错跑。
-  const perfSampleIds = args.perfRatio ? new Set(selectPerfSample(ids, args.perfSample, args.perfSeed)) : null;
+  // 性能附录的样本在跑之前定下来（确定性分层抽样：suite × 行数档 × 有无期望错误），
+  // 参考 tsc 在逐案循环里与实现交错跑。预扫描只读主文件计行数 + （官方基线模式下）
+  // 一次基线文件存在性检查，用于「有无期望错误」分层；代价随语料线性、约百毫秒级。
+  let perfMeta: Map<string, PerfCaseMeta> | null = null;
+  let perfSampleIds: Set<string> | null = null;
+  let perfOrder = new Map<string, "ref-first" | "impl-first">();
+  if (args.perfRatio) {
+    perfMeta = new Map<string, PerfCaseMeta>();
+    for (const id of ids) {
+      let lines = 0;
+      try {
+        lines = readFileSync(join(args.corpus!, id), "utf8").split(/\r?\n/).length;
+      } catch {
+        lines = 0;
+      }
+      const hasErrors =
+        args.expectationSource === "official-baseline" ? baselineFileOf(args.corpus!, id) !== null : undefined;
+      perfMeta.set(id, { lines, hasErrors });
+    }
+    const sample = selectPerfSample(ids, args.perfSample, args.perfSeed, perfMeta);
+    perfSampleIds = new Set(sample);
+    perfOrder = planPerfOrder(sample, args.perfSeed);
+  }
   const perfReference = new Map<string, ReferenceRun>();
-  const perfCaseArgs = new Map<string, string[]>();
   // 参考侧与实现侧必须拿到同一组 CLI 参数：这里用「适配器侧参数」（用例指令 +
   // --base-arg/--adapter-arg），不含期望侧的官方默认值（那是给期望生成用的，
   // 例如 skipDefaultLibCheck 会让 tsc 少做 lib 检查，混入会系统性压低参考时间）。
@@ -368,16 +407,21 @@ async function main(): Promise<void> {
       records.push(skipRecord(id, reason, tags));
       continue;
     }
+    const perfOrderKind = perfSampleIds !== null && perfSampleIds.has(id) ? perfOrder.get(id) : undefined;
+    let refRun: ReferenceRun | undefined;
+    if (perfOrderKind === "ref-first") {
+      // 顺序对冲的前一半：先跑官方参考，再跑实现（同参数、同案、紧邻）。
+      refRun = runReference(tscBin, parsed.files, [...adapterArgs, "--extendedDiagnostics"], args.perfTimeoutMs);
+    }
     const implStarted = performance.now();
     const outcome = await adapter.check({ id, files: parsed.files, options, args: adapterArgs });
     const implWallMs = performance.now() - implStarted;
     if (args.perfRatio && outcome.status === "ok") {
       perfImplWalls.set(id, implWallMs);
       if (typeof outcome.checkMs === "number") perfImplChecks.set(id, outcome.checkMs);
-      if (perfSampleIds!.has(id)) {
-        // 同案交错：实现刚跑完，紧接着跑官方 tsc（同参数），两侧经历同一时间窗。
-        perfCaseArgs.set(id, adapterArgs);
-        const refRun = runReference(tscBin, parsed.files, [...adapterArgs, "--extendedDiagnostics"], args.perfTimeoutMs);
+      if (perfOrderKind !== undefined) {
+        // 后一半：实现刚跑完，紧接着跑官方 tsc（同参数），两侧经历同一时间窗。
+        refRun ??= runReference(tscBin, parsed.files, [...adapterArgs, "--extendedDiagnostics"], args.perfTimeoutMs);
         perfReference.set(id, refRun);
         if (refRun.status !== "ok") perfReferenceFailed++;
       }
@@ -405,6 +449,8 @@ async function main(): Promise<void> {
       implWalls: perfImplWalls,
       implCheckMs: perfImplChecks,
       reference: perfReference,
+      meta: perfMeta,
+      order: perfOrder,
       records,
       failed: perfReferenceFailed,
     });

@@ -383,17 +383,23 @@ test/                  单测（bun test）
 
 ## 11. 性能附录（`--perf-ratio`，v0）
 
-兼容性跑的主目标是正确性；性能只是**附录**：不参与退出码、不设门禁、不改变判定。
-打开 `--perf-ratio` 后：
+兼容性跑的主目标是正确性；性能只是附录：不参与退出码、不设门禁、不改变判定。打开 `--perf-ratio` 后：
 
 - **实现侧计时免费**：正常兼容跑里在 `adapter.check` 前后计时，不额外跑实现；适配器若在
-  `CaseOutcome.checkMs` 里自报检查耗时（`tsc-cli` 适配器用 `--extendedDiagnostics` 解析），
-  性能附录优先用 Check 相位口径；
-- **参考侧只跑固定样本**：按 suite（路径第一段）分层的确定性抽样（默认 300 例，`--perf-sample` 可调），每案用官方 tsc 以 `--extendedDiagnostics` 跑一次新进程；成本约 20 秒量级；
-- **空程序基线**：两边各测 3 次空程序、取最小 wall，作固定开销估计（COST 项）；
-- **比值**：`(Σ实现 − N·实现基线) / (Σtsc − N·tsc基线)`，只报比值不报绝对结论；同时给原始累加时间、样本量、参考失败数、以及「判定完全一致（fp/miss/错锚=0）子集」上的比值；
-- **口径**：两侧都拿到 Check 相位时用 Check 累加比（tsc 风格实现均可）；实现没有相位时退到 wall−基线，并在 `warnings` 里标注「含用户 parse/bind/渲染、不可与 Check 横比」；参考侧每案固定成本占主导时 wall 差分会被守卫判为 null（不给不可靠的值）；
-- **公平性**：样本同一批、两边都按每案新进程（CLI one-shot）执行；固定 seed 跨轮可比；tsc 计数（Symbols/Types/Instantiations 等）有就记在 `perf.reference.counts` 作为工作量线索。
-- **已知局限**：空程序基线是近似，若分母/分子非正则比值标 null 并警告；跨实现比较只在同口径、同执行模式、同基线版本下成立。
-
-输出在 `metrics.json` 的 `perf` 字段：`sample / metric / impl / reference / ratio / warnings`。
+  `CaseOutcome.checkMs` 里自报每案检查耗时（`tsc-cli` 适配器解析 `--extendedDiagnostics` 的
+  `Check time:` 得到），优先用 Check 相位口径。
+- **固定分层样本**：跑之前预扫描（读主文件行数；官方基线模式下用 `baselineFileOf` 判断是否存在
+  `.errors.txt`），按 suite × 行数档（≤50 / 51–200 / 201–1000 / >1000）× 有无期望错误分层，
+  固定 seed/hash 排序抽样（默认 300 例，`--perf-sample` 可调）；每案每侧只跑一次，不做多轮重复。
+- **顺序对半对冲**：样本按 hash 排序后前一半「参考先跑、实现后跑」，后一半「实现先跑、参考后跑」；
+  同案两侧紧邻执行，且都用每案新进程 CLI、同参数（`--noEmit --pretty false --extendedDiagnostics`；
+  实现支持时可另加 `--singleThreaded`/`--checkers 1`）。
+- **空程序基线**：参考侧测 5 次、实现侧测 3 次空项目，各取最小作为固定成本估计。
+- **口径**：两侧都有 Check 相位 → 累加 Check 比 + 逐案 Check 比值（中位数/几何均值/P25/P75）；
+  实现没有相位 → wall − 空程序基线，且当参考每案固定成本占主导时守卫为 null 并告警，不给假精确值。
+  另给「判定完全一致（fp/miss/错锚均为 0）」子集的比值。
+- **样本组成**：`perf.sample.composition` 记录 suite/行数档/错误有无/对冲顺序，用于检查分层是否合理。
+- **公平性说明**：`perf.warnings` 汇总 fixed 模式、实现无相位、参考失败、基线不稳等不对称项；
+  跨实现比较只在同口径、同执行模式、同版本 tsc 下成立。
+- **成本**：300 例参考 tsc（7.1 native 约 60–200ms/案）约 20–60 秒；默认关闭，CI 手动开启。
+- 输出：`metrics.json` 的 `perf` 段（sample/metric/impl/reference/ratio/warnings）。

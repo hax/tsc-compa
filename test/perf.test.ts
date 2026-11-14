@@ -2,10 +2,14 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  aggregateRatios,
   buildPerfReport,
+  lineBucketOf,
   parseExtendedDiagnostics,
+  planPerfOrder,
   sampleKey,
   selectPerfSample,
+  type PerfCaseMeta,
   type ReferenceRun,
 } from "../src/perf.ts";
 
@@ -186,5 +190,104 @@ describe("buildPerfReport：Check 相位口径", () => {
     expect(report.ratio.check).toBeCloseTo(20 / 10, 5);
     expect(report.ratio.agreementSubset.check).toBeCloseTo(2, 5);
     expect(report.impl.checkSumMs).toBeCloseTo(20, 5);
+  });
+});
+
+
+describe("分层抽样与顺序对冲", () => {
+  const ids = [
+    ...Array.from({ length: 20 }, (_, i) => `compiler/small${i}.ts`),
+    ...Array.from({ length: 20 }, (_, i) => `compiler/big${i}.ts`),
+    ...Array.from({ length: 20 }, (_, i) => `conformance/clean${i}.ts`),
+    ...Array.from({ length: 20 }, (_, i) => `conformance/err${i}.ts`),
+  ];
+  const meta = new Map<string, PerfCaseMeta>();
+  for (const id of ids) {
+    if (id.includes("big")) meta.set(id, { lines: 500, hasErrors: true });
+    else if (id.includes("small")) meta.set(id, { lines: 10, hasErrors: false });
+    else if (id.includes("clean")) meta.set(id, { lines: 120, hasErrors: false });
+    else meta.set(id, { lines: 1200, hasErrors: true });
+  }
+
+  test("行数档分档", () => {
+    expect(lineBucketOf(10)).toBe("<=50");
+    expect(lineBucketOf(120)).toBe("51-200");
+    expect(lineBucketOf(500)).toBe("201-1000");
+    expect(lineBucketOf(5000)).toBe(" >1000");
+  });
+
+  test("suite × 行数档 × 有无错误 都进入样本", () => {
+    const sample = selectPerfSample(ids, 24, "seed", meta);
+    expect(sample.length).toBe(24);
+    const buckets = new Set(sample.map((id) => lineBucketOf(meta.get(id)!.lines)));
+    const suites = new Set(sample.map((id) => id.split("/")[0]));
+    const errs = new Set(sample.map((id) => meta.get(id)!.hasErrors));
+    expect(buckets.size).toBe(4);
+    expect(suites.size).toBe(2);
+    expect(errs.size).toBe(2);
+  });
+
+  test("顺序对半对冲且确定", () => {
+    const sample = selectPerfSample(ids, 10, "seed", meta);
+    const plan = planPerfOrder(sample, "seed");
+    const values = [...plan.values()];
+    expect(values.filter((v) => v === "ref-first")).toHaveLength(5);
+    expect(values.filter((v) => v === "impl-first")).toHaveLength(5);
+    expect(planPerfOrder(sample, "seed")).toEqual(plan);
+  });
+});
+
+describe("逐案聚合", () => {
+  test("median/geomean/P25/P75", () => {
+    const a = aggregateRatios([1, 2, 3, 4])!;
+    expect(a.n).toBe(4);
+    expect(a.median).toBeCloseTo(2.5, 6);
+    expect(a.geomean).toBeCloseTo(Math.sqrt(Math.sqrt(1 * 2 * 3 * 4)), 6);
+    expect(a.p25).toBeCloseTo(1.75, 6);
+    expect(a.p75).toBeCloseTo(3.25, 6);
+    expect(aggregateRatios([0, -1, Number.NaN])).toBeNull();
+  });
+});
+
+describe("报告组成与逐案聚合", () => {
+  test("composition 与 perCase 在样本上生效", () => {
+    const sampleIds = ["compiler/a.ts", "compiler/b.ts", "conformance/c.ts"];
+    const mk = (wallMs: number, checkMs: number): ReferenceRun => ({ status: "ok", wallMs, stats: { checkMs } });
+    const reference = new Map<string, ReferenceRun>([
+      ["__empty__", mk(10, 1)],
+      ["compiler/a.ts", mk(20, 10)],
+      ["compiler/b.ts", mk(22, 10)],
+      ["conformance/c.ts", mk(24, 10)],
+    ]);
+    const report = buildPerfReport({
+      seed: "s",
+      requested: 3,
+      sampleIds,
+      implWalls: new Map(sampleIds.map((id) => [id, 12])),
+      implCheckMs: new Map(sampleIds.map((id) => [id, 5])),
+      implEmptyWallMs: 2,
+      reference,
+      agreementIds: new Set(["compiler/a.ts"]),
+      meta: new Map<string, PerfCaseMeta>([
+        ["compiler/a.ts", { lines: 10, hasErrors: false }],
+        ["compiler/b.ts", { lines: 500, hasErrors: true }],
+        ["conformance/c.ts", { lines: 200, hasErrors: false }],
+      ]),
+      order: new Map<string, "ref-first" | "impl-first">([
+        ["compiler/a.ts", "ref-first"],
+        ["compiler/b.ts", "impl-first"],
+        ["conformance/c.ts", "ref-first"],
+      ]),
+      warnings: [],
+    });
+    expect(report.sample.composition.suite).toEqual({ compiler: 2, conformance: 1 });
+    expect(report.sample.composition.lineBucket["<=50"]).toBe(1);
+    expect(report.sample.composition.errorPresence).toEqual({ clean: 2, errors: 1 });
+    expect(report.sample.composition.order).toEqual({ "ref-first": 2, "impl-first": 1 });
+    expect(report.metric).toBe("check");
+    expect(report.ratio.perCase.check!.n).toBe(3);
+    // 逐案 check ratio 均为 0.5
+    expect(report.ratio.perCase.check!.median).toBeCloseTo(0.5, 6);
+    expect(report.ratio.agreementSubset.check).toBeCloseTo(0.5, 6);
   });
 });
