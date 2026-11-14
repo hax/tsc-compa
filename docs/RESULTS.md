@@ -132,10 +132,18 @@ miss 两侧**，跨版本对照时可以直接看出「判定一致、位置口�
 
 | 运行 | 用例 | ≥T0 location | ≥T2 text | T3 full | messageMismatch | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
-| tsc 7.1.0-beta 自比（冒烟 28） | 28 | 22（78.6%） | 22 | 4 | 0 | 6 例 none 来自 npm 补丁与仓库快照漂移（TS18050×8 等） |
+| tsc 7.1.0-beta 自比（冒烟 28） | 28 | 28（100%） | 28 | 4 | 0 | 修正基线映射后 0 假阳性 |
 | tsc 7.1.0-beta 自比（错误样本 120） | 120 | 119（99.2%） | 118（98.3%） | 0 | 1 | T3 全灭：adapter 不产出 elaboration/related 行 |
 | maat 主线 fixed 口径（冒烟 28） | 28 | 10（35.7%） | 8（28.6%） | 6 | 5 | 位置不一致 18 例属检查面差异，掩盖了文案差 |
 | maat 主线 fixed 口径（错误样本 120） | 120 | 26（21.7%） | 19（15.8%） | 0 | 17 | 漏报 286 条是主因 |
+
+**修正记录（2026-11-15）**：本表初版里 tsc 自比只有 22/28、6 例 none，并把原因归为
+「npm 补丁与仓库快照漂移」——那是错的。根因是 `baselineFileOf` 只按「id 相对路径」
+和「根目录平铺」两档找基线，漏了 TS7 Go 布局把 conformance 子目录**拍平**到
+`baselines/reference/conformance/<basename>.errors.txt` 的第三档，导致 6 个 conformance
+用例被当成「无基线=无期望错误」。修好映射后 tsc 自比与第三方实现（tsrs）都是
+28/28、0 假阳性、覆盖 76/76 = 100%。
+
 
 读法：T0−T2 = 判定/锚点一致但首行文案不同；T2−T3 = elaboration/related 文本与
 顺序未对齐（adapter 协议目前只回单行 message，T3 要等「整份基线渲染」能力）。
@@ -147,8 +155,26 @@ miss 两侧**，跨版本对照时可以直接看出「判定一致、位置口�
 - elaboration 内联进首行（`A & B` / `never` 一行带 Property 说明）；
 - 联合收窄与操作数类型差：`"c" | "d"` vs 更宽联合、`number` vs `1 | 3`、`""` vs `''`。
 
-ratchet：`--ratchet config/ratchet-ts71-official.tsv` 首次运行登记 22 例（≥T0），
-复跑无回落、清单幂等；回落会以非零退出，CI 用同一份清单门禁。
+ratchet：`--ratchet config/ratchet-ts71-official.tsv` 当前登记 28 例（≥T0），
+复跑无回落、清单幂等；回落会以非零退出，CI 用同一份清单门禁。2026-11-15 修
+基线映射后一次运行改善 6 例（原 22 例 → 28 例）。
+
+## 结论 8：第三方实现接入（tsrs / oxc-tsrs）
+
+`tsrs` 是 oxc 生态的 TS7 兼容实现（Rust），CLI 与 tsc 兼容、支持
+`--extendedDiagnostics`/`--singleThreaded`，pin 的 TS7 提交（`3e9236361fa9`）
+与 tsc-compa 的 7.1.0-beta 一致。它通过现有 `tsc-cli` 适配器直接驱动
+（`config/implementations.json` 登记获取方式），不需要写内部适配器。
+
+| 运行 | 用例 | 完全通过 | 假阳性 | 覆盖 | 分档 |
+| --- | --- | --- | --- | --- | --- |
+| tsrs 0.25.0（npm）× `7.1.0-beta-official` | 28 | 28 | 0 | 76/76 = 100% | T2 24 / T3 4 |
+| tsrs 0.21.0（源码构建）× `7.1.0-beta-official` | 28 | 28 | 0 | 76/76 = 100% | T2 24 / T3 4 |
+| tsrs 0.21.0 × `7.1.0-beta`（strada 现场期望） | 28 | 28 | 0 | 48/48 = 100% | T2 13 / T3 15 |
+
+同批对照：`tsc-rs`（kazhiramatsu）与 `ts-rust`（pingdotgg）源码构建二进制在
+同一冒烟集上结果与 tsrs 一致（28/28、0 fp；构建与相位能力见任务报告）。
+
 
 ## 局限
 

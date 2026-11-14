@@ -1,0 +1,127 @@
+# 第三方实现冒烟：按 config/implementations.json 获取某个 TSC 兼容实现的可执行文件，
+# 用同一套 harness + 同一基线与期望跑冒烟集（T0–T3 / ratchet）。
+#
+# 只手动触发。实现只通过公开 CLI 驱动（tsc-cli 适配器），不为任何实现写内部 adapter；
+# 获取方式（npm 预编译 / cargo 构建 / 本地二进制）登记在 config/implementations.json。
+#
+# 已知限制：npm 方式当前只覆盖有平台预编译包的实现（如 tsrs）；其余实现需自行构建后
+# 用 --source local 或把二进制路径传入（见 docs/CI.md）。
+name: third-party-impl
+
+on:
+  workflow_dispatch:
+    inputs:
+      impl:
+        description: "config/implementations.json 里的实现名"
+        default: "tsrs"
+      baseline:
+        description: "基线 id（决定语料仓与期望源）"
+        type: choice
+        options: ["7.1.0-beta-official", "7.1.0-beta"]
+        default: "7.1.0-beta-official"
+      limit:
+        description: "只跑前 N 例（0 = 全部）"
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      IN_IMPL: ${{ inputs.impl }}
+      IN_BASELINE: ${{ inputs.baseline }}
+      IN_LIMIT: ${{ inputs.limit }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Resolve corpus ref and implementation plan
+        id: plan
+        run: |
+          bun -e '
+            const c = require("./config/baselines.json");
+            const b = c.baselines.find((x) => x.id === process.env.IN_BASELINE);
+            if (!b) { console.error("unknown baseline: " + process.env.IN_BASELINE); process.exit(1); }
+            const corpus = c.corpora[b.corpus];
+            console.log("ref=" + corpus.ref);
+            console.log("corpus=" + (process.env.IN_BASELINE === "7.1.0-beta-official"
+              ? "reference/corpus/tsc/testdata/tests/cases"
+              : "reference/corpus/tests/cases"));
+            console.log("expect=" + (process.env.IN_BASELINE === "7.1.0-beta-official" ? "official-baseline" : "tsc"));
+          ' >> "$GITHUB_OUTPUT"
+          bun -e '
+            const r = require("./config/implementations.json").implementations[process.env.IN_IMPL];
+            if (!r) { console.error("unknown implementation: " + process.env.IN_IMPL); process.exit(1); }
+            console.log("cli_args=" + (r.cliArgs || []).join(" "));
+          ' >> "$GITHUB_OUTPUT"
+
+      - name: Checkout corpus (${{ inputs.baseline }})
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/TypeScript
+          ref: ${{ steps.plan.outputs.ref }}
+          path: reference/corpus
+
+      - name: Install tsc-compa deps
+        run: bun install --frozen-lockfile
+
+      - name: Fetch implementation（config/implementations.json）
+        id: impl
+        run: |
+          BIN=$(bun scripts/install-impl.ts --name "$IN_IMPL" --dest .tools | tail -1)
+          echo "bin=$BIN" >> "$GITHUB_OUTPUT"
+          "$BIN" --version || true
+
+      - name: Run third-party smoke
+        env:
+          TSC_COMPA_ADAPTER_ARGS: ${{ steps.plan.outputs.cli_args }}
+          CORPUS: ${{ steps.plan.outputs.corpus }}
+          EXPECT: ${{ steps.plan.outputs.expect }}
+        run: |
+          LIMIT_ARGS=""
+          if [ -n "$IN_LIMIT" ] && [ "$IN_LIMIT" != "0" ]; then LIMIT_ARGS="--limit $IN_LIMIT"; fi
+          RATCHET_ARGS=""
+          if [ "$IN_BASELINE" = "7.1.0-beta-official" ]; then
+            RATCHET_ARGS="--ratchet config/ratchet-ts71-official.tsv"
+          fi
+          bun src/run.ts \
+            --baseline "$IN_BASELINE" \
+            --corpus "$CORPUS" \
+            --adapter "tsc-cli:${{ steps.impl.outputs.bin }}" \
+            --mode official \
+            --expectation-source "$EXPECT" \
+            $LIMIT_ARGS $RATCHET_ARGS \
+            --out out
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "## third-party: $IN_IMPL × $IN_BASELINE"
+            echo ""
+            echo "- implementation: $IN_IMPL（${{ steps.impl.outputs.bin }}）"
+            echo "- adapter args: ${{ steps.plan.outputs.cli_args }}"
+            echo "- corpus: ${{ steps.plan.outputs.corpus }}"
+            echo ""
+            if [ -f out/metrics.json ]; then
+              echo '```json'
+              jq '{totals: .totals, byTier: .totals.byTier}' out/metrics.json 2>/dev/null || head -c 2000 out/metrics.json
+              echo '```'
+            else
+              echo "没有产出 metrics.json"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: metrics-${{ inputs.impl }}-${{ inputs.baseline }}
+          path: out/metrics.json
+          if-no-files-found: ignore
+          retention-days: 14

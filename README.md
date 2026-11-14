@@ -145,6 +145,31 @@ set, so its numbers are pipeline validation only. `--mode official` honors case
 directives; a run is only a compatibility verdict (`verdictEligible`) when the
 adapter also accepts external options.
 
+## Third-party implementations
+
+Any checker that ships a tsc-compatible CLI can be driven through the existing
+`tsc-cli` adapter — no internal adapter is written for it. Acquisition (npm
+prebuilt / cargo build / local binary), fixed CLI args, upstream pin and phase
+metrics are registered in [`config/implementations.json`](config/implementations.json):
+
+```bash
+# fetch the implementation per its registry entry and print the binary path
+BIN=$(bun scripts/install-impl.ts --name tsrs --dest .tools | tail -1)
+
+# run the same smoke suite against it on the TS7 official baselines
+TSC_COMPA_ADAPTER_ARGS="--singleThreaded" \
+bun src/run.ts --baseline 7.1.0-beta-official \
+  --corpus /tmp/ts71-corpus/tsc/testdata/tests/cases \
+  --adapter "tsc-cli:$BIN" --mode official \
+  --expectation-source official-baseline \
+  --ratchet config/ratchet-ts71-official.tsv
+```
+
+`.github/workflows/third-party.yml` does the same on CI (manual dispatch,
+implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
+100% coverage on both the TS7 official baselines and the strada 7.1 baseline
+(see [docs/RESULTS.md](docs/RESULTS.md)).
+
 ## Layout
 
 | path | what |
@@ -154,12 +179,13 @@ adapter also accepts external options.
 | `src/baselines.ts` | baseline config (tsc × corpus tag) |
 | `src/discover.ts` | corpus scanning and manifests |
 | `src/tsc.ts` | expected diagnostics from a pinned tsc CLI (cached) |
-| `src/officialBaseline.ts` | expectation source reading official `.errors.txt` baselines (strada flat layout + TS7 Go nested layout; missing baseline = no errors) |
+| `src/officialBaseline.ts` | expectation source reading official `.errors.txt` baselines (strada flat layout + TS7 Go layout incl. flattened suites; missing baseline = no errors) |
 | `src/compare.ts` | matching (incl. mis-anchor pairing), T0-T3 agreement ladder and metrics |
 | `src/ratchet.ts` | `--ratchet` list: only goes up, regression fails the run |
 | `src/run.ts` | smoke runner entry |
 | `src/adapters/` | reference `tsc-cli` adapter, per-case CLI adapter, batch protocol client, mock batch implementation |
 | `config/baselines.json` | baseline definitions (three tsc versions × two corpora) |
+| `config/implementations.json` | third-party implementation registry (acquisition, CLI args, pins) |
 | `config/smoke-cases*.json` | reproducible smoke case lists per corpus |
 | `config/anchor-cases.json` | cases with known cross-version anchor differences |
 | `config/official-baseline-cases.json` | sample case list consumable from official baselines |
@@ -168,8 +194,10 @@ adapter also accepts external options.
 | `config/ratchet-ts71-official.tsv` | T0–T3 ratchet list for the TS7 official baselines |
 | `scripts/select-smoke.ts` | regenerate class-filtered smoke case lists |
 | `scripts/select-official-baseline-cases.ts` | scan a corpus for cases consumable from official baselines |
+| `scripts/install-impl.ts` | fetch a third-party implementation per its registry entry |
 | `.github/workflows/smoke.yml` | CI: unit tests + self-compare smoke matrix |
 | `.github/workflows/ts7-official.yml` | manual CI: TS7 official-baseline smoke (T0–T3 + ratchet) |
+| `.github/workflows/third-party.yml` | manual CI: third-party implementation × baseline smoke |
 | `docs/RESULTS.md` | self-compare, default drift and cross-version numbers |
 | `test/` | unit tests (`bun test ./test`) |
 

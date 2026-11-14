@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "note": "第三方 TSC 兼容实现登记。只登记能被 CLI 驱动的实现（复用 tsc-cli 适配器），不为任何实现写内部 adapter；能力/获取方式的差异在这里显式记录。",
+  "implementations": {
+    "tsrs": {
+      "displayName": "tsrs (oxc-tsrs)",
+      "adapter": "tsc-cli",
+      "tsVersion": "7.1.0-beta",
+      "upstreamPin": "microsoft/TypeScript@3e9236361fa9",
+      "acquisition": {
+        "npm": {
+          "package": "tsrs",
+          "version": "0.25.0-ts7.1.0-beta",
+          "bin": "node_modules/.bin/tsrs"
+        },
+        "cargo": {
+          "repo": "reference/oxc-tsrs",
+          "command": "cargo build --release -p tsrs_cli",
+          "bin": "target/release/tsrs"
+        },
+        "localEnv": "TSRS_BIN"
+      },
+      "cliArgs": ["--singleThreaded"],
+      "baselines": ["7.1.0-beta", "7.1.0-beta-official"],
+      "phaseMetrics": {
+        "flag": "--extendedDiagnostics",
+        "checkField": "Check time",
+        "parallelControls": ["--singleThreaded", "--checkers"]
+      },
+      "notes": "npm 预编译含 darwin/linux 平台包；相位输出完整（Parse/Bind/Check/Total + Program/Checkers 明细）。"
+    },
+    "tsc-rs": {
+      "displayName": "tsc-rs (kazhiramatsu)",
+      "adapter": "tsc-cli",
+      "tsVersion": "7.1.0-dev",
+      "upstreamPin": "microsoft/TypeScript@aa8149273b23401f0a79a5f0384c42de51888693",
+      "acquisition": {
+        "cargo": {
+          "repo": "reference/tsc-rs",
+          "command": "cargo build --release --locked -p tsc-rs-cli",
+          "bin": "target/release/tsc-rs"
+        },
+        "localEnv": "TSC_RS_BIN"
+      },
+      "cliArgs": ["--checkers", "1"],
+      "baselines": ["7.1.0-beta-official"],
+      "phaseMetrics": {
+        "flag": "--extendedDiagnostics",
+        "checkField": "Check time",
+        "extra": "TSRS_PHASE_TRACE=1 输出逐相位行（含 rss）",
+        "parallelControls": ["--checkers", "--singleThreaded"]
+      },
+      "notes": "无 npm 包；extended 默认无 Bind/Emit 字段。"
+    },
+    "ts-rust": {
+      "displayName": "ts-rust (pingdotgg)",
+      "adapter": "tsc-cli",
+      "tsVersion": "7.1.0-beta",
+      "upstreamPin": "microsoft/TypeScript@3e9236361fa9",
+      "acquisition": {
+        "npm": {
+          "package": "tsc-rs",
+          "version": "0.8.0",
+          "bin": "node_modules/.bin/tsc-rs"
+        },
+        "cargo": {
+          "repo": "reference/ts-rust",
+          "command": "cargo build --release --locked -p ts_goport --bin tsgo",
+          "bin": "target/release/tsgo"
+        },
+        "localEnv": "TS_RUST_BIN"
+      },
+      "cliArgs": ["--singleThreaded"],
+      "baselines": ["7.1.0-beta", "7.1.0-beta-official"],
+      "phaseMetrics": {
+        "flag": "--extendedDiagnostics",
+        "checkField": "Check time",
+        "parallelControls": ["--singleThreaded", "--checkers"]
+      },
+      "notes": "npm 包名为 tsc-rs（含平台原生包）；字段与 tsgo 一致。"
+    },
+    "tsz": {
+      "displayName": "tsz",
+      "adapter": "tsc-cli",
+      "tsVersion": "7.0.2",
+      "upstreamPin": "",
+      "acquisition": {
+        "cargo": {
+          "repo": "reference/tsz",
+          "command": "env CI=1 cargo build --release --locked -p tsz-cli --bin tsz",
+          "bin": "target/release/tsz"
+        },
+        "localEnv": "TSZ_BIN"
+      },
+      "cliArgs": [],
+      "baselines": ["7.1.0-beta-official"],
+      "phaseMetrics": {
+        "flag": "--extendedDiagnostics",
+        "checkField": "Check",
+        "extra": "Parse 与 Bind 合并为 Parse & Bind；无并行度开关",
+        "parallelControls": []
+      },
+      "notes": "目标 TS 7.0.2；构建需 CI=1 与外部 CARGO_TARGET_DIR（仓库默认会把产物写进检出）。"
+    }
+  }
+}

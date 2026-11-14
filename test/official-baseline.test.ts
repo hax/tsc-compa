@@ -106,4 +106,24 @@ describe("expectationFromOfficialBaseline", () => {
       rmSync(repo, { recursive: true, force: true });
     }
   });
+
+  test("TS7 Go 布局：conformance 子目录拍平到 baselines/reference/conformance/<name>", () => {
+    const repo = mkdtempSync(join(tmpdir(), "tsc-compa-offbase-ts7flat-"));
+    try {
+      const corpus = join(repo, "tsc", "testdata", "tests", "cases");
+      const dir = join(repo, "tsc", "testdata", "baselines", "reference", "conformance");
+      mkdirSync(corpus, { recursive: true });
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "Foo.errors.txt"), "Foo.ts(1,1): error TS2454: boom\n");
+      const outcome = expectationFromOfficialBaseline(
+        corpus,
+        "conformance/es6/Symbols/Foo.ts",
+        parsed({ id: "conformance/es6/Symbols/Foo.ts" }),
+      );
+      expect(outcome.status).toBe("ok");
+      if (outcome.status === "ok") expect(outcome.diagnostics.length).toBe(1);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });

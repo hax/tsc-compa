@@ -103,13 +103,22 @@ export function parseOfficialBaselineText(text: string): ParsedOfficialBaseline 
 const errorsNameOf = (file: string): string => file.replace(/\.(tsx?|mts|cts)$/, ".errors.txt");
 
 /**
- * 查一个用例对应的基线文件路径：先按相对目录（TS7 Go 布局），再按 basename
- * （strada 平铺布局）。没有基线文件返回 null（= 该用例没有期望错误）。
+ * 查一个用例对应的基线文件路径。三档候选：
+ * 1. 相对目录（TS7 Go 的 compiler 套件：`compiler/Foo.ts` → `compiler/Foo.errors.txt`）；
+ * 2. suite 目录压平（TS7 Go 的 conformance 套件把子目录拍平：
+ *    `conformance/es6/Symbols/Foo.ts` → `conformance/Foo.errors.txt`）；
+ * 3. 根目录压平（strada / 6.0 线：`baselines/reference/Foo.errors.txt`）。
+ * 没有基线文件返回 null（= 该用例没有期望错误）。
  */
 export function baselineFileOf(corpusDir: string, id: string): string | null {
   const dir = officialBaselineDirOf(corpusDir);
   const nested = join(dir, errorsNameOf(id));
   if (existsSync(nested)) return nested;
+  const slash = id.indexOf("/");
+  if (slash > 0) {
+    const suiteFlat = join(dir, id.slice(0, slash), errorsNameOf(basename(id)));
+    if (existsSync(suiteFlat)) return suiteFlat;
+  }
   const flat = join(dir, errorsNameOf(basename(id)));
   if (existsSync(flat)) return flat;
   return null;

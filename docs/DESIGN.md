@@ -147,8 +147,14 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 - **strada / 6.0 线**：基线在 `tests/baselines/reference/` 下按 basename 平铺；
 - **TS7 官方 Go 布局**（pin `microsoft/TypeScript@aa814927…`，取自 reference/tsc-rs 的
   `vendor/typescript-native/7.1.0-dev-aa814927/manifest.json`）：cases 在
-  `tsc/testdata/tests/cases/`，基线在 `tsc/testdata/baselines/reference/` 下按
-  用例相对目录分层（`compiler/Foo.errors.txt`）。
+  `tsc/testdata/tests/cases/`，基线在 `tsc/testdata/baselines/reference/` 下。注意 Go
+  布局内部并不统一：`compiler` 套件按用例相对目录分层（`compiler/Foo.errors.txt`），
+  而 `conformance` 等套件把子目录**拍平**（`conformance/es6/Symbols/Foo.ts` →
+  `conformance/Foo.errors.txt`）。因此查基线按三档候选：id 相对路径 → suite 目录压平
+  （首段目录 + basename）→ 根目录压平。漏掉「suite 压平」这一档会把 6 个 conformance
+  用例误判成「无基线 = 无期望错误」，进而在任何实现上产生同一批假阳性——2026-11-15
+  用 tsrs 复现并修复。
+
 
 官方 harness 只在用例有诊断时写 `.errors.txt`，因此**缺基线 = 期望零错误**（不是
 跳过）：无错用例也进入指标，参与假阳性检查。仍跳过的子集：
@@ -183,6 +189,31 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 `--ratchet <file>` 维护 TSV 清单（`<case id>\t<tier>`，只登记 ≥T0 的用例）：
 改善自动写回、回落退出非零、先前登记的用例变成 SKIP 也视为回落。清单入库
 （`config/ratchet-ts71-official.tsv`），CI 用同一份做门禁。
+
+### 4.4 第三方实现接入
+
+原则：**第三方实现只通过公开 CLI 驱动**（复用 `tsc-cli` 适配器），不为其写内部
+adapter、不改它的源码；获取方式与能力差异登记在 `config/implementations.json`：
+
+```jsonc
+{
+  "tsrs": {
+    "adapter": "tsc-cli",
+    "acquisition": { "npm": { "package": "tsrs", "version": "…", "bin": "node_modules/.bin/tsrs" },
+                     "cargo": { "repo": "reference/oxc-tsrs", "command": "…", "bin": "…" },
+                     "localEnv": "TSRS_BIN" },
+    "cliArgs": ["--singleThreaded"],          // 公平测量/确定性用的固定旗标
+    "baselines": ["7.1.0-beta", "7.1.0-beta-official"],
+    "phaseMetrics": { "flag": "--extendedDiagnostics", "checkField": "Check time" }
+  }
+}
+```
+
+`bun scripts/install-impl.ts --name tsrs --dest .tools` 按登记获取二进制并打印路径
+（npm 优先，其次 `localEnv`，再次已有 cargo 产物）；`.github/workflows/third-party.yml`
+用它跑某实现 × 某基线的冒烟（T0–T3 / ratchet）并上传 metrics。各实现的相位字段名、
+并行度开关、上游 pin 差异都写进 registry 与 RESULTS，不假装完全同口径。
+
 
 ## 5. 适配器协议
 

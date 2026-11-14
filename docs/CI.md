@@ -54,3 +54,15 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
   的用例分布，`totals.messageMismatch` 给「位置命中但首行文案不同」的诊断条数；
 - 门禁：`--ratchet config/ratchet-ts71-official.tsv`，回落即失败、改善写回
   （CI 里清单已入库，正常不应产生写回；若 artifact 显示有改善，维护者审阅后提交）。
+
+## 第三方实现冒烟（`third-party.yml`）
+
+手动触发，输入「实现名（config/implementations.json）× 基线 id（7.1.0-beta-official / 7.1.0-beta）」：
+
+- 语料按基线从 `config/baselines.json` 的 corpus ref 现场 checkout（官方基线用 TS7 Go 布局，普通 7.1 用 strada）；
+- 实现按 registry 的获取方式安装：npm 预编译优先（如 `tsrs`），其次 `localEnv`，再次已有 cargo 产物；`scripts/install-impl.ts` 打印二进制路径；
+- 自动带 registry 里的固定 CLI 参数（如 `tsrs` 的 `--singleThreaded`），用 `tsc-cli` 适配器驱动；
+- 官方基线跑 `--ratchet config/ratchet-ts71-official.tsv`，metrics 作为 artifact 上传。
+
+原则：不为第三方实现写内部 adapter、不改其源码；获取方式/相位字段/并行开关的差异登记在
+`config/implementations.json` 与 `docs/RESULTS.md`。
