@@ -1,0 +1,16 @@
+{
+  "name": "tsc-compa",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Implementation-agnostic compatibility test suite for TypeScript type checkers",
+  "license": "Apache-2.0",
+  "scripts": {
+    "check": "bun src/run.ts",
+    "test": "bun test",
+    "select-smoke": "bun scripts/select-smoke.ts"
+  },
+  "engines": {
+    "bun": ">=1.3"
+  }
+}
