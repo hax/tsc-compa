@@ -28,7 +28,7 @@ jobs:
       - name: Install deps
         run: bun install --frozen-lockfile
       - name: Unit tests
-        run: bun test
+        run: bun test ./test
       - name: Smoke — tsc self-compare (reference adapter)
         env:
           TSC_COMPA_CORPUS: ${{ github.workspace }}/reference/typescript-strada/tests/cases

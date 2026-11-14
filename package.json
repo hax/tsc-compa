@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "scripts": {
     "check": "bun src/run.ts",
-    "test": "bun test",
+    "test": "bun test ./test",
     "select-smoke": "bun scripts/select-smoke.ts"
   },
   "devDependencies": {
