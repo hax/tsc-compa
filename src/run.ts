@@ -14,6 +14,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createAdapter } from "./adapters/index.ts";
 import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, type RunMeta } from "./compare.ts";
+import { checkRatchet, readRatchet, writeRatchet } from "./ratchet.ts";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "./baselines.ts";
 import { classifyCase, exclusionOf, parseTagList, runtimeTags } from "./classify.ts";
 import { loadManifest, readCase } from "./discover.ts";
@@ -42,6 +43,8 @@ interface Args {
   adapterArgsExtra: string[];
   /** 期望来源：现场跑 tsc CLI，或直接消费官方 errors 基线子集。 */
   expectationSource: "tsc" | "official-baseline";
+  /** 一致性 ratchet 清单（TSV）；设置后：回落退出非零、改善写回。 */
+  ratchet?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -120,6 +123,9 @@ function parseArgs(argv: string[]): Args {
       case "--out":
         args.out = next();
         break;
+      case "--ratchet":
+        args.ratchet = next();
+        break;
       case "--limit":
         args.limit = Number(next());
         if (!Number.isInteger(args.limit!) || args.limit! <= 0) throw new Error("--limit 需要正整数");
@@ -133,7 +139,7 @@ function parseArgs(argv: string[]): Args {
           "用法：bun src/run.ts [--corpus <tests/cases>] [--baseline <id>] [--cases <manifest>] [--tsc <bin>] " +
             "[--adapter <name>] [--mode official|fixed] [--base-arg name=value]... [--adapter-arg name=value]... " +
             "[--expectation-source tsc|official-baseline] [--exclude-class <tags>] [--only-class <tags>] " +
-            "[--out <dir>] [--limit N] [--verbose]",
+            "[--ratchet <file>] [--out <dir>] [--limit N] [--verbose]",
         );
         console.log("基线见 config/baselines.json；标签见 src/classify.ts 的 CASE_TAGS。");
         process.exit(0);
@@ -207,12 +213,15 @@ async function main(): Promise<void> {
     // 适配器侧：用例指令 + 显式 --base-arg/--adapter-arg；不含基线的官方默认值。
     const adapterArgs = toTscArgs(options, [...args.baseArgsExtra, ...args.adapterArgsExtra]);
     let expectation: ExpectationResult;
+    // 官方基线原文（T3 字节比对用）；现场生成期望时为 null。
+    let baselineText: string | null = null;
     if (args.expectationSource === "official-baseline") {
       const official = expectationFromOfficialBaseline(args.corpus, id, parsed);
       if (official.status === "skip") {
         records.push(skipRecord(id, `官方基线:${official.reason}`, staticTags));
         continue;
       }
+      baselineText = official.text;
       expectation = { status: "ok", diagnostics: official.diagnostics };
     } else {
       expectation = expectationOf(id, parsed.files, options, {
@@ -244,11 +253,11 @@ async function main(): Promise<void> {
       records.push(skipRecord(id, outcome.skipReason ?? `实现返回 ${outcome.status}`, tags));
       continue;
     }
-    const record = compareCase(id, expectation.diagnostics, outcome.diagnostics, tags);
+    const record = compareCase(id, expectation.diagnostics, outcome.diagnostics, tags, baselineText);
     if (args.verbose) {
       console.log(
         `${shortCaseName(id)}: [${tags.join(" ")}] expect=${record.expected.length} actual=${record.actual.length} ` +
-          `fp=${record.fp.length} miss=${record.missed.length} misanchor=${record.misanchor}`,
+          `fp=${record.fp.length} miss=${record.missed.length} misanchor=${record.misanchor} tier=${record.tier}`,
       );
     }
     records.push(record);
@@ -270,6 +279,34 @@ async function main(): Promise<void> {
     selectedCases: ids.length,
   };
   const metrics = summarize(records, meta);
+  let exitCode = 0;
+  if (args.ratchet !== undefined) {
+    const previous = readRatchet(args.ratchet);
+    const check = checkRatchet(previous, records);
+    let wrote = false;
+    if (check.changed) {
+      writeRatchet(args.ratchet, check.next);
+      wrote = true;
+    }
+    meta.ratchet = {
+      path: args.ratchet,
+      regressions: check.regressions.length,
+      improvements: check.improvements.length,
+      wrote,
+    };
+    if (check.regressions.length > 0) {
+      exitCode = 1;
+      console.log(`ratchet 回落 ${check.regressions.length} 例（本次运行失败）：`);
+      for (const r of check.regressions.slice(0, 20)) {
+        console.log(`  ${r.id}: ${r.was} → ${r.now}${r.reason !== undefined ? `（${r.reason}）` : ""}`);
+      }
+      if (check.regressions.length > 20) console.log(`  …… 共 ${check.regressions.length} 例`);
+    } else {
+      console.log(
+        `ratchet：无回落；改善 ${check.improvements.length} 例` + (wrote ? `，已写回 ${args.ratchet}` : "（清单未变）"),
+      );
+    }
+  }
   if (args.mode === "fixed") {
     console.warn(`提示：--mode fixed 下共忽略 ${optionDirectiveIgnored} 个用例的编译选项指令；结果只用于验证流水线。`);
   }
@@ -293,6 +330,7 @@ async function main(): Promise<void> {
         fp: r.fp.map((d) => `${d.file}:${d.line + 1}:${d.col + 1} TS${d.code}`),
         missed: r.missed.map((d) => `${d.file}:${d.line + 1}:${d.col + 1} TS${d.code}`),
         misanchor: r.misanchor,
+        tier: r.tier,
       })),
       null,
       2,
@@ -300,6 +338,7 @@ async function main(): Promise<void> {
   );
   console.log(formatSummary(metrics));
   console.log(`结果：${join(args.out, "metrics.json")}`);
+  if (exitCode !== 0) process.exitCode = exitCode;
 }
 
 main().catch((e: unknown) => {
