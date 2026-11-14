@@ -1,0 +1,168 @@
+# 公开仓：接收私有仓构建的二进制并跑兼容性套件
+#
+# 两种触发：
+#   1) repository_dispatch（event_type = run-compat-suite，由私有仓 workflow 发起）
+#      payload: {implementation, source_sha, release_tag, asset_name, baseline, mode}
+#   2) workflow_dispatch（手动）：
+#      - 给 release_tag + asset_name：从本仓（hax/tsc-compa）的 Release 下载二进制；
+#      - 或给 binary_url：直接下载任意实现的二进制（测外部 TSC 兼容实现用）。
+#
+# 二进制协议：
+#   - adapter_kind = cli      → 期望实现支持 `--json`，输出 maat 形状的诊断数组；
+#     cli_args 覆盖固定参数（默认 `--json`）。
+#   - adapter_kind = tsc-cli  → 实现是 tsc 兼容 CLI，输出
+#     `file(line,col): error TSxxxx: msg` 文本。
+#
+# 当前限制：实现若不接受外部编译选项，official 模式只会得到 protocol-level 冒烟
+# （运行器会打印警告并标 verdictEligible=false）。maat 的批量 adapter（issue #8）
+# 落地后，把 adapter_kind 换成对应值即可复用本 workflow。
+name: remote-suite
+
+on:
+  repository_dispatch:
+    types: [run-compat-suite]
+  workflow_dispatch:
+    inputs:
+      implementation:
+        description: "实现名（用于命名与报告）"
+        default: "maat"
+      source_sha:
+        description: "源码 SHA（可空）"
+        default: ""
+      release_tag:
+        description: "本仓 release tag（binary-<impl>-<sha>-<platform>）"
+        default: ""
+      asset_name:
+        description: "release 里的 asset 文件名"
+        default: ""
+      binary_url:
+        description: "直接下载二进制的 URL（外部实现手动触发用；给了它则忽略 release_tag）"
+        default: ""
+      adapter_kind:
+        description: "适配器类型"
+        type: choice
+        options: ["cli", "tsc-cli"]
+        default: "cli"
+      cli_args:
+        description: "cli 适配器的固定参数（tsc-cli 忽略）"
+        default: "--json"
+      baseline:
+        description: "tsc 基线与对应语料"
+        type: choice
+        options: ["7.1.0-beta", "6.0.3", "5.9.3"]
+        default: "7.1.0-beta"
+      mode:
+        description: "official / fixed"
+        type: choice
+        options: ["official", "fixed"]
+        default: "official"
+      limit:
+        description: "只跑前 N 个用例（0 = 该基线的冒烟集全部）"
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IN_IMPL: ${{ github.event.client_payload.implementation || inputs.implementation || 'maat' }}
+      IN_SHA: ${{ github.event.client_payload.source_sha || inputs.source_sha }}
+      IN_TAG: ${{ github.event.client_payload.release_tag || inputs.release_tag }}
+      IN_ASSET: ${{ github.event.client_payload.asset_name || inputs.asset_name }}
+      IN_URL: ${{ inputs.binary_url }}
+      IN_ADAPTER: ${{ inputs.adapter_kind || 'cli' }}
+      IN_CLI_ARGS: ${{ inputs.cli_args || '--json' }}
+      IN_BASELINE: ${{ github.event.client_payload.baseline || inputs.baseline || '7.1.0-beta' }}
+      IN_MODE: ${{ github.event.client_payload.mode || inputs.mode || 'official' }}
+      IN_LIMIT: ${{ inputs.limit || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Resolve corpus ref from baseline
+        id: corpus
+        run: |
+          REF=$(bun -e 'const c=require("./config/baselines.json"); const b=c.baselines.find((x)=>x.id===process.env.IN_BASELINE); if(!b){console.error(`unknown baseline: ${process.env.IN_BASELINE}`);process.exit(1)}; console.log(c.corpora[b.corpus].ref)')
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "baseline=$IN_BASELINE corpus_ref=$REF"
+
+      - name: Checkout TypeScript corpus (${{ steps.corpus.outputs.ref }})
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/TypeScript
+          ref: ${{ steps.corpus.outputs.ref }}
+          path: reference/corpus
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Fetch implementation binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p bin
+          if [ -n "$IN_URL" ]; then
+            curl -fsSL "$IN_URL" -o "bin/$IN_IMPL"
+          else
+            [ -n "$IN_TAG" ] && [ -n "$IN_ASSET" ] || { echo "需要 release_tag+asset_name 或 binary_url"; exit 1; }
+            gh release download "$IN_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$IN_ASSET" --dir bin
+            mv "bin/$IN_ASSET" "bin/$IN_IMPL"
+          fi
+          chmod +x "bin/$IN_IMPL"
+          file "bin/$IN_IMPL"
+          echo "BIN=$GITHUB_WORKSPACE/bin/$IN_IMPL" >> "$GITHUB_ENV"
+
+      - name: Run compatibility suite
+        env:
+          TSC_COMPA_CLI_ARGS: ${{ env.IN_CLI_ARGS }}
+        run: |
+          LIMIT_ARGS=""
+          if [ "${IN_LIMIT}" != "0" ] && [ -n "${IN_LIMIT}" ]; then LIMIT_ARGS="--limit ${IN_LIMIT}"; fi
+          if [ "$IN_ADAPTER" = "cli" ]; then
+            ADAPTER="cli:$BIN"
+          else
+            ADAPTER="tsc-cli:$BIN"
+          fi
+          echo "implementation=$IN_IMPL sha=$IN_SHA baseline=$IN_BASELINE mode=$IN_MODE adapter=$ADAPTER"
+          bun src/run.ts \
+            --baseline "$IN_BASELINE" \
+            --corpus "$GITHUB_WORKSPACE/reference/corpus/tests/cases" \
+            --adapter "$ADAPTER" \
+            --mode "$IN_MODE" \
+            $LIMIT_ARGS \
+            --out out
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "## remote-suite: $IN_IMPL"
+            echo ""
+            echo "- source SHA: \`${IN_SHA:-unknown}\`"
+            echo "- baseline: \`$IN_BASELINE\`（corpus \`$CORPUS_REF\`）"
+            echo "- mode: \`$IN_MODE\` / adapter: \`$IN_ADAPTER\`"
+            echo ""
+            if [ -f out/metrics.json ]; then
+              echo '```json'
+              jq '{verdictEligible: .meta.verdictEligible, totals: .totals, fpByCode: .byCode.fp, missByCode: .byCode.miss, skips: .skips}' out/metrics.json 2>/dev/null || head -c 2000 out/metrics.json
+              echo '```'
+            else
+              echo "（没有 metrics.json，运行失败或超时）"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-${{ env.IN_IMPL }}-${{ env.IN_BASELINE }}
+          path: |
+            out/metrics.json
+            out/details.json
+          retention-days: 30
