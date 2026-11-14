@@ -17,25 +17,69 @@ import type { Adapter, CaseInput, CaseOutcome, Diagnostic } from "../types.ts";
 
 const CLI_DIAG = /^(.+?)\((\d+),(\d+)\):\s+(error|warning)\s+TS(\d+):\s?(.*)$/;
 
-/** 解析 tsc `--pretty false` 输出；临时目录之外的文件（lib 等）不计。 */
-export function parseTscOutput(tmp: string, text: string): Diagnostic[] {
-  const out: Diagnostic[] = [];
+/** 多行阐述/related 续行的形态：缩进开头（tsc 非 pretty 输出的续行都以空白开头）。 */
+const CONTINUATION = /^\s+\S/;
+
+export interface ParsedTscOutput {
+  diagnostics: Diagnostic[];
+  /**
+   * 完整诊断摘要块（与官方 `.errors.txt` 摘要块同形）：每条诊断的首行 + 其缩进
+   * 续行，按实现输出顺序拼接；临时目录之外的文件（lib 等）整体剔除，连带其续行。
+   * T3「整份 .errors.txt 字节相等」直接比较这个字符串。
+   */
+  rendered: string;
+}
+
+/**
+ * 解析 tsc `--pretty false` 输出，同时保留多行阐述与顺序。
+ *
+ * 首行用「用例内相对路径 + 行列 + 码 + message」重建（实现可能打印临时目录的
+ * 绝对路径，不能原样进基线比对）；续行原样保留缩进。临时目录之外的文件（lib
+ * 等）不计，其续行一并丢弃。
+ */
+export function parseTscOutputDetailed(tmp: string, text: string): ParsedTscOutput {
+  const diagnostics: Diagnostic[] = [];
+  const blocks: string[] = [];
+  let current: { diag: Diagnostic; lines: string[] } | null = null;
+
+  const flush = (): void => {
+    if (current === null) return;
+    const fullText = current.lines.join("\n");
+    current.diag.fullText = fullText;
+    diagnostics.push(current.diag);
+    blocks.push(fullText);
+    current = null;
+  };
+
   for (const line of text.split(/\r?\n/)) {
     const m = CLI_DIAG.exec(line);
-    if (m === null) continue;
-    const abs = resolve(tmp, m[1]!);
-    const rel = abs.startsWith(`${tmp}/`) ? abs.slice(tmp.length + 1) : null;
-    if (rel === null) continue;
-    out.push({
-      file: rel,
-      line: Number(m[2]) - 1,
-      col: Number(m[3]) - 1,
-      code: Number(m[5]),
-      severity: m[4] === "warning" ? "warning" : "error",
-      message: m[6] ?? undefined,
-    });
+    if (m !== null) {
+      flush();
+      const abs = resolve(tmp, m[1]!);
+      const rel = abs.startsWith(`${tmp}/`) ? abs.slice(tmp.length + 1) : null;
+      if (rel === null) continue;
+      const message = m[6] !== undefined && m[6].length > 0 ? m[6] : undefined;
+      const diag: Diagnostic = {
+        file: rel,
+        line: Number(m[2]) - 1,
+        col: Number(m[3]) - 1,
+        code: Number(m[5]),
+        severity: m[4] === "warning" ? "warning" : "error",
+        message,
+      };
+      const firstLine = `${rel}(${m[2]},${m[3]}): ${m[4]} TS${m[5]}:${message === undefined ? "" : ` ${message}`}`;
+      current = { diag, lines: [firstLine] };
+      continue;
+    }
+    if (current !== null && CONTINUATION.test(line)) current.lines.push(line);
   }
-  return out;
+  flush();
+  return { diagnostics, rendered: blocks.join("\n") };
+}
+
+/** 解析 tsc `--pretty false` 输出；临时目录之外的文件（lib 等）不计。 */
+export function parseTscOutput(tmp: string, text: string): Diagnostic[] {
+  return parseTscOutputDetailed(tmp, text).diagnostics;
 }
 
 export interface TscCliAdapterOptions {
@@ -104,10 +148,12 @@ export class TscCliAdapter implements Adapter {
         };
       }
       const text = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+      const parsed = parseTscOutputDetailed(tmp, text);
       return {
         id: input.id,
         status: "ok",
-        diagnostics: parseTscOutput(tmp, text),
+        diagnostics: parsed.diagnostics,
+        fullText: parsed.rendered,
         checkMs: parseExtendedDiagnostics(text)?.checkMs,
       };
     } finally {

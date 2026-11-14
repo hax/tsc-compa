@@ -13,6 +13,7 @@
 // 覆盖率分母仍是全部期望诊断，分子只数「位置也一致」的命中，因此错锚会
 // 让覆盖率略低于 100%；配套的 misanchor 数字负责解释这部分差额。
 
+import { summaryBlockOf } from "./officialBaseline.ts";
 import type { Diagnostic } from "./types.ts";
 
 /**
@@ -48,6 +49,8 @@ export interface CaseRecord {
   misanchor: number;
   /** 与官方基线的四级一致性（T0~T3）；非 official-baseline 期望源时用「实际诊断 vs 期望诊断」同样计算。 */
   tier: Tier;
+  /** T3 未达时的原因分类（只有官方基线存在正文时设置）。 */
+  t3Reason?: T3DiffReason;
 }
 
 const isError = (d: Diagnostic): boolean => d.severity === "error";
@@ -57,28 +60,76 @@ const fmtDiagLine = (d: Diagnostic): string =>
 
 /** 把实现返回的诊断渲染成官方 `.errors.txt` 摘要块的形态（T3 用）。 */
 export function renderErrorBlock(diagnostics: Diagnostic[]): string {
-  return diagnostics.map(fmtDiagLine).join("\n");
+  // 优先用实现原样保留的完整块（首行 + 阐述续行）；没有时只能渲染首行（最多到 T2）。
+  return diagnostics.map((d) => d.fullText ?? fmtDiagLine(d)).join("\n");
 }
-
-const normalizeBlock = (text: string): string =>
-  text
-    .split(/\r\n|\r|\n/)
-    .filter((line) => !line.startsWith("===="))
-    .join("\n")
-    .replace(/\n+$/, "");
 
 const sortedKey = (items: Diagnostic[], include: (d: Diagnostic) => string): string[] =>
   items.map(include).sort((a, b) => a.localeCompare(b));
 
+/** T3 失败原因分类（只有期望源是官方基线、且存在基线正文时才统计）。 */
+export type T3DiffReason = "missing" | "extra" | "diagnostics" | "order" | "elaboration" | "related" | "other";
+
+const DIAG_START = /^[^\s].*?\(\d+,\d+\): (?:error|warning) TS\d+:/;
+/** related information 的续行形态：`  file(line,col): ...`。 */
+const RELATED_LINE = /^\s+\S+\(\d+,\d+\):/;
+
+/** 把摘要块按诊断切成 block（首行 + 缩进续行）；空行忽略。 */
+function diagnosticBlocksOf(text: string): string[][] {
+  const blocks: string[][] = [];
+  let current: string[] | null = null;
+  for (const line of text.split(/\r\n|\r|\n/)) {
+    if (line.trim().length === 0) continue;
+    if (DIAG_START.test(line)) {
+      if (current !== null) blocks.push(current);
+      current = [line];
+    } else if (current !== null) {
+      current.push(line);
+    }
+  }
+  if (current !== null) blocks.push(current);
+  return blocks;
+}
+
+/**
+ * 分类一次 T3 失败：首行（码/位置/文案）一致但阐述不同、related 不同、次序不同，
+ * 还是诊断集合本身不同。用于 metrics 的可解释性，不参与任何判定。
+ */
+export function classifyT3Diff(expectedText: string, actualText: string): T3DiffReason {
+  const expBlocks = diagnosticBlocksOf(summaryBlockOf(expectedText));
+  const actBlocks = diagnosticBlocksOf(actualText);
+  const firstLines = (blocks: string[][]): string[] => blocks.map((b) => b[0]!);
+  const expFirst = firstLines(expBlocks);
+  const actFirst = firstLines(actBlocks);
+  const sorted = (xs: string[]): string[] => [...xs].sort((a, b) => a.localeCompare(b));
+  if (expFirst.length !== actFirst.length) return expFirst.length > actFirst.length ? "missing" : "extra";
+  if (sorted(expFirst).join("\n") !== sorted(actFirst).join("\n")) return "diagnostics";
+  if (expFirst.join("\n") !== actFirst.join("\n")) return "order";
+  for (let i = 0; i < expBlocks.length; i++) {
+    const expBlock = expBlocks[i]!;
+    const actBlock = actBlocks[i]!;
+    if (expBlock.join("\n") === actBlock.join("\n")) continue;
+    const changed = [...expBlock.slice(1), ...actBlock.slice(1)];
+    return changed.some((line) => RELATED_LINE.test(line) || /related information/i.test(line))
+      ? "related"
+      : "elaboration";
+  }
+  return "other";
+}
+
 /**
  * 计算期望（官方基线或 tsc 现场生成）与实际诊断的四级一致性。
  *
- * @param expectedText 官方基线原文（缺失时为 null）；只在 T3 评估中使用。
+ * @param expectedText 官方基线原文（缺失时为 null）；T3 只比较其第一个 `====`
+ *   之前的摘要块（`====` 之后是用例源码标注，不属于诊断文本）。
+ * @param actualText 实现渲染的完整摘要块（CaseOutcome.fullText）；缺失时退回
+ *   由诊断对象的 fullText/首行拼接。
  */
 export function tierOf(
   expected: Diagnostic[],
   actual: Diagnostic[],
   expectedText: string | null = null,
+  actualText: string | null = null,
 ): Tier {
   const exp = expected;
   const act = actual;
@@ -88,10 +139,10 @@ export function tierOf(
   if (sortedKey(exp, cat).join("\n") !== sortedKey(act, cat).join("\n")) return "location";
   const full = (d: Diagnostic): string => `${cat(d)}\u0000${d.message ?? ""}`;
   if (sortedKey(exp, full).join("\n") !== sortedKey(act, full).join("\n")) return "category";
-  // T3：整份基线字节相等（行尾归一后）；没有基线文件时，两侧都空即视为 full。
-  if (expectedText === null) return exp.length === 0 && act.length === 0 ? "full" : "text";
-  if (normalizeBlock(expectedText) === normalizeBlock(renderErrorBlock(act))) return "full";
-  return "text";
+  // T3：整份基线摘要块字节相等（行尾归一后）；没有基线文件时，两侧都空即视为 full。
+  const actBlock = actualText ?? renderErrorBlock(act);
+  if (expectedText === null) return exp.length === 0 && actBlock.trim() === "" ? "full" : "text";
+  return summaryBlockOf(expectedText) === actBlock ? "full" : "text";
 }
 
 const bucketKey = (d: Diagnostic): string => `${d.file}\u0000${d.code}`;
@@ -103,6 +154,7 @@ export function compareCase(
   actual: Diagnostic[],
   classes: string[] = [],
   baselineText: string | null = null,
+  actualText: string | null = null,
 ): CaseRecord {
   const exp = expected.filter(isError);
   const act = actual.filter(isError);
@@ -150,7 +202,8 @@ export function compareCase(
     missed.push(...restExp.slice(pairs));
   }
 
-  return {
+  const tier = tierOf(expected, actual, baselineText, actualText);
+  const record: CaseRecord = {
     id,
     status: "ran",
     classes,
@@ -160,8 +213,13 @@ export function compareCase(
     missed,
     hits,
     misanchor,
-    tier: tierOf(expected, actual, baselineText),
+    tier,
   };
+  // T3 失败原因只对「官方基线存在正文」的用例归因（无基线 = 期望零错误，归入 fp）。
+  if (tier !== "full" && baselineText !== null) {
+    record.t3Reason = classifyT3Diff(baselineText, actualText ?? renderErrorBlock(act));
+  }
+  return record;
 }
 
 export function skipRecord(id: string, reason: string, classes: string[] = []): CaseRecord {
@@ -248,12 +306,14 @@ export interface Metrics {
     coverage: number | null;
     /** 与官方基线的四级一致性分布（只统计跑完的用例）。 */
     byTier: Record<Tier, number>;
+    /** T3 未达用例的原因分布（diagnostics/order/elaboration/related/other）。 */
+    t3Failures: [string, number][];
   };
   /** 按标签聚合；标签正交，数字不可相加。 */
   byClass: Record<string, ClassTotals>;
   byCode: { fp: [string, number][]; miss: [string, number][] };
   skips: [string, number][];
-  samples: { fp: string[]; miss: string[]; textDiff: string[]; messageDiff: string[] };
+  samples: { fp: string[]; miss: string[]; textDiff: string[]; messageDiff: string[]; t3: string[] };
 }
 
 const fmtDiag = (id: string, d: Diagnostic): string => `${id} ${d.file}:${d.line + 1}:${d.col + 1} TS${d.code}`;
@@ -297,6 +357,8 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
   const messageDiffSamples: string[] = [];
   let messageMismatch = 0;
   const byTier: Record<Tier, number> = { none: 0, location: 0, category: 0, text: 0, full: 0 };
+  const t3Reasons = new Map<string, number>();
+  const t3Samples: string[] = [];
   const classAcc = new Map<string, ClassAcc>();
 
   /** T2 未达（T0/T1 已达、文案不同）的样例，供「文案对齐待办」用。 */
@@ -361,6 +423,10 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
     missTotal += r.missed.length;
     misanchorTotal += r.misanchor;
     byTier[r.tier]++;
+    if (r.t3Reason !== undefined) {
+      t3Reasons.set(r.t3Reason, (t3Reasons.get(r.t3Reason) ?? 0) + 1);
+      if (t3Samples.length < 40) t3Samples.push(`${r.id} ${r.t3Reason}`);
+    }
     // 诊断级「文案差」：位置（file/line/col/code）命中但首行 message 不同。
     {
       const actualByKey = new Map<string, Diagnostic>();
@@ -428,11 +494,12 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
       messageMismatch,
       coverage: expectTotal === 0 ? null : hitTotal / expectTotal,
       byTier,
+      t3Failures: [...t3Reasons.entries()].sort((a, b) => b[1] - a[1]),
     },
     byClass,
     byCode: { fp: topEntries(fpByCode, 15), miss: topEntries(missByCode, 15) },
     skips: [...skips.entries()].sort((a, b) => b[1] - a[1]),
-    samples: { fp: fpSamples, miss: missSamples, textDiff: textDiffSamples, messageDiff: messageDiffSamples },
+    samples: { fp: fpSamples, miss: missSamples, textDiff: textDiffSamples, messageDiff: messageDiffSamples, t3: t3Samples },
   };
 }
 
@@ -447,6 +514,9 @@ export function formatSummary(m: Metrics): string {
   if (m.byCode.miss.length > 0) lines.push(`top miss：${m.byCode.miss.map(([c, n]) => `${c}×${n}`).join(" ")}`);
   const tierText = TIERS.map((t) => `${t}=${m.totals.byTier[t]}`).join(" ");
   lines.push(`分档（T0~T3）：${tierText}；命中位置但文案不同 ${m.totals.messageMismatch} 条`);
+  if (m.totals.t3Failures.length > 0) {
+    lines.push(`T3 未达原因：${m.totals.t3Failures.map(([r, n]) => `${r}×${n}`).join(" ")}`);
+  }
   for (const tag of ["suite:compiler", "suite:conformance"]) {
     const cls = m.byClass[tag];
     if (cls === undefined) continue;

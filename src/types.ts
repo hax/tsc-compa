@@ -17,6 +17,12 @@ export interface Diagnostic {
   severity: Severity;
   width?: number;
   message?: string;
+  /**
+   * 该诊断在实现输出中的完整文本块（首行 + 缩进阐述/related 续行），原样保留
+   * 行内空白与顺序。T3「整份 .errors.txt 字节相等」用它渲染；缺失时退回只渲染
+   * 首行（只可能到 T2）。
+   */
+  fullText?: string;
 }
 
 /** 用例里的一个虚拟文件。 */
@@ -58,6 +64,12 @@ export interface CaseOutcome {
   diagnostics: Diagnostic[];
   skipReason?: string;
   message?: string;
+  /**
+   * 实现渲染出的完整诊断摘要块（与官方 `.errors.txt` 摘要块同形：首行诊断 +
+   * 缩进阐述行，按输出顺序；无诊断时为空串）。只有能给出多行阐述的实现才填，
+   * 用于 T3 字节比较；缺失时由诊断对象的 fullText/首行兜底渲染。
+   */
+  fullText?: string;
   /**
    * 实现自报的检查耗时（毫秒，可选）：性能附录的 Check 相位口径。
    * 只有能给出 `--extendedDiagnostics` 类相位数据的适配器才填；

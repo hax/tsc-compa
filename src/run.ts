@@ -441,7 +441,7 @@ async function main(): Promise<void> {
       records.push(skipRecord(id, outcome.skipReason ?? `实现返回 ${outcome.status}`, tags));
       continue;
     }
-    const record = compareCase(id, expectation.diagnostics, outcome.diagnostics, tags, baselineText);
+    const record = compareCase(id, expectation.diagnostics, outcome.diagnostics, tags, baselineText, outcome.fullText ?? null);
     if (args.verbose) {
       console.log(
         `${shortCaseName(id)}: [${tags.join(" ")}] expect=${record.expected.length} actual=${record.actual.length} ` +

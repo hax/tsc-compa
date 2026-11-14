@@ -132,10 +132,10 @@ miss 两侧**，跨版本对照时可以直接看出「判定一致、位置口�
 
 | 运行 | 用例 | ≥T0 location | ≥T2 text | T3 full | messageMismatch | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
-| tsc 7.1.0-beta 自比（冒烟 28） | 28 | 28（100%） | 28 | 4 | 0 | 修正基线映射后 0 假阳性 |
-| tsc 7.1.0-beta 自比（错误样本 120） | 120 | 119（99.2%） | 118（98.3%） | 0 | 1 | T3 全灭：adapter 不产出 elaboration/related 行 |
-| maat 主线 fixed 口径（冒烟 28） | 28 | 10（35.7%） | 8（28.6%） | 6 | 5 | 位置不一致 18 例属检查面差异，掩盖了文案差 |
-| maat 主线 fixed 口径（错误样本 120） | 120 | 26（21.7%） | 19（15.8%） | 0 | 17 | 漏报 286 条是主因 |
+| tsc 7.1.0-beta 自比（冒烟 28） | 28 | 28（100%） | 28 | **28** | 0 | 修正基线映射后 0 假阳性；T3 整份渲染见结论 10 |
+| tsc 7.1.0-beta 自比（错误样本 120） | 120 | 119（99.2%） | 118（98.3%） | **118** | 1 | 2 例为 npm 补丁与仓库快照漂移（见结论 10） |
+| maat 主线 fixed 口径（冒烟 28） | 28 | 10（35.7%） | 8（28.6%） | 3 | 5 | 位置不一致 18 例属检查面差异，掩盖了文案差；T3 归因见结论 10 |
+| maat 主线 fixed 口径（错误样本 120） | 120 | 28（23.3%） | 28（23.3%） | 0 | 17 | 漏报 282 条是主因；T3 未达归因 missing×80 / diagnostics×35 / extra×5 |
 
 **修正记录（2026-11-15）**：本表初版里 tsc 自比只有 22/28、6 例 none，并把原因归为
 「npm 补丁与仓库快照漂移」——那是错的。根因是 `baselineFileOf` 只按「id 相对路径」
@@ -146,8 +146,8 @@ miss 两侧**，跨版本对照时可以直接看出「判定一致、位置口�
 
 
 读法：T0−T2 = 判定/锚点一致但首行文案不同；T2−T3 = elaboration/related 文本与
-顺序未对齐（adapter 协议目前只回单行 message，T3 要等「整份基线渲染」能力）。
-120 例自比 T3=0 正说明这一点。
+顺序未对齐。T3 的整份渲染能力已在 2026-11-15 后续实现，见结论 10（120 例自比
+T3 由 0 升到 118/120）。
 
 文案差异样例（maat vs 官方基线，17 条代表）：
 - int 显示：`number` → `int`（functionCall12、inheritedConstructorWithRestParams、numberToString 等 5 条）；
@@ -168,8 +168,8 @@ ratchet：`--ratchet config/ratchet-ts71-official.tsv` 当前登记 28 例（≥
 
 | 运行 | 用例 | 完全通过 | 假阳性 | 覆盖 | 分档 |
 | --- | --- | --- | --- | --- | --- |
-| tsrs 0.25.0（npm）× `7.1.0-beta-official` | 28 | 28 | 0 | 76/76 = 100% | T2 24 / T3 4 |
-| tsrs 0.21.0（源码构建）× `7.1.0-beta-official` | 28 | 28 | 0 | 76/76 = 100% | T2 24 / T3 4 |
+| tsrs 0.25.0（npm）× `7.1.0-beta-official` | 28 | 28 | 0 | 76/76 = 100% | T2 24 / T3 4（整份渲染后 T3 28/28，见结论 10） |
+| tsrs 0.21.0（源码构建）× `7.1.0-beta-official` | 28 | 28 | 0 | 76/76 = 100% | T2 24 / T3 4（整份渲染后 T3 28/28，见结论 10） |
 | tsrs 0.21.0 × `7.1.0-beta`（strada 现场期望） | 28 | 28 | 0 | 48/48 = 100% | T2 13 / T3 15 |
 
 同批对照：`tsc-rs`（kazhiramatsu）与 `ts-rust`（pingdotgg）源码构建二进制在
@@ -195,6 +195,28 @@ ratchet：`--ratchet config/ratchet-ts71-official.tsv` 当前登记 28 例（≥
   这是 M 级后续。
 - 不门禁：不参与退出码；结果只在 `metrics.json.perf`。
 
+## 结论 10：T3 整份基线与 elaboration 渲染（v1，2026-11-15）
+
+改动：`tsc-cli` 适配器解析 `--pretty false` 输出时保留每条诊断的缩进阐述/related
+续行与顺序（`CaseOutcome.fullText` / `Diagnostic.fullText`）；期望侧只比较
+`.errors.txt` 第一个 `====` 之前的摘要块。改前 T3 全灭的一半原因是把 `====` 后的
+源码标注也算进了期望文本。`totals.t3Failures` 新增未达原因：
+missing / extra / diagnostics / order / elaboration / related / other。
+
+| 运行 | 用例 | T3 full（改前 → 改后） | 未达归因 | 备注 |
+| --- | --- | --- | --- | --- |
+| tsc 7.1.0-beta 自比 | 28 | 4 → **28** | 0 | 0 假阳性 |
+| tsc 7.1.0-beta 自比（错误样本 120） | 120 | 0 → **118** | diagnostics×2 | 已知 pin 漂移：`complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound`（文案差）、`conflictingTypeParameterSymbolTransfer`（位置差） |
+| tsrs 0.25.0（npm） | 28 | 4 → **28** | 0 | 与 tsc 自比完全一致 |
+| tsrs 0.25.0（npm，错误样本 120） | 120 | — → **118** | diagnostics×2 | 同上两例 |
+| maat 主线 batch（冒烟 28） | 28 | 6 → 3 | diagnostics×24 | 适配器不提供多行渲染，T3 不可与 CLI 实现横比 |
+| maat 主线 batch（错误样本 120） | 120 | 0 → 0 | missing×80 / diagnostics×35 / extra×5 | 同上 |
+
+口径与偏差：本地语料是 `reference/typescript` 的 b7917e5 快照，与配置 pin
+`aa814927` 不同；CI 用 pin checkout 后需复跑对照。`tsc-cli` 系适配器（含第三方
+tsc 兼容实现）只要能提供多行输出即可参与 T3；只有单行 message 的实现最多到 T2。
+T3 仍是报告档，未达不判红。
+
 ## 局限
 
 - 冒烟集每档只有 28 例、官方基线子集只抽了 191 例，指标不能外推；报「通过率」之前必须先对齐口径。
@@ -202,8 +224,8 @@ ratchet：`--ratchet config/ratchet-ts71-official.tsv` 当前登记 28 例（≥
   配置错误基线（约 309 例）、绝对路径 `@filename`（约 659 例）暂不可消费。
 - 官方基线来自仓库源码快照，与 npm 补丁版本存在少量逐条差异（见结论 6/7），暂未做豁免登记；
   这一偏差要靠「同源编译器生成期望」消除（#34）。
-- T3 需要 adapter 能产出整份基线渲染（含 elaboration/related 与顺序）；当前协议只回
-  单行 message，因此 T3 目前是目标档而不是门禁档。
+- T3 已支持整份基线渲染（结论 10）：期望只取 `====` 前摘要块，实现侧用
+  `CaseOutcome.fullText`；仍不是门禁档。
 - 7.1 的普通基线（`7.1.0-beta`）仍复用 strada 语料；官方基线走单独的
   `ts71-official` 语料 pin。
 
@@ -256,6 +278,7 @@ bun src/run.ts --baseline 6.0.3 --corpus ../reference/typescript-strada/tests/ca
 - [x] 对齐官方 harness 默认值（结论 2/5）；
 - [x] 官方基线 v0 子集接入（结论 6）；
 - [x] TS7 官方 Go 布局基线（缺基线=无错）、T0–T3 分档与 ratchet（结论 7）；
+- [x] T3 整份基线渲染（elaboration/related/顺序；结论 10）；
 - [ ] 多值指令变体基线与官方配置命名（扩大官方基线覆盖面）；
 - [ ] 与基线同源的编译器构建，消除「仓库快照 vs npm 补丁」偏差；
 - 扩大样本（按码族/目录分层抽样）并接到公开仓 workflow 矩阵；
