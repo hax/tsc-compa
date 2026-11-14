@@ -187,8 +187,12 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 诊断条数（诊断级 T0−T2 差）；`samples.messageDiff` 给逐条文案差异样例。
 
 `--ratchet <file>` 维护 TSV 清单（`<case id>\t<tier>`，只登记 ≥T0 的用例）：
-改善自动写回、回落退出非零、先前登记的用例变成 SKIP 也视为回落。清单入库
-（`config/ratchet-ts71-official.tsv`），CI 用同一份做门禁。
+改善自动写回、回落退出非零、先前登记的用例变成 SKIP 也视为回落。
+
+**按实现分账**：`--ratchet-impl <impl> --baseline <id>` 推导 `config/ratchet/<impl>-<baseline>.tsv`；
+清单不存在时**自动初始化**（只登记当前档位，不产生回落判定），因此首次接入的实现（如目标版本更旧的
+`tsz`）不会被判红，后续轮次严格只升不降。`--ratchet-impl` 与显式 `--ratchet` 二选一；
+显式路径不存在时默认报错，需要首次创建时加 `--ratchet-init`。清单入库，CI 按实现分别传入。
 
 ### 4.4 第三方实现接入
 

@@ -11,6 +11,7 @@
 // - 只检查本次运行覆盖到的用例；未出现在本次 manifest 里的条目不检查、不删除。
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { TIER_RANK, TIERS, type CaseRecord, type Tier } from "./compare.ts";
 
 export type RatchetMap = Map<string, Tier>;
@@ -99,4 +100,11 @@ export function checkRatchet(previous: RatchetMap, records: CaseRecord[]): Ratch
   const changed =
     improvements.length > 0 || [...next.entries()].some(([id, tier]) => previous.get(id) !== tier) || next.size !== previous.size;
   return { regressions, improvements, next, changed };
+}
+
+/** 「实现 × 基线」清单的相对路径（相对仓库根）：config/ratchet/<impl>-<baseline>.tsv。
+ *  实现名/基线名做文件名安全化（保留字母数字与 . _ -，其余替换为 _）。 */
+export function ratchetPathFor(impl: string, baseline: string): string {
+  const safe = (value: string): string => value.replace(/[^A-Za-z0-9._-]+/g, "_");
+  return join("config", "ratchet", `${safe(impl)}-${safe(baseline)}.tsv`);
 }

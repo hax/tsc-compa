@@ -29,7 +29,7 @@ anchors and per-class breakdowns. For the official TypeScript 7 repository
 layout (`tsc/testdata/...`) the suite consumes the official `.errors.txt`
 baselines directly, grades every case on the T0–T3 agreement ladder
 (location → category → text → whole-baseline-bytes) and maintains a
-`--ratchet` list that only goes up. A GitHub Actions workflow runs unit tests
+`--ratchet` list that only goes up (per implementation × baseline). A GitHub Actions workflow runs unit tests
 plus a self-compare smoke for every baseline on push/PR, and a manually
 triggered workflow runs the TS7 official-baseline smoke.
 
@@ -63,7 +63,7 @@ export TSC_COMPA_CORPUS=/path/to/typescript-go/tsc/testdata/tests/cases
 bun src/run.ts --baseline 7.1.0-beta-official --corpus "$TSC_COMPA_CORPUS" \
   --expectation-source official-baseline \
   --cases config/smoke-cases-ts71-official.json \
-  --ratchet config/ratchet-ts71-official.tsv \
+  --ratchet-impl tsc-7-1 \
   --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc
 
 # the same suite against another implementation (per-case CLI adapter)
@@ -162,7 +162,7 @@ bun src/run.ts --baseline 7.1.0-beta-official \
   --corpus /tmp/ts71-corpus/tsc/testdata/tests/cases \
   --adapter "tsc-cli:$BIN" --mode official \
   --expectation-source official-baseline \
-  --ratchet config/ratchet-ts71-official.tsv
+  --ratchet-impl "$IMPL"
 ```
 
 `.github/workflows/third-party.yml` does the same on CI (manual dispatch,
@@ -181,7 +181,7 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `src/tsc.ts` | expected diagnostics from a pinned tsc CLI (cached) |
 | `src/officialBaseline.ts` | expectation source reading official `.errors.txt` baselines (strada flat layout + TS7 Go layout incl. flattened suites; missing baseline = no errors) |
 | `src/compare.ts` | matching (incl. mis-anchor pairing), T0-T3 agreement ladder and metrics |
-| `src/ratchet.ts` | `--ratchet` list: only goes up, regression fails the run |
+| `src/ratchet.ts` | `--ratchet` / `--ratchet-impl` lists: only go up, regression fails the run (per implementation × baseline) |
 | `src/run.ts` | smoke runner entry |
 | `src/adapters/` | reference `tsc-cli` adapter, per-case CLI adapter, batch protocol client, mock batch implementation |
 | `config/baselines.json` | baseline definitions (three tsc versions × two corpora) |
@@ -191,7 +191,7 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `config/official-baseline-cases.json` | sample case list consumable from official baselines |
 | `config/smoke-cases-ts71-official.json` | TS7 official-baseline smoke list (18 error cases + 10 clean) |
 | `config/official-baseline-cases-ts71.json` | 120 error-bearing TS7 cases (extended local sample) |
-| `config/ratchet-ts71-official.tsv` | T0–T3 ratchet list for the TS7 official baselines |
+| `config/ratchet/` | per-implementation T0–T3 ratchet lists (`<impl>-<baseline>.tsv`); `config/ratchet-ts71-official.tsv` is the legacy shared list |
 | `scripts/select-smoke.ts` | regenerate class-filtered smoke case lists |
 | `scripts/select-official-baseline-cases.ts` | scan a corpus for cases consumable from official baselines |
 | `scripts/install-impl.ts` | fetch a third-party implementation per its registry entry |

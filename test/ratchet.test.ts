@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { CaseRecord, Tier } from "../src/compare.ts";
-import { checkRatchet, readRatchet, writeRatchet } from "../src/ratchet.ts";
+import { checkRatchet, ratchetPathFor, readRatchet, writeRatchet } from "../src/ratchet.ts";
 
 function record(id: string, tier: Tier, status: "ran" | "skip" = "ran"): CaseRecord {
   return {
@@ -66,5 +66,29 @@ describe("checkRatchet", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("按实现分账（ratchet per impl）", () => {
+  test("首次接入：空清单只登记当前档位、不产生回落", () => {
+    const check = checkRatchet(new Map(), [record("a.ts", "full"), record("b.ts", "none"), record("c.ts", "none", "skip")]);
+    expect(check.regressions).toEqual([]);
+    expect([...check.next.entries()]).toEqual([["a.ts", "full"]]);
+    expect(check.changed).toBe(true);
+  });
+
+  test("分账隔离：实现 A 的回落不影响实现 B 的清单", () => {
+    const implB = new Map<string, Tier>([["a.ts", "text"]]);
+    const checkA = checkRatchet(new Map<string, Tier>([["a.ts", "full"]]), [record("a.ts", "location")]);
+    const checkB = checkRatchet(implB, [record("a.ts", "full")]);
+    expect(checkA.regressions.length).toBe(1);
+    expect(checkB.regressions).toEqual([]);
+    expect(checkB.next.get("a.ts")).toBe("full");
+    expect(implB.get("a.ts")).toBe("text"); // 输入清单不被就地修改
+  });
+
+  test("ratchetPathFor：按实现 × 基线推导路径并做文件名安全化", () => {
+    expect(ratchetPathFor("tsrs", "7.1.0-beta-official")).toBe(join("config", "ratchet", "tsrs-7.1.0-beta-official.tsv"));
+    expect(ratchetPathFor("impl A/b", "7.1 beta")).toBe(join("config", "ratchet", "impl_A_b-7.1_beta.tsv"));
   });
 });

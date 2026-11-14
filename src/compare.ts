@@ -197,9 +197,13 @@ export interface RunMeta {
   expectationSource?: "tsc" | "official-baseline";
   generatedAt: string;
   selectedCases: number;
-  /** 设置了 --ratchet 时的对比结果。 */
+  /** 设置了 --ratchet / --ratchet-impl 时的对比结果。 */
   ratchet?: {
     path: string;
+    /** 按实现分账时的实现名（config/implementations.json 的 key 或自定义名）。 */
+    impl?: string;
+    /** 本次运行是否首次创建清单（只登记当前档位、不作回落判定）。 */
+    initialized?: boolean;
     regressions: number;
     improvements: number;
     wrote: boolean;

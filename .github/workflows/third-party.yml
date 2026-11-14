@@ -112,7 +112,8 @@ jobs:
           if [ -n "$IN_LIMIT" ] && [ "$IN_LIMIT" != "0" ]; then LIMIT_ARGS="--limit $IN_LIMIT"; fi
           RATCHET_ARGS=""
           if [ "$IN_BASELINE" = "7.1.0-beta-official" ]; then
-            RATCHET_ARGS="--ratchet config/ratchet-ts71-official.tsv"
+            # 按「实现 × 基线」分账；首次接入的清单由 run.ts 自动初始化（只登记不回退）。
+            RATCHET_ARGS="--ratchet-impl $IN_IMPL"
           fi
           bun src/run.ts \
             --baseline "$IN_BASELINE" \

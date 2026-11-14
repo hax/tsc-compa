@@ -52,7 +52,7 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
 - 期望源：`--expectation-source official-baseline`（缺基线 = 该用例无期望错误）；
 - 分档：`metrics.totals.byTier` 给 T0 location / T1 category / T2 text / T3 full
   的用例分布，`totals.messageMismatch` 给「位置命中但首行文案不同」的诊断条数；
-- 门禁：`--ratchet config/ratchet-ts71-official.tsv`，回落即失败、改善写回
+- 门禁：`--ratchet-impl <impl>`（路径 `config/ratchet/<impl>-<baseline>.tsv`，首次自动初始化），回落即失败、改善写回
   （CI 里清单已入库，正常不应产生写回；若 artifact 显示有改善，维护者审阅后提交）。
 
 ## 第三方实现冒烟（`third-party.yml`）
@@ -64,7 +64,7 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
 - **cargo 路径（CI）**：workflow 按 `acquisition.cargo.git` 是否存在按需安装 Rust 1.99.1，并按登记的 git pin **浅拉取**源码到 `.tools/src/<impl>-<sha7>`，用外部 `CARGO_TARGET_DIR=.tools/target/<impl>` 构建，不写入仓库检出。`tsz` 额外通过 `cargo.env` 强制 `CI=1`（其仓库默认把 target 写进检出并改 `.git/config`）。cargo registry/git 与 `.tools/target` 走 actions/cache，job 超时 20 分钟、获取/构建步骤 15 分钟；
 - 新增实现时：在 `config/implementations.json` 登记 `cargo.git.url/ref`（本地开发仍可直接用 `reference/<repo>` 检出）、构建命令、产物相对 `target/` 的路径与必要的 `env`；无需改 workflow 或 adapter；
 - 自动带 registry 里的固定 CLI 参数（如 `tsrs` 的 `--singleThreaded`），用 `tsc-cli` 适配器驱动；
-- 官方基线跑 `--ratchet config/ratchet-ts71-official.tsv`，metrics 作为 artifact 上传。
+- 官方基线跑 `--ratchet-impl <impl>`（按实现分账；首次接入的清单只登记当前档位，不判红），metrics 作为 artifact 上传。
 
 原则：不为第三方实现写内部 adapter、不改其源码；获取方式/相位字段/并行开关的差异登记在
 `config/implementations.json` 与 `docs/RESULTS.md`。
