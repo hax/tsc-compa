@@ -37,6 +37,10 @@
       "acquisition": {
         "cargo": {
           "repo": "reference/tsc-rs",
+          "git": {
+            "url": "https://github.com/kazhiramatsu/tsc-rs",
+            "ref": "2b006e078d5b535185f5aeea04406eab7b8aee3c"
+          },
           "command": "cargo build --release --locked -p tsc-rs-cli",
           "bin": "target/release/tsc-rs"
         },
@@ -87,7 +91,12 @@
       "acquisition": {
         "cargo": {
           "repo": "reference/tsz",
-          "command": "env CI=1 cargo build --release --locked -p tsz-cli --bin tsz",
+          "git": {
+            "url": "https://github.com/tsz-org/tsz",
+            "ref": "0b4641ac285f5991a3e805e395e7e4f9ef71f90e"
+          },
+          "command": "cargo build --release --locked -p tsz-cli --bin tsz",
+          "env": { "CI": "1" },
           "bin": "target/release/tsz"
         },
         "localEnv": "TSZ_BIN"

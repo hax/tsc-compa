@@ -60,7 +60,9 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
 手动触发，输入「实现名（config/implementations.json）× 基线 id（7.1.0-beta-official / 7.1.0-beta）」：
 
 - 语料按基线从 `config/baselines.json` 的 corpus ref 现场 checkout（官方基线用 TS7 Go 布局，普通 7.1 用 strada）；
-- 实现按 registry 的获取方式安装：npm 预编译优先（如 `tsrs`），其次 `localEnv`，再次已有 cargo 产物；`scripts/install-impl.ts` 打印二进制路径；
+- 实现按 registry 的获取方式安装：`localEnv` 优先（本地调试），其次 npm 预编译（如 `tsrs`、`ts-rust`），最后 cargo 构建（`tsc-rs`、`tsz` 等无 npm 包的实现）；`scripts/install-impl.ts` 打印二进制路径；
+- **cargo 路径（CI）**：workflow 按 `acquisition.cargo.git` 是否存在按需安装 Rust 1.99.1，并按登记的 git pin **浅拉取**源码到 `.tools/src/<impl>-<sha7>`，用外部 `CARGO_TARGET_DIR=.tools/target/<impl>` 构建，不写入仓库检出。`tsz` 额外通过 `cargo.env` 强制 `CI=1`（其仓库默认把 target 写进检出并改 `.git/config`）。cargo registry/git 与 `.tools/target` 走 actions/cache，job 超时 20 分钟、获取/构建步骤 15 分钟；
+- 新增实现时：在 `config/implementations.json` 登记 `cargo.git.url/ref`（本地开发仍可直接用 `reference/<repo>` 检出）、构建命令、产物相对 `target/` 的路径与必要的 `env`；无需改 workflow 或 adapter；
 - 自动带 registry 里的固定 CLI 参数（如 `tsrs` 的 `--singleThreaded`），用 `tsc-cli` 适配器驱动；
 - 官方基线跑 `--ratchet config/ratchet-ts71-official.tsv`，metrics 作为 artifact 上传。
 

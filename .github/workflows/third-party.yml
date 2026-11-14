@@ -4,8 +4,9 @@
 # 只手动触发。实现只通过公开 CLI 驱动（tsc-cli 适配器），不为任何实现写内部 adapter；
 # 获取方式（npm 预编译 / cargo 构建 / 本地二进制）登记在 config/implementations.json。
 #
-# 已知限制：npm 方式当前只覆盖有平台预编译包的实现（如 tsrs）；其余实现需自行构建后
-# 用 --source local 或把二进制路径传入（见 docs/CI.md）。
+# 获取方式（npm 预编译 / cargo 构建 / 本地二进制）登记在 config/implementations.json。
+# cargo 路径：workflow 按需安装 Rust 1.99.1，按 implementations.json 的 git pin 浅拉取源码，
+# 在外部 CARGO_TARGET_DIR 构建（不写入检出）；tsc-rs / tsz 等无 npm 包的实现走此路径。
 name: third-party-impl
 
 on:
@@ -59,7 +60,29 @@ jobs:
             const r = require("./config/implementations.json").implementations[process.env.IN_IMPL];
             if (!r) { console.error("unknown implementation: " + process.env.IN_IMPL); process.exit(1); }
             console.log("cli_args=" + (r.cliArgs || []).join(" "));
+            const acq = r.acquisition || {};
+            const source = acq.localEnv && (process.env[acq.localEnv] || "").length > 0
+              ? "local" : acq.npm ? "npm" : "cargo";
+            console.log("source=" + source);
+            console.log("pin=" + ((acq.cargo && acq.cargo.git && acq.cargo.git.ref) || (acq.npm && acq.npm.version) || ""));
           ' >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust（cargo 获取路径）
+        if: steps.plan.outputs.source == 'cargo'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.1"
+
+      - name: Cache cargo（registry + 构建产物）
+        if: steps.plan.outputs.source == 'cargo'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .tools/target
+          key: cargo-${{ inputs.impl }}-${{ steps.plan.outputs.pin }}-${{ hashFiles('config/implementations.json') }}
+          restore-keys: cargo-${{ inputs.impl }}-${{ steps.plan.outputs.pin }}-
 
       - name: Checkout corpus (${{ inputs.baseline }})
         uses: actions/checkout@v4
@@ -73,6 +96,7 @@ jobs:
 
       - name: Fetch implementation（config/implementations.json）
         id: impl
+        timeout-minutes: 15
         run: |
           BIN=$(bun scripts/install-impl.ts --name "$IN_IMPL" --dest .tools | tail -1)
           echo "bin=$BIN" >> "$GITHUB_OUTPUT"
