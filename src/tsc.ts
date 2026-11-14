@@ -24,12 +24,20 @@ export interface ExpectationOptions {
 
 /** 解析 tsc 可执行文件：显式参数 → TSC_BIN 环境变量 → PATH 上的 tsc。 */
 export function resolveTscPath(explicit?: string): string {
-  if (explicit !== undefined && explicit.length > 0) return explicit;
+  if (explicit !== undefined && explicit.length > 0) return absIfPath(explicit);
   const env = process.env.TSC_BIN;
-  if (env !== undefined && env.length > 0) return env;
+  if (env !== undefined && env.length > 0) return absIfPath(env);
   const probe = spawnSync("tsc", ["--version"], { encoding: "utf8" });
   if (probe.error === undefined && probe.status === 0) return "tsc";
   throw new Error("找不到 tsc：请用 --tsc 或环境变量 TSC_BIN 指定一个 tsc 可执行文件");
+}
+
+/**
+ * 带路径分隔符的可执行文件转绝对路径。子进程以临时目录为 cwd 运行，
+ * 相对路径会解析错位置；纯命令名（走 PATH）保持原样。
+ */
+export function absIfPath(bin: string): string {
+  return bin.includes("/") ? resolve(bin) : bin;
 }
 
 export function tscVersionOf(tscBin: string): string {

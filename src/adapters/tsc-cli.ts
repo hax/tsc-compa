@@ -41,6 +41,12 @@ export interface TscCliAdapterOptions {
   name?: string;
   /** tsc 可执行文件路径。 */
   bin: string;
+  /**
+   * 放在用例参数之前的默认参数（case 指令仍可覆盖）。用于跨版本对照时
+   * 对齐版本默认值（例如 6.0/7.1 默认 strict=true、5.9 默认 false，加
+   * --strict false；默认 target 也从 ES5 变成 ES2015，可加 --target es5）。
+   */
+  extraArgs?: string[];
   timeoutMs?: number;
 }
 
@@ -50,11 +56,13 @@ export class TscCliAdapter implements Adapter {
   /** tsc 接受任意编译选项，因此 official 模式下的结果是可比的。 */
   readonly supportsOptions = true;
   private readonly bin: string;
+  private readonly extraArgs: string[];
   private readonly timeoutMs: number;
 
   constructor(options: TscCliAdapterOptions) {
     this.name = options.name ?? "tsc-cli";
     this.bin = options.bin;
+    this.extraArgs = options.extraArgs ?? [];
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
@@ -62,7 +70,8 @@ export class TscCliAdapter implements Adapter {
     const tmp = mkdtempSync(join(tmpdir(), "tsc-compa-tsc-"));
     try {
       const paths = materializeCase(tmp, input.files);
-      const r = spawnSync(this.bin, [...input.args, ...paths], {
+      // extraArgs 放在用例参数之前：它们只提供「版本默认值」，case 指令优先。
+      const r = spawnSync(this.bin, [...this.extraArgs, ...input.args, ...paths], {
         cwd: tmp,
         encoding: "utf8",
         maxBuffer: 1 << 28,
