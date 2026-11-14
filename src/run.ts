@@ -12,6 +12,8 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { formatBenchSummary, runBench } from "./bench.ts";
+import { formatProjectBenchSummary, runProjectBench } from "./bench-project.ts";
 import { createAdapter } from "./adapters/index.ts";
 import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, type RunMeta } from "./compare.ts";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "./baselines.ts";
@@ -42,6 +44,19 @@ interface Args {
   adapterArgsExtra: string[];
   /** 期望来源：现场跑 tsc CLI，或直接消费官方 errors 基线子集。 */
   expectationSource: "tsc" | "official-baseline";
+  /** 计时模式（与验证分离，见 src/bench.ts）。 */
+  bench: boolean;
+  /** 计时模式每案重复轮数。 */
+  reps: number;
+  /** 计时模式缓存档位：cold=每案新建适配器；warm=整个 case 集复用。 */
+  cache: "cold" | "warm";
+  /** 计时模式一次跑多个实现（逗号分隔，逐轮轮转顺序）。 */
+  benchAdapters: string[];
+  benchSkipExpectations: boolean;
+  /** 真实项目目录（--bench --project）：相位计时，不走 conformance 用例集。 */
+  project?: string;
+  /** 项目相位计时的实现列表（tsc:<bin> / maat:<bin>）。 */
+  benchImpls: string[];
 }
 
 function parseArgs(argv: string[]): Args {
@@ -59,7 +74,15 @@ function parseArgs(argv: string[]): Args {
     baseArgsExtra: [],
     adapterArgsExtra: [],
     expectationSource: "tsc",
+    bench: false,
+    reps: 3,
+    cache: "cold",
+    benchAdapters: [],
+    benchSkipExpectations: false,
+    project: undefined,
+    benchImpls: [],
   };
+  let cacheChosen: "cold" | "warm" | null = null;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     const next = (): string => {
@@ -127,6 +150,43 @@ function parseArgs(argv: string[]): Args {
       case "--verbose":
         args.verbose = true;
         break;
+      case "--bench":
+        args.bench = true;
+        break;
+      case "--reps": {
+        const value = Number(next());
+        if (!Number.isInteger(value) || value < 1) throw new Error("--reps 需要正整数");
+        args.reps = value;
+        break;
+      }
+      case "--cold":
+        if (cacheChosen === "warm") throw new Error("--cold 与 --warm 只能选一个");
+        cacheChosen = "cold";
+        args.cache = "cold";
+        break;
+      case "--warm":
+        if (cacheChosen === "cold") throw new Error("--cold 与 --warm 只能选一个");
+        cacheChosen = "warm";
+        args.cache = "warm";
+        break;
+      case "--bench-adapters": {
+        const list = next().split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+        if (list.length === 0) throw new Error("--bench-adapters 需要至少一个适配器");
+        args.benchAdapters = list;
+        break;
+      }
+      case "--bench-skip-expectations":
+        args.benchSkipExpectations = true;
+        break;
+      case "--project":
+        args.project = next();
+        break;
+      case "--bench-impls": {
+        const list = next().split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+        if (list.length === 0) throw new Error("--bench-impls 需要至少一个实现");
+        args.benchImpls = list;
+        break;
+      }
       case "--help":
       case "-h":
         console.log(
@@ -135,13 +195,17 @@ function parseArgs(argv: string[]): Args {
             "[--expectation-source tsc|official-baseline] [--exclude-class <tags>] [--only-class <tags>] " +
             "[--out <dir>] [--limit N] [--verbose]",
         );
+        console.log(
+          "计时模式（与验证分离）：--bench --project <dir> --bench-impls tsc:<bin>,maat:<bin> [--reps N] " +
+            "（头条=Check 相位）；或 --bench [--cases <manifest>] [--cold|--warm] 做逐案管线演示。",
+        );
         console.log("基线见 config/baselines.json；标签见 src/classify.ts 的 CASE_TAGS。");
         process.exit(0);
       default:
         throw new Error(`未知参数 ${arg}`);
     }
   }
-  if (args.corpus === undefined) {
+  if (args.corpus === undefined && !(args.bench && args.project !== undefined)) {
     throw new Error("缺少语料目录：用 --corpus 或环境变量 TSC_COMPA_CORPUS 指定 tests/cases");
   }
   return args;
@@ -149,6 +213,22 @@ function parseArgs(argv: string[]): Args {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+
+  if (args.bench && args.project !== undefined) {
+    // 真实项目目录的相位计时（头条 = tsc 系自报的 Check 相位）；不需要语料/期望。
+    if (args.benchImpls.length === 0) {
+      throw new Error("--bench --project 需要 --bench-impls tsc:<bin>,maat:<bin> 指定实现");
+    }
+    const projectReport = runProjectBench({
+      project: args.project,
+      implementations: args.benchImpls,
+      reps: args.reps,
+      outDir: args.out,
+    });
+    console.log(formatProjectBenchSummary(projectReport));
+    console.log(`结果：${join(args.out, "bench-project.json")}`);
+    return;
+  }
 
   // 基线是 (tsc, baseArgs, 语料 tag, manifest) 的具名组合；不给 --baseline 时
   // 保持旧行为：--tsc / TSC_BIN 指定期望源，基础参数用 6.0 口径。
@@ -166,6 +246,32 @@ async function main(): Promise<void> {
   const casesPath =
     args.cases ?? (baseline !== null ? join(REPO_ROOT, baseline.manifest) : join(REPO_ROOT, "config/smoke-cases.json"));
 
+  const ids = loadManifest(casesPath).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
+
+  if (args.bench) {
+    // 兼容性语料上的逐案计时：只作管线演示，不承载性能结论（见 docs/DESIGN）。
+    const adapterSpecs = args.benchAdapters.length > 0 ? args.benchAdapters : [args.adapter];
+    const report = await runBench({
+      corpus: args.corpus,
+      caseIds: ids,
+      adapterSpecs,
+      mode: args.mode,
+      reps: args.reps,
+      cold: args.cache === "cold",
+      expectationArgs: baseArgs,
+      tscBin,
+      tscVersion,
+      expectationSource: args.expectationSource,
+      skipExpectations: args.benchSkipExpectations,
+      baseline: args.baseline,
+      corpusRef,
+      outDir: args.out,
+    });
+    console.log(formatBenchSummary(report));
+    console.log(`结果：${join(args.out, "bench.json")}`);
+    return;
+  }
+
   const adapter: Adapter = await createAdapter(args.adapter);
   await adapter.init?.();
 
@@ -178,7 +284,6 @@ async function main(): Promise<void> {
     );
   }
 
-  const ids = loadManifest(casesPath).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
   const records: CaseRecord[] = [];
   let optionDirectiveIgnored = 0;
   let excludedStatic = 0;

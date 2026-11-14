@@ -230,6 +230,33 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 
 `details.json` 保留逐用例的 fp/miss 点位，便于归因。
 
+## 6.5 计时（`--bench`，与正确性验证分离）
+
+正确性验证（T0–T3 分档 + ratchet）会大量使用缓存（期望缓存、批量进程复用、JIT/页缓存预热），这些缓存严重扭曲性能测量。`--bench` 因此独立于验证，并且**不把验证跑的总时间当性能数字**。
+
+### 6.5.1 真实项目相位计时（头条口径）
+
+```bash
+bun src/run.ts --bench --project <项目目录> \
+  --bench-impls "tsc:node_modules/typescript-7-1/bin/tsc,maat:/path/to/maat" \
+  --reps 5 --out out/bench-project
+```
+
+- 对真实项目目录跑各实现的 CLI；tsc 系实现加 `--extendedDiagnostics`，解析 Parse / Bind / Check / Total 相位。
+- **头条 = Check 相位**（类型检查本体）。Parse/Bind 属于「用户文件处理」，留在指标里；启动与 lib 构建单列为 `启动/其它 = Total − Parse − Bind − Check`（tsc 的 Parse 含 lib 解析；maat 不装载 lib.d.ts）。
+- 没有相位输出的实现退回 wall（含进程启动与诊断渲染），meta 标 `wall-fallback` 且 `includesRendering=true`，**不与 Check 相位横比**。
+- cold = 第 1 轮；warm = 后续轮中位。两档分开报，不混成一个数。
+- 同时记录诊断条数：诊断多的实现 wall 慢必须能归因到「报错多」，而不是「检查慢」。
+- 渲染成本附加档：实现支持时用 `impl:<bin>::--noMessages` 之类附加参数单跑一档（tsc CLI 没有关闭渲染的开关，不参与此档，meta 注明）。
+
+### 6.5.2 逐案管线演示（次要，不承载性能结论）
+
+`--bench [--cases <manifest>] [--cold|--warm]`：在 conformance 冒烟集上跑逐案 adapter，输出 check-only = 语料 check 合计 − 轮数 × 空程序基线，并报告 harness 开销（none 适配器）。只用于演示「验证与计时分离」的管线；实现性能结论一律以 6.5.1（真实项目相位）或实现自带 bench harness 为准。
+
+### 6.5.3 结果 meta
+
+`phaseSource`（extendedDiagnostics / wall-fallback）、`includesRendering`、`cache`（cold/warm）、`reps`、`project`、版本与诊断条数；cold 与 warm 分列。
+
 ## 7. 基线与多版本
 
 「tsc 版本 × 语料 tag」是两条独立配置轴，在 `config/baselines.json` 里成对定义：
@@ -310,4 +337,4 @@ test/                  单测（bun test）
 - [ ] 并行执行与结果合并（shard / merge）；
 - [ ] L2/L3 判定粒度（宽度、消息文案）；
 - [ ] 实现声明「已知不支持的错误码/能力」，用于 SKIP 而非算漏报；
-- [ ] CI workflow（私仓 build → release asset → dispatch，见 §8）。
+- [x] CI workflow（私仓 build → release asset → dispatch，见 §8；已跑通 strip 与批量 adapter）。

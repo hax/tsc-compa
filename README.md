@@ -71,6 +71,28 @@ tsc-compa smoke — 用例 28：跑 28，完全通过 28，跳过 0
 口径：adapter=tsc-cli:node_modules/typescript-6-0/bin/tsc mode=official baseline=6.0.3 tsc=6.0.3
 ```
 
+## Benchmarking (separate from correctness runs)
+
+Compatibility runs are cache-heavy (expectations cache, batch process reuse, warm
+page cache), so their wall time is not a performance number. Two separate benches:
+
+```bash
+# headline: phase timings on a real project (Check phase is the fair metric)
+bun src/run.ts --bench --project /path/to/project \
+  --bench-impls "tsc:node_modules/typescript-7-1/bin/tsc,maat:/path/to/maat" \
+  --reps 5 --out out/bench-project
+
+# secondary: per-case pipeline demo on the smoke corpus (not a conclusion)
+bun src/run.ts --bench --corpus "$TSC_COMPA_CORPUS" --adapter none --reps 3
+```
+
+Phase timings come from `--extendedDiagnostics` (Parse / Bind / Check / Total);
+implementations without phase output fall back to wall and are marked
+`wall-fallback` (includes startup and diagnostic rendering, not comparable with
+Check). `cold` = run #1, `warm` = median of later runs; keep tiers and phase
+sources separate when comparing implementations. Results land in
+`<out>/bench-project.json` or `<out>/bench.json`.
+
 ## Baselines
 
 `config/baselines.json` pairs an npm-aliased `tsc` version with a corpus tag, a

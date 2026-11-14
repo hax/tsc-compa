@@ -41,6 +41,8 @@ export interface BatchResultMessage {
   diagnostics?: Diagnostic[];
   skipReason?: string;
   message?: string;
+  /** 可选：实现自报的检查耗时（毫秒），供 --bench 的 check-only 指标使用。 */
+  checkMs?: number;
 }
 
 export interface BatchHelloMessage {
@@ -180,6 +182,7 @@ export class BatchAdapter implements Adapter {
       diagnostics,
       skipReason: msg.skipReason,
       message: msg.message,
+      checkMs: typeof msg.checkMs === "number" ? msg.checkMs : undefined,
     });
   }
 

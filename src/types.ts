@@ -58,6 +58,8 @@ export interface CaseOutcome {
   diagnostics: Diagnostic[];
   skipReason?: string;
   message?: string;
+  /** 可选：实现自报的「检查耗时」（毫秒，不含进程启动/协议传输），供 --bench 的 check-only 指标使用。 */
+  checkMs?: number;
 }
 
 /**

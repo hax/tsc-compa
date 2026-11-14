@@ -175,3 +175,25 @@ bun src/run.ts --baseline 6.0.3 --corpus ../reference/typescript-strada/tests/ca
 - 基于这批数据回答「是否长期保留 5.9 基线」：目前看 5.9 与 6.0/7.1 的差异
   主要是默认值漂移 + 少量模块上下文差异，保留 5.9 的成本主要是语料与期望
   维护，收益是能证明「承接 5.9 项目」的能力。
+
+## 计时（--bench，2026-11-15 演示）
+
+与正确性验证彻底分开：头条口径是真实项目目录上的 Check 相位（tsc 系实现用 --extendedDiagnostics 自报）；没有相位输出的实现退回 wall 并标注不可横比。
+
+项目：maat/ts（TypeScript 实现源码，带 tsconfig）。命令见 docs/DESIGN.md 6.5。
+
+warm（第 2-5 轮中位）：
+- tsc 6.0.3：Check 1145.0ms / Parse 210.0 / Bind 110.0 / Total 1520.0 / 启动其它 55.0 / 诊断 0 / warm wall 1599.7
+- tsc 7.1.0-beta：Check 161.0ms / Parse 22.0 / Bind 6.0 / Total 189.5 / 启动其它 0.5 / 诊断 0 / warm wall 261.3
+- maat（含渲染）：wall 51.6ms / 诊断 32（wall-fallback，不可与 Check 横比）
+- maat（--noMessages）：wall 56.1ms / 诊断 32（同上）
+
+cold（第 1 轮）：
+- tsc 6.0.3：Check 1130 / Total 1510 / wall 1593.9
+- tsc 7.1.0-beta：Check 158 / Total 191 / wall 267.1
+- maat（含渲染）：wall 62.3
+- maat（--noMessages）：wall 49.8
+
+读法：tsc 6.0.3 与 7.1.0-beta 的 Check 相位差一个数量级；maat 只有 wall 回退数字（含进程启动与 32 条诊断渲染），不可与 Check 相位横比。--noMessages 在本例没有收益（诊断少、渲染占比小），作为渲染附加档保留。本条目只演示口径，不外推性能结论。
+
+结果 JSON：out/bench-project-demo2/bench-project.json。
