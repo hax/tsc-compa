@@ -25,15 +25,25 @@ const d = (patch: Partial<Diagnostic>): Diagnostic => ({
   ...patch,
 });
 
-test("命中、漏报、假阳性与错锚分别计数", () => {
+test("精确命中、漏报、假阳性与错锚分别计数", () => {
   const expected = [d({ line: 1, col: 2 }), d({ line: 3, col: 0, code: 2345 })];
   const actual = [d({ line: 1, col: 2 }), d({ line: 9, col: 0, code: 2339 }), d({ line: 3, col: 5, code: 2345 })];
   const record = compareCase("case-a", expected, actual);
   expect(record.hits).toBe(1);
-  expect(record.missed.length).toBe(1);
-  expect(record.fp.length).toBe(2);
-  // 同文件同码不同位置：TS2345 计入错锚
+  expect(record.missed.length).toBe(0);
+  expect(record.fp.length).toBe(1);
+  // 同文件同码不同位置：TS2345 成对归入错锚，不进 fp/miss
   expect(record.misanchor).toBe(1);
+});
+
+test("错锚成对抵消，多出来的仍计 fp / miss", () => {
+  const expected = [d({ line: 1 }), d({ line: 2 })];
+  const actual = [d({ line: 1 }), d({ line: 5 }), d({ line: 6 })];
+  const record = compareCase("case-x", expected, actual);
+  expect(record.hits).toBe(1);
+  expect(record.misanchor).toBe(1);
+  expect(record.missed.length).toBe(0);
+  expect(record.fp.length).toBe(1);
 });
 
 test("warning 不进分母：只比较 error", () => {
@@ -44,10 +54,23 @@ test("warning 不进分母：只比较 error", () => {
   expect(record.fp.length).toBe(0);
 });
 
-test("汇总：覆盖率为空期望时记 null，skip 按原因分类", () => {
-  const record = compareCase("case-c", [], []);
-  const metrics = summarize([record, skipRecord("case-d", "@jsx")], meta);
+test("汇总：覆盖率为空期望时记 null，skip 按原因分类，按类聚合", () => {
+  const record = compareCase("case-c", [], [], ["suite:compiler", "files:single"]);
+  const metrics = summarize([record, skipRecord("case-d", "@jsx", ["suite:conformance", "files:single"])], meta);
   expect(metrics.totals.passCases).toBe(1);
   expect(metrics.totals.coverage).toBeNull();
   expect(metrics.skips).toEqual([["@jsx", 1]]);
+  expect(metrics.byClass["suite:compiler"]!.ran).toBe(1);
+  expect(metrics.byClass["suite:conformance"]!.skipped).toBe(1);
+  expect(metrics.byClass["files:single"]!.cases).toBe(2);
+});
+
+test("完全通过要求 fp、漏报、错锚都为 0", () => {
+  const misaligned = compareCase("case-e", [d({ line: 1 })], [d({ line: 2 })]);
+  const metrics = summarize([misaligned], meta);
+  expect(metrics.totals.passCases).toBe(0);
+  expect(metrics.totals.misanchorCases).toBe(1);
+  expect(metrics.totals.misanchorTotal).toBe(1);
+  expect(metrics.totals.fpTotal).toBe(0);
+  expect(metrics.totals.missTotal).toBe(0);
 });
