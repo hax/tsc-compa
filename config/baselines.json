@@ -9,6 +9,11 @@
       "repo": "microsoft/TypeScript",
       "ref": "v5.9.3",
       "note": "5.9 发布 tag"
+    },
+    "ts71-official": {
+      "repo": "microsoft/TypeScript",
+      "ref": "aa8149273b23401f0a79a5f0384c42de51888693",
+      "note": "TS7 官方 Go 布局语料：cases 在 tsc/testdata/tests/cases、基线在 tsc/testdata/baselines/reference；pin 取自 reference/tsc-rs/vendor/typescript-native/7.1.0-dev-aa814927/manifest.json（microsoft/TypeScript@aa814927，2026-10-09）"
     }
   },
   "baselines": [
@@ -56,6 +61,21 @@
       "corpus": "strada",
       "manifest": "config/smoke-cases.json",
       "note": "Go 官方 test runner 默认值：target=ES2026（ScriptTarget.LatestStandard）、module 由 target 推出 ES2022、moduleResolution=Bundler、strict 系默认 true（Strict != false）；harness 固定项 NewLine=CRLF、SkipDefaultLibCheck=true、NoErrorTruncation=true。来源：reference/typescript/tsc/internal/core/compileroptions.go（GetEmitScriptTarget / GetEmitModuleKind / GetModuleResolutionKind / GetStrictOptionValue）+ tsc/internal/testutil/harnessutil/harnessutil.go CompileFiles。TS7 原生实现；语料暂与 6.0 共用 strada 线。"
+    },
+    {
+      "id": "7.1.0-beta-official",
+      "tsc": "node_modules/typescript-7-1/bin/tsc",
+      "baseArgs": [
+        "--noEmit", "--ignoreConfig", "--pretty", "false",
+        "--target", "es2026",
+        "--module", "es2022",
+        "--moduleResolution", "bundler",
+        "--strict", "true",
+        "--skipDefaultLibCheck", "--noErrorTruncation"
+      ],
+      "corpus": "ts71-official",
+      "manifest": "config/smoke-cases-ts71-official.json",
+      "note": "与 7.1.0-beta 同一 tsc，但期望源改为仓库官方 .errors.txt（--expectation-source official-baseline），语料用 TS7 Go 布局 pin aa814927。tiers/ratchet 口径见 docs/DESIGN.md「官方基线消费（TS7）」；用于 #34 的官方基线主路径。"
     }
   ]
 }

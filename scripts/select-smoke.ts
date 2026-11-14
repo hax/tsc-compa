@@ -15,12 +15,13 @@
 //
 // 保留多文件用例若干，单文件用例按固定步长抽样，保证可复现。
 
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { findBaseline, loadBaselines, resolveBaselineTsc } from "../src/baselines.ts";
 import { classifyCase, parseTagList } from "../src/classify.ts";
 import { toTscArgs } from "../src/case.ts";
 import { readCase, scanCorpus } from "../src/discover.ts";
+import { baselineFileOf, parseOfficialBaselineText } from "../src/officialBaseline.ts";
 import { expectationOf, tscVersionOf } from "../src/tsc.ts";
 
 const DEFAULT_EXCLUDE_TAGS = [
@@ -42,6 +43,10 @@ interface Args {
   excludeTags: string[];
   baseline?: string;
   tsc?: string;
+  /** 有官方 errors 基线的用例条数（官方基线冒烟用；与 --clean 一起启用分组抽样）。 */
+  errors?: number;
+  /** 无 errors 基线（无错用例）条数。 */
+  clean?: number;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -68,12 +73,40 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--multi") args.multi = Number(next());
     else if (arg === "--baseline") args.baseline = next();
     else if (arg === "--tsc") args.tsc = next();
+    else if (arg === "--errors") args.errors = Number(next());
+    else if (arg === "--clean") args.clean = Number(next());
     else if (arg === "--exclude-tags") args.excludeTags = parseTagList(next(), "--exclude-tags");
     else if (arg === "--suites") args.suites = next().split(",").map((s) => s.trim()).filter((s) => s.length > 0);
     else throw new Error(`未知参数 ${arg}`);
   }
   if (args.corpus.length === 0) throw new Error("缺少 --corpus <tests/cases>");
   return args;
+}
+
+/**
+ * 官方基线冒烟集：分两组各取 N 条（有 errors 基线的用例 / 无错用例）。
+ * 只从单文件候选中取；不跑 isSyntax 核对——errors 基线本身已排除语法错误形态，
+ * 无基线用例的官方语义就是「无期望错误」。
+ */
+function pickOfficialBaselineGroups(corpus: string, candidates: string[], errors: number, clean: number): string[] {
+  const errorCandidates: string[] = [];
+  const cleanCandidates: string[] = [];
+  for (const id of candidates) {
+    const file = baselineFileOf(corpus, id);
+    if (file === null) {
+      cleanCandidates.push(id);
+      continue;
+    }
+    const parsed = parseOfficialBaselineText(readFileSync(file, "utf8"));
+    if (parsed.status === "ok" && parsed.diagnostics.length > 0) errorCandidates.push(id);
+  }
+  const sample = (items: string[], count: number): string[] => {
+    const out: string[] = [];
+    const stride = Math.max(1, Math.floor(items.length / count));
+    for (let i = 0; i < items.length && out.length < count; i += stride) out.push(items[i]!);
+    return out;
+  };
+  return [...sample(errorCandidates, errors), ...sample(cleanCandidates, clean)];
 }
 
 function main(): void {
@@ -162,10 +195,14 @@ function main(): void {
     singlePick.push(id);
   }
 
-  const picked = [...multiPick, ...singlePick].sort();
+  const picked =
+    args.errors !== undefined && args.clean !== undefined
+      ? pickOfficialBaselineGroups(corpus, singles, args.errors, args.clean).sort()
+      : [...multiPick, ...singlePick].sort();
   writeFileSync(args.out, `${JSON.stringify(picked, null, 2)}\n`);
-  if (picked.length < args.multi + args.single) {
-    console.warn(`注意：只选出 ${picked.length} 条（目标 ${args.multi + args.single}），候选不足或被过滤。`);
+  const target = args.errors !== undefined && args.clean !== undefined ? args.errors + args.clean : args.multi + args.single;
+  if (picked.length < target) {
+    console.warn(`注意：只选出 ${picked.length} 条（目标 ${target}），候选不足或被过滤。`);
   }
   const tagReport = [...rejected.tag.entries()].map(([t, n]) => `${t}=${n}`).join(" ") || "无";
   console.log(
