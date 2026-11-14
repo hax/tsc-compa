@@ -22,7 +22,11 @@ interface NpmAcquisition {
 }
 interface CargoAcquisition {
   repo: string;
+  /** 本地开发用：仓库路径（相对 REPO_ROOT）；CI 缺省不存在时用 git 拉取。 */
+  git?: { url: string; ref: string };
   command: string;
+  /** 额外构建环境变量（例如 tsz 需要 CI=1）。 */
+  env?: Record<string, string>;
   bin: string;
 }
 interface Implementation {
@@ -33,6 +37,56 @@ interface Implementation {
     cargo?: CargoAcquisition;
     localEnv?: string;
   };
+}
+
+function die(message: string): never {
+  console.error(message);
+  process.exit(1);
+}
+
+function run(cmd: string, args: string[], cwd: string, env?: Record<string, string | undefined>): void {
+  const r = spawnSync(cmd, args, { cwd, encoding: "utf8", stdio: "inherit", env: env ?? process.env });
+  if (r.status !== 0) die(`${cmd} ${args.join(" ")} 失败（exit ${r.status ?? "signal"}）`);
+}
+
+/**
+ * 取得 cargo 获取方式的可执行文件：本地检出有产物直接用；否则在外部 target 目录构建。
+ * 本地检出不存在时，按 implementations.json 的 git pin 浅拉取到 dest 下再构建（CI 路径）。
+ * 源码与构建产物都落在 dest 下，不写入仓库检出。
+ */
+function ensureCargoBinary(name: string, cargo: CargoAcquisition, destAbs: string): string {
+  const binRel = cargo.bin.replace(/^target\//, "");
+  const targetDir = join(destAbs, "target", name);
+  const binPath = join(targetDir, binRel);
+  if (existsSync(binPath)) return binPath;
+
+  const localRepo = join(REPO_ROOT, cargo.repo);
+  let sourceDir: string;
+  if (existsSync(join(localRepo, "Cargo.toml"))) {
+    sourceDir = localRepo;
+  } else if (cargo.git !== undefined) {
+    const ref = cargo.git.ref;
+    sourceDir = join(destAbs, "src", `${name}-${ref.slice(0, 7)}`);
+    if (!existsSync(join(sourceDir, "Cargo.toml"))) {
+      mkdirSync(sourceDir, { recursive: true });
+      console.error(`拉取 ${cargo.git.url}@${ref} → ${sourceDir}`);
+      run("git", ["init", "-q", sourceDir], destAbs);
+      run("git", ["-C", sourceDir, "remote", "add", "origin", cargo.git.url], destAbs);
+      run("git", ["-C", sourceDir, "fetch", "--depth", "1", "origin", ref], destAbs);
+      run("git", ["-C", sourceDir, "checkout", "-q", "FETCH_HEAD"], destAbs);
+    }
+  } else {
+    die(`实现 ${name} 的 cargo 产物不存在（${join(localRepo, cargo.bin)}），且未登记 git 获取方式`);
+  }
+
+  console.error(`构建 ${name}：${cargo.command}（CARGO_TARGET_DIR=${targetDir}）`);
+  run("sh", ["-c", cargo.command], sourceDir, {
+    ...process.env,
+    CARGO_TARGET_DIR: targetDir,
+    ...(cargo.env ?? {}),
+  });
+  if (!existsSync(binPath)) die(`构建完成但产物不存在：${binPath}`);
+  return binPath;
 }
 
 function usage(): never {
@@ -106,13 +160,7 @@ function main(): void {
       console.error(`实现 ${name} 未登记 cargo 获取方式`);
       process.exit(1);
     }
-    const bin = join(REPO_ROOT, cargo.repo, cargo.bin);
-    if (!existsSync(bin)) {
-      console.error(`cargo 产物不存在：${bin}`);
-      console.error(`先在 ${cargo.repo} 里构建：${cargo.command}`);
-      process.exit(1);
-    }
-    print(bin);
+    print(ensureCargoBinary(name, cargo, resolve(dest)));
     return;
   }
 
