@@ -1,0 +1,86 @@
+# TS7 官方基线冒烟：直接消费 TypeScript 7 官方仓库的 .errors.txt 基线，
+# 跑 T0–T3 一致性分档并用 ratchet 清单门禁。
+#
+# 语料：microsoft/TypeScript@aa814927（TS7 Go 布局，pin 取自 reference/tsc-rs 的
+# vendor manifest）。cases 在 tsc/testdata/tests/cases，基线在
+# tsc/testdata/baselines/reference。
+#
+# 只手动触发；不跑全量（全量留给后续批量/分片设施）。
+name: ts7-official-baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "只跑前 N 例（0 = 全部 28 例）"
+        default: "0"
+      adapter:
+        description: "适配器（默认 tsc 自比；也可填 maat-batch 等已注册适配器）"
+        default: "tsc-cli:node_modules/typescript-7-1/bin/tsc"
+
+permissions:
+  contents: read
+
+env:
+  TS7_CORPUS_REF: aa8149273b23401f0a79a5f0384c42de51888693
+
+jobs:
+  official-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout TS7 corpus
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/TypeScript
+          ref: ${{ env.TS7_CORPUS_REF }}
+          path: reference/corpus-ts71
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Run TS7 official-baseline smoke (T0-T3 + ratchet)
+        run: |
+          LIMIT_ARGS=""
+          if [ -n "${{ inputs.limit }}" ] && [ "${{ inputs.limit }}" != "0" ]; then
+            LIMIT_ARGS="--limit ${{ inputs.limit }}"
+          fi
+          bun src/run.ts \
+            --baseline 7.1.0-beta-official \
+            --corpus reference/corpus-ts71/tsc/testdata/tests/cases \
+            --adapter "${{ inputs.adapter }}" \
+            --expectation-source official-baseline \
+            --mode official \
+            --cases config/smoke-cases-ts71-official.json \
+            --ratchet config/ratchet-ts71-official.tsv \
+            $LIMIT_ARGS \
+            --out out
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "## TS7 official-baseline smoke"
+            echo ""
+            echo "- corpus: microsoft/TypeScript@${TS7_CORPUS_REF}"
+            echo "- adapter: ${{ inputs.adapter }}"
+            echo ""
+            if [ -f out/metrics.json ]; then
+              echo '```json'
+              jq '{totals: (.totals | {cases, ran, skipped, fpCases, fpTotal, coverage, messageMismatch, byTier}), ratchet: .meta.ratchet}' out/metrics.json 2>/dev/null || head -c 3000 out/metrics.json
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ts7-official-metrics
+          path: out/
+          retention-days: 14

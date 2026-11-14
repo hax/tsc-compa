@@ -42,3 +42,15 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
 - 只跑冒烟集（28 例）；全量 12k 用例需要批量协议（maat issue #8），届时在 `src/adapters/` 加 batch shim 后复用本 workflow。
 - v0 无门禁：运行成功即绿，指标只做记录与对比。
 - 目前只接 linux-x64；其它平台在 maat 侧加构建矩阵即可，本 workflow 不区分平台。
+
+## TS7 官方基线冒烟（`ts7-official.yml`）
+
+与上面「接收二进制」的流程独立，手动触发，直接消费 TS7 官方仓库的 errors 基线：
+
+- 语料 pin：`microsoft/TypeScript@aa814927`（Go 布局；cases 在
+  `tsc/testdata/tests/cases`，基线在 `tsc/testdata/baselines/reference`）；
+- 期望源：`--expectation-source official-baseline`（缺基线 = 该用例无期望错误）；
+- 分档：`metrics.totals.byTier` 给 T0 location / T1 category / T2 text / T3 full
+  的用例分布，`totals.messageMismatch` 给「位置命中但首行文案不同」的诊断条数；
+- 门禁：`--ratchet config/ratchet-ts71-official.tsv`，回落即失败、改善写回
+  （CI 里清单已入库，正常不应产生写回；若 artifact 显示有改善，维护者审阅后提交）。
