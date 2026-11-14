@@ -1,0 +1,10 @@
+tsc-compa
+Copyright (c) 2026 tsc-compa contributors
+
+This product includes test cases and baseline data derived from the
+TypeScript project (https://github.com/microsoft/TypeScript),
+Copyright (c) Microsoft Corporation,
+licensed under the Apache License, Version 2.0.
+
+The TypeScript test corpus is consumed at its original license; see
+LICENSE and https://github.com/microsoft/TypeScript/blob/main/LICENSE.txt.
