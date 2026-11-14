@@ -1,5 +1,5 @@
-> 本 workflow 只跑冒烟：单元测试 + 用 tsc 自身作参考实现的自比，验证 harness 正确性。
-> 全量多基线套件后续单独接（见 docs/DESIGN.md）。
+# 只跑冒烟：单元测试 + 用 tsc 自身作参考实现的自比，验证 harness 正确性。
+# 全量多基线套件后续单独接（见 docs/DESIGN.md）。
 
 name: smoke
 
