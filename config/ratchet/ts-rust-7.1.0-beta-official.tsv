@@ -1,0 +1,31 @@
+# tsc-compa tier ratchet（只升不降）：<case id><TAB><tier>
+# tier 顺序：location(T0) < category(T1) < text(T2) < full(T3)；none 不入清单。
+# 由 --ratchet 自动维护：改善写回，回落退出非零。
+compiler/2dArrays.ts	full
+compiler/ArrowFunctionExpression1.ts	text
+compiler/assignmentCompatability16.ts	text
+compiler/builtinIterator.ts	text
+compiler/cloduleTest2.ts	text
+compiler/contextuallyTypingOrOperator3.ts	full
+compiler/contextualTypingOfArrayLiterals1.ts	text
+compiler/elaborationForPossiblyCallableTypeStillReferencesArgumentAtTopLevel.ts	text
+compiler/fillInMissingTypeArgsOnConstructCalls.ts	text
+compiler/genericCloneReturnTypes.ts	text
+compiler/implicitAnyCastedValue.ts	text
+compiler/inferenceWithNeverSource1.ts	full
+compiler/inheritanceStaticFuncOverridingProperty.ts	text
+compiler/listFailure.ts	text
+compiler/newAbstractInstance.ts	text
+compiler/operatorAddNullUndefined.ts	text
+compiler/propertyAccess4.ts	text
+compiler/restElementAssignable.ts	full
+compiler/scopeCheckInsidePublicMethod1.ts	text
+compiler/targetTypeTest3.ts	text
+compiler/typeParameterDiamond4.ts	text
+compiler/unusedLocalsOnFunctionExpressionWithinFunctionDeclaration2.ts	text
+conformance/classes/constructorDeclarations/classConstructorParametersAccessibility3.ts	text
+conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments5_es6.ts	text
+conformance/es6/Symbols/symbolProperty30.ts	text
+conformance/es7/exponentiationOperator/exponentiationOperatorWithOnlyNullValueOrUndefinedValue.ts	text
+conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticFunctionAndExportedFunctionThatShareAName.ts	text
+conformance/types/primitives/string/stringPropertyAccessWithError.ts	text

@@ -10,11 +10,11 @@
 // 运行结果写 <out>/metrics.json 与 <details.json>，并在 stdout 打印摘要。
 // v0 没有门禁（--gate 留给后续接入基线）；退出码恒 0，除非运行本身失败。
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { createAdapter } from "./adapters/index.ts";
 import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, type Metrics, type RunMeta } from "./compare.ts";
-import { checkRatchet, readRatchet, writeRatchet } from "./ratchet.ts";
+import { checkRatchet, ratchetPathFor, readRatchet, writeRatchet } from "./ratchet.ts";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "./baselines.ts";
 import { classifyCase, exclusionOf, parseTagList, runtimeTags } from "./classify.ts";
 import { loadManifest, readCase } from "./discover.ts";
@@ -53,6 +53,10 @@ interface Args {
   expectationSource: "tsc" | "official-baseline";
   /** 一致性 ratchet 清单（TSV）；设置后：回落退出非零、改善写回。 */
   ratchet?: string;
+  /** 按「实现 × 基线」分账：推导 config/ratchet/<impl>-<baseline>.tsv；清单不存在时自动初始化。 */
+  ratchetImpl?: string;
+  /** 允许 --ratchet 显式路径不存在时初始化（--ratchet-impl 隐含此语义）。 */
+  ratchetInit: boolean;
   /** 附带性能附录：固定样本上跑官方 tsc 参考，输出实现/官方比值（不作门禁）。 */
   perfRatio: boolean;
   perfSample: number;
@@ -75,6 +79,7 @@ function parseArgs(argv: string[]): Args {
     baseArgsExtra: [],
     adapterArgsExtra: [],
     expectationSource: "tsc",
+    ratchetInit: false,
     perfRatio: false,
     perfSample: 300,
     perfSeed: "tsc-compa-v1",
@@ -143,6 +148,12 @@ function parseArgs(argv: string[]): Args {
       case "--ratchet":
         args.ratchet = next();
         break;
+      case "--ratchet-impl":
+        args.ratchetImpl = next();
+        break;
+      case "--ratchet-init":
+        args.ratchetInit = true;
+        break;
       case "--limit":
         args.limit = Number(next());
         if (!Number.isInteger(args.limit!) || args.limit! <= 0) throw new Error("--limit 需要正整数");
@@ -174,7 +185,7 @@ function parseArgs(argv: string[]): Args {
           "用法：bun src/run.ts [--corpus <tests/cases>] [--baseline <id>] [--cases <manifest>] [--tsc <bin>] " +
             "[--adapter <name>] [--mode official|fixed] [--base-arg name=value]... [--adapter-arg name=value]... " +
             "[--expectation-source tsc|official-baseline] [--exclude-class <tags>] [--only-class <tags>] " +
-            "[--ratchet <file>] [--perf-ratio] [--perf-sample N] [--perf-seed <s>] [--perf-timeout ms] " +
+            "[--ratchet <file> | --ratchet-impl <impl>] [--ratchet-init] [--perf-ratio] [--perf-sample N] [--perf-seed <s>] [--perf-timeout ms] " +
             "[--out <dir>] [--limit N] [--verbose]",
         );
         console.log("基线见 config/baselines.json；标签见 src/classify.ts 的 CASE_TAGS。");
@@ -474,20 +485,40 @@ async function main(): Promise<void> {
   const metrics = summarize(records, meta) as Metrics & { perf?: ReturnType<typeof buildPerfReport> };
   if (perf !== undefined) metrics.perf = perf;
   let exitCode = 0;
-  if (args.ratchet !== undefined) {
-    const previous = readRatchet(args.ratchet);
+  if (args.ratchet !== undefined && args.ratchetImpl !== undefined) {
+    throw new Error("--ratchet 与 --ratchet-impl 只能二选一");
+  }
+  let ratchetPath = args.ratchet;
+  if (ratchetPath === undefined && args.ratchetImpl !== undefined) {
+    if (args.baseline === undefined) throw new Error("--ratchet-impl 需要 --baseline（用于推导清单路径）");
+    ratchetPath = resolve(REPO_ROOT, ratchetPathFor(args.ratchetImpl, args.baseline));
+  }
+  if (ratchetPath !== undefined) {
+    const existed = existsSync(ratchetPath);
+    if (!existed && args.ratchetImpl === undefined && !args.ratchetInit) {
+      throw new Error(
+        `ratchet 清单不存在：${ratchetPath}（首次接入请加 --ratchet-init，或改用 --ratchet-impl <impl> 按实现分账自动初始化）`,
+      );
+    }
+    const previous = readRatchet(ratchetPath);
     const check = checkRatchet(previous, records);
     let wrote = false;
-    if (check.changed) {
-      writeRatchet(args.ratchet, check.next);
+    if (check.changed || !existed) {
+      mkdirSync(dirname(ratchetPath), { recursive: true });
+      writeRatchet(ratchetPath, check.next);
       wrote = true;
     }
     meta.ratchet = {
-      path: args.ratchet,
+      path: ratchetPath,
+      impl: args.ratchetImpl,
+      initialized: !existed,
       regressions: check.regressions.length,
       improvements: check.improvements.length,
       wrote,
     };
+    if (!existed) {
+      console.log(`ratchet：首次创建清单 ${ratchetPath}（只登记当前档位，不作回落判定）`);
+    }
     if (check.regressions.length > 0) {
       exitCode = 1;
       console.log(`ratchet 回落 ${check.regressions.length} 例（本次运行失败）：`);
@@ -497,7 +528,7 @@ async function main(): Promise<void> {
       if (check.regressions.length > 20) console.log(`  …… 共 ${check.regressions.length} 例`);
     } else {
       console.log(
-        `ratchet：无回落；改善 ${check.improvements.length} 例` + (wrote ? `，已写回 ${args.ratchet}` : "（清单未变）"),
+        `ratchet：无回落；改善 ${check.improvements.length} 例` + (wrote ? `，已写回 ${ratchetPath}` : "（清单未变）"),
       );
     }
   }
