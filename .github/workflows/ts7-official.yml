@@ -5,7 +5,11 @@
 # vendor manifest）。cases 在 tsc/testdata/tests/cases，基线在
 # tsc/testdata/baselines/reference。
 #
-# 只手动触发；不跑全量（全量留给后续批量/分片设施）。
+# 只手动触发；不跑全量（全量留给后续批量/分片设施）。--gate 与 smoke.yml 的
+# 7.1.0-beta-official 档同口径（ratchet 回落即红；T3 是报告档不判红）。
+# 本 workflow 尚未在 GitHub Actions 上实际跑过：先手动 dispatch 跑绿一次，
+# 再决定是否给它单独挂 cron；在它跑绿之前，smoke.yml 的每日 schedule 已覆盖
+# 同一组 28 例官方基线冒烟。
 name: ts7-official-baseline
 
 on:
@@ -45,7 +49,7 @@ jobs:
       - name: Install deps
         run: bun install --frozen-lockfile
 
-      - name: Run TS7 official-baseline smoke (T0-T3 + ratchet)
+      - name: Run TS7 official-baseline smoke (T0-T3 + ratchet + gate)
         run: |
           LIMIT_ARGS=""
           if [ -n "${{ inputs.limit }}" ] && [ "${{ inputs.limit }}" != "0" ]; then
@@ -59,6 +63,7 @@ jobs:
             --mode official \
             --cases config/smoke-cases-ts71-official.json \
             --ratchet config/ratchet-ts71-official.tsv \
+            --gate \
             $LIMIT_ARGS \
             --out out
 
@@ -73,7 +78,7 @@ jobs:
             echo ""
             if [ -f out/metrics.json ]; then
               echo '```json'
-              jq '{totals: (.totals | {cases, ran, skipped, fpCases, fpTotal, coverage, messageMismatch, byTier}), ratchet: .meta.ratchet}' out/metrics.json 2>/dev/null || head -c 3000 out/metrics.json
+              jq '{gate: (.meta.gate | {passed, thresholds, checks}), totals: (.totals | {cases, ran, skipped, fpCases, fpTotal, coverage, messageMismatch, byTier}), ratchet: .meta.ratchet}' out/metrics.json 2>/dev/null || head -c 3000 out/metrics.json
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"

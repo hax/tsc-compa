@@ -29,8 +29,10 @@ anchors and per-class breakdowns. For the official TypeScript 7 repository
 layout (`tsc/testdata/...`) the suite consumes the official `.errors.txt`
 baselines directly, grades every case on the T0–T3 agreement ladder
 (location → category → text → whole-baseline-bytes) and maintains a
-`--ratchet` list that only goes up (per implementation × baseline). A GitHub Actions workflow runs unit tests
-plus a self-compare smoke for every baseline on push/PR, and a manually
+`--ratchet` list that only goes up (per implementation × baseline). GitHub Actions
+runs unit tests plus gate-enabled smoke on every push/PR and once a day:
+`--gate` turns false positives / misses / mis-anchors / ratchet regressions into
+a non-zero exit code (T0–T2 are gated; T3 is report-only), and a manually
 triggered workflow runs the TS7 official-baseline smoke.
 
 Design: [docs/DESIGN.md](docs/DESIGN.md). Self-compare and cross-version numbers
@@ -114,6 +116,43 @@ bun src/run.ts --baseline 5.9.3 --corpus /path/to/v5.9.3/tests/cases --adapter t
 See [docs/RESULTS.md](docs/RESULTS.md) for what changes between baselines and why
 these pins matter.
 
+## CI and compatibility gate
+
+`.github/workflows/smoke.yml` runs on every push / pull request and once a day
+(cron `23 19 * * *`, i.e. 19:23 UTC / 03:23 Beijing time, off the hour). Its matrix
+is the compatibility gate:
+
+| entry | expectation source | gate |
+| --- | --- | --- |
+| self-compare × `5.9.3` / `6.0.3` / `7.1.0-beta` | pinned tsc | `--gate` zero-diff self-check: no false positives, misses or mis-anchors |
+| `7.1.0-beta-official` 28 cases | TS7 official `.errors.txt` | per-case ratchet (`config/ratchet-ts71-official.tsv`): any tier drop fails |
+| `6.0.3` official-baseline subset (191 cases) | strada `.errors.txt` | tolerates the known npm-patch vs repo-snapshot drift (12 fp diagnostics / 4 misses): `--gate-max-fp 12 --gate-max-miss 4` |
+
+`--gate` fails the run (non-zero exit; per-item results are printed and stored in
+`metrics.meta.gate.checks`) unless all of these hold:
+
+1. the run is a real compatibility verdict (`--mode official` and an adapter that
+   accepts external options — a `--mode fixed` run is rejected instead of passing);
+2. at least one case ran;
+3. no ratchet regression (the list must already be committed: gate mode does not
+   auto-initialize and does not write improvements back);
+4. false positives / misses / mis-anchors within `--gate-max-fp` / `--gate-max-miss`
+   / `--gate-max-misanchor`, and coverage at least `--gate-min-coverage`.
+
+Without a ratchet list the three count limits default to 0 (self-check); with one
+they default to unlimited, leaving per-case strictness to the list, and explicit
+limits can still be added.
+
+**Gate tiers**: T0 location / T1 category / T2 text are gated per case through the
+ratchet list. **T3 full (the whole `.errors.txt` summary block) is report-only** —
+T3 misses are recorded in `totals.t3Failures` but do not fail the gate.
+
+Making the jobs *required* for merging is a repository setting (branch protection),
+not something the workflow file can express. The `ts7-official.yml` workflow is
+still manual: it has `--gate` too, but has not run on GitHub Actions yet — dispatch
+it once green before adding a separate cron for it (the daily `smoke.yml` schedule
+already covers the same 28 official-baseline cases).
+
 ## Case classification
 
 Every case is tagged (orthogonally) by `src/classify.ts` — e.g. `suite:compiler`,
@@ -182,6 +221,7 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `src/officialBaseline.ts` | expectation source reading official `.errors.txt` baselines (strada flat layout + TS7 Go layout incl. flattened suites; missing baseline = no errors) |
 | `src/compare.ts` | matching (incl. mis-anchor pairing), T0-T3 agreement ladder (T3 compares the `.errors.txt` summary block before `====`, with per-case failure reason) and metrics |
 | `src/ratchet.ts` | `--ratchet` / `--ratchet-impl` lists: only go up, regression fails the run (per implementation × baseline) |
+| `src/gate.ts` | `--gate`: ratchet / false-positive / miss / mis-anchor / coverage checks and the gate summary |
 | `src/run.ts` | smoke runner entry |
 | `src/adapters/` | reference `tsc-cli` adapter (keeps multi-line elaboration/related text for T3), per-case CLI adapter, batch protocol client, mock batch implementation |
 | `config/baselines.json` | baseline definitions (three tsc versions × two corpora) |
@@ -195,8 +235,8 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `scripts/select-smoke.ts` | regenerate class-filtered smoke case lists |
 | `scripts/select-official-baseline-cases.ts` | scan a corpus for cases consumable from official baselines |
 | `scripts/install-impl.ts` | fetch a third-party implementation per its registry entry |
-| `.github/workflows/smoke.yml` | CI: unit tests + self-compare smoke matrix |
-| `.github/workflows/ts7-official.yml` | manual CI: TS7 official-baseline smoke (T0–T3 + ratchet) |
+| `.github/workflows/smoke.yml` | CI gate: unit tests + self-compare `--gate` smoke + official-baseline gate entries, on push/PR and daily schedule |
+| `.github/workflows/ts7-official.yml` | manual CI: TS7 official-baseline smoke (T0–T3 + ratchet + `--gate`) |
 | `.github/workflows/third-party.yml` | manual CI: third-party implementation × baseline smoke |
 | `docs/RESULTS.md` | self-compare, default drift and cross-version numbers |
 | `src/perf.ts` | optional performance appendix: fixed sample × official tsc reference ratio |

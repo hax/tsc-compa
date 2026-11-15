@@ -8,13 +8,16 @@
 //   TSC_BIN=/path/to/tsc bun src/run.ts --adapter maat-zig --mode fixed --cases config/smoke-cases.json
 //
 // 运行结果写 <out>/metrics.json 与 <details.json>，并在 stdout 打印摘要。
-// v0 没有门禁（--gate 留给后续接入基线）；退出码恒 0，除非运行本身失败。
+// 默认退出码为 0（除非运行本身失败）；--gate 打开兼容性门禁：ratchet 回落、
+// 假阳性/漏报/错锚超限、覆盖率不足、口径不可作结论等任一命中即非零退出，
+// 并在 stdout 与 metrics.meta.gate 里给出逐项结论（见 docs/CI.md）。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createAdapter } from "./adapters/index.ts";
 import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, type Metrics, type RunMeta } from "./compare.ts";
-import { checkRatchet, ratchetPathFor, readRatchet, writeRatchet } from "./ratchet.ts";
+import { evaluateGate, formatGate, type GateThresholds } from "./gate.ts";
+import { checkRatchet, ratchetPathFor, readRatchet, writeRatchet, type RatchetRegression } from "./ratchet.ts";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "./baselines.ts";
 import { classifyCase, exclusionOf, parseTagList, runtimeTags } from "./classify.ts";
 import { loadManifest, readCase } from "./discover.ts";
@@ -62,6 +65,61 @@ interface Args {
   perfSample: number;
   perfSeed: string;
   perfTimeoutMs: number;
+  /** CI 兼容性门禁：任一检查失败即非零退出（见 src/gate.ts）。 */
+  gate: boolean;
+  /** 门禁阈值（显式给出时覆盖默认值；缺省见 resolveGateThresholds）。 */
+  gateMaxFp?: number;
+  gateMaxMiss?: number;
+  gateMaxMisanchor?: number;
+  gateMinCoverage?: number;
+}
+
+/** 非负整数参数。 */
+function nonNegativeInt(value: string, flag: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`${flag} 需要非负整数，收到 ${value}`);
+  return n;
+}
+
+/** 覆盖率参数：0~1 的比例，或 >1 时按百分数（也接受 `98.5%` 写法）。 */
+function coverageRatio(value: string): number {
+  const trimmed = value.trim();
+  const isPercent = trimmed.endsWith("%");
+  const raw = isPercent ? trimmed.slice(0, -1) : trimmed;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`--gate-min-coverage 需要 0~1 的比例或百分数，收到 ${value}`);
+  }
+  const ratio = n > 1 || isPercent ? n / 100 : n;
+  if (ratio > 1) throw new Error(`--gate-min-coverage 不能超过 100%，收到 ${value}`);
+  return ratio;
+}
+
+/** 解析 ratchet 清单路径（--ratchet 与 --ratchet-impl 二选一）。 */
+function resolveRatchetPath(args: Args): string | undefined {
+  if (args.ratchet !== undefined && args.ratchetImpl !== undefined) {
+    throw new Error("--ratchet 与 --ratchet-impl 只能二选一");
+  }
+  if (args.ratchet !== undefined) return args.ratchet;
+  if (args.ratchetImpl !== undefined) {
+    if (args.baseline === undefined) throw new Error("--ratchet-impl 需要 --baseline（用于推导清单路径）");
+    return resolve(REPO_ROOT, ratchetPathFor(args.ratchetImpl, args.baseline));
+  }
+  return undefined;
+}
+
+/**
+ * 门禁阈值：显式参数优先；否则没配 ratchet 时用「零差异」自检口径
+ * （fp/漏报/错锚全 0），配了 ratchet 时逐例严格性由清单承载、不再设条数上限。
+ */
+function resolveGateThresholds(args: Args, hasRatchet: boolean): GateThresholds {
+  const countDefault = hasRatchet ? null : 0;
+  return {
+    maxFp: args.gateMaxFp ?? countDefault,
+    maxMiss: args.gateMaxMiss ?? countDefault,
+    maxMisanchor: args.gateMaxMisanchor ?? countDefault,
+    minCoverage: args.gateMinCoverage ?? null,
+  };
 }
 
 function parseArgs(argv: string[]): Args {
@@ -84,6 +142,7 @@ function parseArgs(argv: string[]): Args {
     perfSample: 300,
     perfSeed: "tsc-compa-v1",
     perfTimeoutMs: 120_000,
+    gate: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -176,6 +235,21 @@ function parseArgs(argv: string[]): Args {
         args.perfTimeoutMs = value;
         break;
       }
+      case "--gate":
+        args.gate = true;
+        break;
+      case "--gate-max-fp":
+        args.gateMaxFp = nonNegativeInt(next(), "--gate-max-fp");
+        break;
+      case "--gate-max-miss":
+        args.gateMaxMiss = nonNegativeInt(next(), "--gate-max-miss");
+        break;
+      case "--gate-max-misanchor":
+        args.gateMaxMisanchor = nonNegativeInt(next(), "--gate-max-misanchor");
+        break;
+      case "--gate-min-coverage":
+        args.gateMinCoverage = coverageRatio(next());
+        break;
       case "--verbose":
         args.verbose = true;
         break;
@@ -186,9 +260,10 @@ function parseArgs(argv: string[]): Args {
             "[--adapter <name>] [--mode official|fixed] [--base-arg name=value]... [--adapter-arg name=value]... " +
             "[--expectation-source tsc|official-baseline] [--exclude-class <tags>] [--only-class <tags>] " +
             "[--ratchet <file> | --ratchet-impl <impl>] [--ratchet-init] [--perf-ratio] [--perf-sample N] [--perf-seed <s>] [--perf-timeout ms] " +
+            "[--gate] [--gate-max-fp N] [--gate-max-miss N] [--gate-max-misanchor N] [--gate-min-coverage P] " +
             "[--out <dir>] [--limit N] [--verbose]",
         );
-        console.log("基线见 config/baselines.json；标签见 src/classify.ts 的 CASE_TAGS。");
+        console.log("基线见 config/baselines.json；标签见 src/classify.ts 的 CASE_TAGS；门禁语义见 docs/CI.md。");
         process.exit(0);
       default:
         throw new Error(`未知参数 ${arg}`);
@@ -293,6 +368,16 @@ async function runPerfAppendix(opts: {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  // ratchet 路径与门禁前置条件在跑之前解析：--gate 要求清单已入库，避免 CI 里
+  // 因清单缺失被自动初始化成「永远通过」的假门禁（初始化是本地接入动作）。
+  const ratchetPath = resolveRatchetPath(args);
+  if (args.gate && ratchetPath !== undefined && !existsSync(ratchetPath)) {
+    throw new Error(
+      `门禁模式要求 ratchet 清单已入库：${ratchetPath} 不存在。` +
+        "首次接入请先去掉 --gate 跑一次（--ratchet-impl 会自动初始化），提交清单后再开门禁。",
+    );
+  }
+  const gateThresholds = args.gate ? resolveGateThresholds(args, ratchetPath !== undefined) : null;
 
   // 基线是 (tsc, baseArgs, 语料 tag, manifest) 的具名组合；不给 --baseline 时
   // 保持旧行为：--tsc / TSC_BIN 指定期望源，基础参数用 6.0 口径。
@@ -485,14 +570,7 @@ async function main(): Promise<void> {
   const metrics = summarize(records, meta) as Metrics & { perf?: ReturnType<typeof buildPerfReport> };
   if (perf !== undefined) metrics.perf = perf;
   let exitCode = 0;
-  if (args.ratchet !== undefined && args.ratchetImpl !== undefined) {
-    throw new Error("--ratchet 与 --ratchet-impl 只能二选一");
-  }
-  let ratchetPath = args.ratchet;
-  if (ratchetPath === undefined && args.ratchetImpl !== undefined) {
-    if (args.baseline === undefined) throw new Error("--ratchet-impl 需要 --baseline（用于推导清单路径）");
-    ratchetPath = resolve(REPO_ROOT, ratchetPathFor(args.ratchetImpl, args.baseline));
-  }
+  let ratchetGateInput: { path: string; registered: number; regressions: RatchetRegression[] } | null = null;
   if (ratchetPath !== undefined) {
     const existed = existsSync(ratchetPath);
     if (!existed && args.ratchetImpl === undefined && !args.ratchetInit) {
@@ -502,8 +580,10 @@ async function main(): Promise<void> {
     }
     const previous = readRatchet(ratchetPath);
     const check = checkRatchet(previous, records);
+    ratchetGateInput = { path: ratchetPath, registered: previous.size, regressions: check.regressions };
     let wrote = false;
-    if (check.changed || !existed) {
+    // 门禁模式只读：改善留给本地运行后提交，CI 检出上的写回不持久、还会掩盖清单过期。
+    if ((check.changed || !existed) && !args.gate) {
       mkdirSync(dirname(ratchetPath), { recursive: true });
       writeRatchet(ratchetPath, check.next);
       wrote = true;
@@ -527,10 +607,25 @@ async function main(): Promise<void> {
       }
       if (check.regressions.length > 20) console.log(`  …… 共 ${check.regressions.length} 例`);
     } else {
-      console.log(
-        `ratchet：无回落；改善 ${check.improvements.length} 例` + (wrote ? `，已写回 ${ratchetPath}` : "（清单未变）"),
-      );
+      const improvementState = wrote
+        ? `，已写回 ${ratchetPath}`
+        : args.gate && check.improvements.length > 0
+          ? "（门禁模式不写回清单；请本地去掉 --gate 跑一次后提交改善）"
+          : "（清单未变）";
+      console.log(`ratchet：无回落；改善 ${check.improvements.length} 例${improvementState}`);
     }
+  }
+  if (args.gate && gateThresholds !== null) {
+    const gate = evaluateGate({
+      totals: metrics.totals,
+      verdictEligible: meta.verdictEligible,
+      mode: meta.mode,
+      ratchet: ratchetGateInput,
+      thresholds: gateThresholds,
+    });
+    meta.gate = gate;
+    console.log(formatGate(gate));
+    if (!gate.passed) exitCode = 1;
   }
   if (args.mode === "fixed") {
     console.warn(`提示：--mode fixed 下共忽略 ${optionDirectiveIgnored} 个用例的编译选项指令；结果只用于验证流水线。`);

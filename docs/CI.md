@@ -26,6 +26,53 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
 3. 用 `maat:<bin>` 适配器跑该基线的冒烟集（`config/smoke-cases.json`，28 例）；
 4. 上传 `metrics-<impl>-<baseline>` artifact，并在 job summary 里贴 fp / miss / coverage / skip / verdictEligible 摘要。
 
+## CI 兼容性门禁（`smoke.yml`）
+
+`smoke.yml` 在每次 push / PR 上跑「单元测试 + 门禁式冒烟」，并每天定时跑一次
+（cron `23 19 * * *`，UTC 19:23 / 北京时间 03:23，避开整点）。冒烟矩阵五档：
+
+| 档位 | 基线 | 语料 | 期望源 | 门禁口径 |
+| --- | --- | --- | --- | --- |
+| 自比 | 5.9.3 / 6.0.3 / 7.1.0-beta | 各自语料 tag | 现场 tsc | `--gate` 零差异自检：假阳性、漏报、错锚都为 0 |
+| TS7 官方基线 | 7.1.0-beta-official（28 例） | TS7 Go 布局 pin `aa814927` | 官方 `.errors.txt` | ratchet 清单 `config/ratchet-ts71-official.tsv`，按用例 T0–T2 只升不降 |
+| 6.0 官方基线子集 | 6.0.3（191 例） | strada pin `b465fdbf` | 官方 `.errors.txt` | `--gate-max-fp 12 --gate-max-miss 4`，容忍 npm 补丁与仓库快照的已知偏差（2 例假阳性共 12 条、4 条漏报，见 docs/RESULTS.md 结论 6） |
+
+`--gate` 的检查项（任一失败即非零退出，逐项结论同时写进 stdout 与
+`metrics.meta.gate`）：
+
+1. **口径**：本次运行必须是兼容性结论（`--mode official` 且适配器接受外部选项）；
+   `--mode fixed` 或 `maat-batch` 这类实现忽略指令的运行会被门禁拒绝；
+2. **执行**：至少跑完一个用例（全 skip / 空 manifest 不算绿）；
+3. **ratchet**：配置了清单（`--ratchet` / `--ratchet-impl`）时任何用例档位回落即失败。
+   门禁模式要求清单已入库：不会自动初始化（避免 CI 里凭空生成一份全绿清单），
+   也不写回改善（CI 检出上的写回不持久，改善由本地跑完后提交）；
+4. **阈值**：`--gate-max-fp` / `--gate-max-miss` / `--gate-max-misanchor` /
+   `--gate-min-coverage`。没有 ratchet 时前三个默认 0；配了 ratchet 时默认不设
+   条数上限（逐例严格性由清单承载），显式参数仍可叠加。
+
+**门禁档位**：T0 location / T1 category / T2 text 经 ratchet 清单按用例兜底；
+**T3 full（整份 `.errors.txt` 摘要块字节相等）仍是报告档**——未达只进
+`totals.t3Failures` 与 `samples.t3`，不判红。
+
+要把门禁真正用于「阻断合并」，需在仓库设置里把 `unit` / `smoke` job 设为 required
+status checks（分支保护是仓库设置，不在 workflow 文件里）。
+
+本地复现：
+
+```bash
+# 自比 + 零差异门禁
+bun src/run.ts --baseline 6.0.3 --corpus /path/to/strada/tests/cases \
+  --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc --gate
+
+# TS7 官方基线 + ratchet 门禁
+bun src/run.ts --baseline 7.1.0-beta-official \
+  --corpus /path/to/typescript/tsc/testdata/tests/cases \
+  --expectation-source official-baseline \
+  --cases config/smoke-cases-ts71-official.json \
+  --ratchet config/ratchet-ts71-official.tsv \
+  --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc --gate
+```
+
 ## 适配器
 
 `src/adapters/maat.ts` 把 maat 二进制的 `--json` 输出（字段 `file/start/end/line/col/end_line/end_col/severity/code/message`，1-based 行列）映射为套件协议：
@@ -40,7 +87,7 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
 ## 当前限制
 
 - 只跑冒烟集（28 例）；全量 12k 用例需要批量协议（maat issue #8），届时在 `src/adapters/` 加 batch shim 后复用本 workflow。
-- v0 无门禁：运行成功即绿，指标只做记录与对比。
+- 门禁目前只接 `smoke.yml`（自比 + 官方基线子集）：`native-suite.yml` / `third-party.yml` 仍是手动触发、跑成功即记录指标；third-party 的官方基线档配了 ratchet（回落会非零退出），但没有叠加 `--gate` 的条数/覆盖率阈值。
 - 目前只接 linux-x64；其它平台在 maat 侧加构建矩阵即可，本 workflow 不区分平台。
 
 ## TS7 官方基线冒烟（`ts7-official.yml`）
@@ -53,7 +100,10 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
 - 分档：`metrics.totals.byTier` 给 T0 location / T1 category / T2 text / T3 full
   的用例分布，`totals.messageMismatch` 给「位置命中但首行文案不同」的诊断条数；
 - 门禁：`--ratchet-impl <impl>`（路径 `config/ratchet/<impl>-<baseline>.tsv`，首次自动初始化），回落即失败、改善写回
-  （CI 里清单已入库，正常不应产生写回；若 artifact 显示有改善，维护者审阅后提交）。
+  （CI 里清单已入库，正常不应产生写回；若 artifact 显示有改善，维护者审阅后提交）；workflow 里用显式
+  `--ratchet config/ratchet-ts71-official.tsv` + `--gate`（与 `smoke.yml` 的 28 例档同口径，T3 不判红）。
+- **尚未在 GitHub Actions 上实际跑过**：先手动 dispatch 跑绿一次，再决定是否给它单独挂 cron；
+  在那之前，`smoke.yml` 的每日 schedule 已覆盖同一组 28 例官方基线冒烟。
 
 ## 第三方实现冒烟（`third-party.yml`）
 

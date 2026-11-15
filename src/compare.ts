@@ -14,6 +14,7 @@
 // 让覆盖率略低于 100%；配套的 misanchor 数字负责解释这部分差额。
 
 import { summaryBlockOf } from "./officialBaseline.ts";
+import type { GateReport } from "./gate.ts";
 import type { Diagnostic } from "./types.ts";
 
 /**
@@ -266,6 +267,8 @@ export interface RunMeta {
     improvements: number;
     wrote: boolean;
   };
+  /** 设置了 --gate 时的门禁结论（逐项检查结果，CI 用它判断红绿）。 */
+  gate?: GateReport;
 }
 
 export interface ClassTotals {

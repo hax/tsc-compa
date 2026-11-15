@@ -13,8 +13,9 @@ tsc-compa 是一个**与实现无关**的 TSC 兼容性测试套件：输入是�
 6.0.3 / 7.1.0-beta，规划中）、语料来源（官方 `tests/cases`，后续可对接官方基线）。
 
 v0 把协议、口径、指标固化下来并用小规模 smoke 集跑通全链路；当前版本加入
-用例分类、多 tsc 基线（5.9.3 / 6.0.3 / 7.1.0-beta）与错锚口径。门禁、全量
-运行与官方基线仍未做，见 §10。
+用例分类、多 tsc 基线（5.9.3 / 6.0.3 / 7.1.0-beta）、错锚口径、官方基线期望源
+与 CI 门禁（`--gate`，§4.3）。门禁已接 `smoke.yml` 的 push/PR 与每日定时；
+全量运行仍未做，见 §10。
 
 ## 2. 流水线
 
@@ -202,6 +203,21 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 `tsz`）不会被判红，后续轮次严格只升不降。`--ratchet-impl` 与显式 `--ratchet` 二选一；
 显式路径不存在时默认报错，需要首次创建时加 `--ratchet-init`。清单入库，CI 按实现分别传入。
 
+**CI 门禁（`--gate`）**：把一次运行折算成通过/失败，失败时退出码非零，逐项结论
+同时打印到 stdout 并写入 `metrics.meta.gate`（`smoke.yml` 每次 push/PR 与每日定时
+都带它跑，见 docs/CI.md）。检查项：
+
+- 口径：本次运行必须是兼容性结论（`--mode official` 且适配器接受外部选项）；
+- 执行：至少跑完一个用例；
+- ratchet：配置了清单时不允许任何档位回落。门禁模式要求清单已入库（不自动初始化，
+  避免 CI 里凭空生成「全绿」清单），也不回写改善；
+- 阈值：`--gate-max-fp` / `--gate-max-miss` / `--gate-max-misanchor` /
+  `--gate-min-coverage`。没有 ratchet 时前三者默认 0（自比自检口径）；配了 ratchet
+  时默认不设条数上限（逐例严格性由清单承载），显式参数可叠加。
+
+**门禁档位**：T0 location / T1 category / T2 text 由 ratchet 清单按用例兜底；
+**T3 full 仍是报告档**——未达只记入 `totals.t3Failures` / `samples.t3`，不判红。
+
 ### 4.4 第三方实现接入
 
 原则：**第三方实现只通过公开 CLI 驱动**（复用 `tsc-cli` 适配器），不为其写内部
@@ -361,6 +377,7 @@ src/officialBaseline.ts 官方基线期望源（.errors.txt 子集）
 src/compare.ts         匹配与指标（含错锚配对、按类聚合）
 src/classify.ts        用例分类标签与过滤
 src/baselines.ts       多基线配置（tsc × 语料 tag）
+src/gate.ts            CI 门禁（--gate 的检查项与结论渲染）
 src/run.ts             运行器入口
 src/adapters/          cli / batch / mock-batch / 工厂
 scripts/select-smoke.ts  生成冒烟 manifest
@@ -387,7 +404,7 @@ test/                  单测（bun test）
 - [ ] 同源编译器生成期望（消除 npm 补丁版本与仓库基线的偏差，见 #34）；
 - [ ] 官方基线多值指令变体与配置命名复刻（#34）；
 - [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
-- [ ] 基线守门 `--gate` / `--update-baseline`；
+- [x] 基线守门 `--gate`（§4.3：ratchet + 条数/覆盖率阈值，已接 `smoke.yml` 的 push/PR 与每日 schedule）；`--update-baseline` 未做，更新由 ratchet 改善写回承担；
 - [ ] 更大规模的用例选择策略（按码族/目录分层抽样，避免只覆盖编译器用例）；
 - [ ] 并行执行与结果合并（shard / merge）；
 - [ ] L2/L3 判定粒度（宽度、消息文案）；

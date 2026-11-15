@@ -1,16 +1,25 @@
-# 单元测试 + 三档基线自比冒烟。
+# 单元测试 + 门禁式冒烟（push / PR / 每日定时）。
 #
-# 每个基线用 npm alias 装的 tsc 版本与它自己的语料 tag：
-#   5.9.3      -> microsoft/TypeScript@v5.9.3
-#   6.0.3      -> microsoft/TypeScript@b465fdbf…（strada）
-#   7.1.0-beta -> microsoft/TypeScript@b465fdbf…（strada）
-# 自比（期望源 = 实现）是 harness 正确性检查，不是兼容性结论。
-
+# 三档自比（期望源 = 实现）是 harness 正确性检查，走 --gate 的「零差异」自检口径：
+# 假阳性、漏报、错锚都必须为 0，否则 CI 变红。
+#
+# 两个官方基线档是兼容性门禁（`--expectation-source official-baseline`）：
+#   - 7.1.0-beta-official 28 例：直接消费 TS7 Go 布局的官方 .errors.txt，按
+#     `config/ratchet-ts71-official.tsv` 的 ratchet 清单门禁（T0–T2 按用例只升不降，
+#     回落即红；T3 整份基线仍是报告档，未达只进 metrics，不判红）；
+#   - 6.0.3 官方基线子集 191 例：strada 平铺布局，容忍 npm 补丁版与仓库快照的已知
+#     偏差（当前 2 例假阳性共 12 条、4 条漏报，见 docs/RESULTS.md 结论 6），超出阈值即红；
+#     同源编译器（#34）落地后应把阈值收紧到 0。
+#
+# 每日 schedule 用 UTC 19:23（北京时间 03:23），避开整点；其中也覆盖 7.1 官方基线
+# 那 28 例，因此在 ts7-official.yml 完成一次手动跑绿之前，官方基线冒烟也每天有记录。
 name: smoke
 
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "23 19 * * *"
   workflow_dispatch:
 
 permissions:
@@ -31,42 +40,123 @@ jobs:
 
   smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - baseline: 5.9.3
+          - slug: 5.9.3-self
+            name: 5.9.3 自比（零差异 gate）
+            baseline: 5.9.3
             tsc: node_modules/typescript-5-9/bin/tsc
-            corpus-ref: v5.9.3
-          - baseline: 6.0.3
+            corpus_ref: v5.9.3
+            corpus_path: tests/cases
+            cases: config/smoke-cases-5.9.json
+            expectation_source: ""
+            ratchet: ""
+            gate_max_fp: ""
+            gate_max_miss: ""
+          - slug: 6.0.3-self
+            name: 6.0.3 自比（零差异 gate）
+            baseline: 6.0.3
             tsc: node_modules/typescript-6-0/bin/tsc
-            corpus-ref: b465fdbfe175304d9b977da137b2c178ae1091d3
-          - baseline: 7.1.0-beta
+            corpus_ref: b465fdbfe175304d9b977da137b2c178ae1091d3
+            corpus_path: tests/cases
+            cases: config/smoke-cases.json
+            expectation_source: ""
+            ratchet: ""
+            gate_max_fp: ""
+            gate_max_miss: ""
+          - slug: 7.1.0-beta-self
+            name: 7.1.0-beta 自比（零差异 gate）
+            baseline: 7.1.0-beta
             tsc: node_modules/typescript-7-1/bin/tsc
-            corpus-ref: b465fdbfe175304d9b977da137b2c178ae1091d3
+            corpus_ref: b465fdbfe175304d9b977da137b2c178ae1091d3
+            corpus_path: tests/cases
+            cases: config/smoke-cases.json
+            expectation_source: ""
+            ratchet: ""
+            gate_max_fp: ""
+            gate_max_miss: ""
+          - slug: 7.1.0-beta-official
+            name: 7.1.0-beta-official 28 例（官方基线 + ratchet gate）
+            baseline: 7.1.0-beta-official
+            tsc: node_modules/typescript-7-1/bin/tsc
+            corpus_ref: aa8149273b23401f0a79a5f0384c42de51888693
+            corpus_path: tsc/testdata/tests/cases
+            cases: config/smoke-cases-ts71-official.json
+            expectation_source: official-baseline
+            ratchet: config/ratchet-ts71-official.tsv
+            gate_max_fp: ""
+            gate_max_miss: ""
+          - slug: 6.0.3-official-subset
+            name: 6.0.3 官方基线子集 191 例（gate，容忍已知 npm 偏差）
+            baseline: 6.0.3
+            tsc: node_modules/typescript-6-0/bin/tsc
+            corpus_ref: b465fdbfe175304d9b977da137b2c178ae1091d3
+            corpus_path: tests/cases
+            cases: config/official-baseline-cases.json
+            expectation_source: official-baseline
+            ratchet: ""
+            gate_max_fp: 12
+            gate_max_miss: 4
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout TypeScript corpus (${{ matrix.corpus-ref }})
+      - name: Checkout TypeScript corpus (${{ matrix.corpus_ref }})
         uses: actions/checkout@v4
         with:
           repository: microsoft/TypeScript
-          ref: ${{ matrix.corpus-ref }}
+          ref: ${{ matrix.corpus_ref }}
           path: reference/corpus
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
       - name: Install deps
         run: bun install --frozen-lockfile
-      - name: Smoke — self-compare (${{ matrix.baseline }})
-        run: >-
-          bun src/run.ts
-          --baseline ${{ matrix.baseline }}
-          --corpus ${{ github.workspace }}/reference/corpus/tests/cases
-          --adapter tsc-cli:${{ matrix.tsc }}
-          --out .cache/run
+      - name: Smoke + gate — ${{ matrix.name }}
+        env:
+          BASELINE: ${{ matrix.baseline }}
+          TSC_PATH: ${{ matrix.tsc }}
+          CORPUS: ${{ github.workspace }}/reference/corpus/${{ matrix.corpus_path }}
+          CASES: ${{ matrix.cases }}
+          EXPECT: ${{ matrix.expectation_source }}
+          RATCHET: ${{ matrix.ratchet }}
+          MAX_FP: ${{ matrix.gate_max_fp }}
+          MAX_MISS: ${{ matrix.gate_max_miss }}
+          OUT: .cache/run
+        run: |
+          set -euo pipefail
+          GATE_ARGS=(--gate)
+          if [ -n "${EXPECT:-}" ]; then GATE_ARGS+=(--expectation-source "$EXPECT"); fi
+          if [ -n "${RATCHET:-}" ]; then GATE_ARGS+=(--ratchet "$RATCHET"); fi
+          if [ -n "${MAX_FP:-}" ]; then GATE_ARGS+=(--gate-max-fp "$MAX_FP"); fi
+          if [ -n "${MAX_MISS:-}" ]; then GATE_ARGS+=(--gate-max-miss "$MAX_MISS"); fi
+          bun src/run.ts \
+            --baseline "$BASELINE" \
+            --corpus "$CORPUS" \
+            --adapter "tsc-cli:$TSC_PATH" \
+            --cases "$CASES" \
+            --out "$OUT" \
+            "${GATE_ARGS[@]}"
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "## smoke: ${{ matrix.name }}"
+            echo ""
+            if [ -f .cache/run/metrics.json ]; then
+              echo '```json'
+              jq '{gate: (.meta.gate | {passed, thresholds, checks}), totals: (.totals | {cases, ran, skipped, fpCases, fpTotal, expectTotal, hitTotal, missTotal, misanchorTotal, coverage, byTier, t3Failures}), ratchet: .meta.ratchet}' .cache/run/metrics.json 2>/dev/null \
+                || head -c 3000 .cache/run/metrics.json
+              echo '```'
+            else
+              echo "没有产出 metrics.json（运行失败或还没跑到写结果）"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload metrics
         uses: actions/upload-artifact@v4
         with:
-          name: metrics-${{ matrix.baseline }}
+          name: metrics-${{ matrix.slug }}
           path: .cache/run/metrics.json
+          if-no-files-found: ignore
           retention-days: 7
