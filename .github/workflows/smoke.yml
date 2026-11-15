@@ -14,6 +14,10 @@
 #   三档自比（期望源 = 实现）是 harness 正确性检查，走 --gate 的「零差异」自检口径：
 #   假阳性、漏报、错锚都必须为 0，否则 CI 变红。
 #
+# 每档跑完（无论门禁红绿、甚至运行提前失败）都会生成 Markdown/HTML 报告并上传
+# artifact `report-<slug>`；report job 再把各档合并成一份 $GITHUB_STEP_SUMMARY
+# 摘要（失败档位标注出来）并上传可下载的 HTML 索引 `report-summary`。
+#
 #   两个官方基线档是兼容性门禁（`--expectation-source official-baseline`）：
 #   - 7.1.0-beta-official 28 例：直接消费 TS7 Go 布局的官方 .errors.txt，按
 #     `config/ratchet-ts71-official.tsv` 的 ratchet 清单门禁（只记 T0–T2 门禁档、
@@ -202,12 +206,26 @@ jobs:
             --adapter "tsc-cli:$TSC_PATH" \
             --cases "$CASES" \
             --out "$OUT" \
+            --report-md "$OUT/report.md" \
+            --report-html "$OUT/report.html" \
             "${GATE_ARGS[@]}"
+      # 兜底：run.ts 是在写出 metrics 后才落报告；运行提前崩溃时这里用独立入口补一份
+      # 「失败占位报告」，保证红/失败的 run 也有 artifact 可看。没有 prev 时重生成与
+      # run.ts 的输出逐字节一致（两边默认读同一个 <out>/prev/metrics.json；显式
+      # --prev-report 只加在 run.ts 侧时则不一致）。报告生成失败会让 job 变红。
+      - name: Generate report — ${{ matrix.name }}
+        if: always()
+        run: |
+          OUT=".cache/run"
+          mkdir -p "$OUT"
+          bun src/report.ts --from "$OUT" --md "$OUT/report.md" --html "$OUT/report.html"
       - name: Step summary
         if: always()
         run: |
           {
             echo "## smoke: ${{ matrix.name }}"
+            echo ""
+            echo "报告 artifact：\`report-${{ matrix.slug }}\`（Markdown/HTML；汇总见 report job 的 Summary）"
             echo ""
             if [ -f .cache/run/metrics.json ]; then
               echo '```json'
@@ -225,30 +243,87 @@ jobs:
           path: .cache/run/metrics.json
           if-no-files-found: ignore
           retention-days: 7
+      - name: Upload report (Markdown + HTML)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ matrix.slug }}
+          path: |
+            .cache/run/report.md
+            .cache/run/report.html
+            .cache/run/metrics.json
+            .cache/run/details.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # 汇总各档报告：下载 matrix 的 report-<slug> artifact → 一份 Markdown 摘要
+  # （写进 $GITHUB_STEP_SUMMARY）+ 可下载的 HTML 索引（report-summary artifact，
+  # 打开 report/index.html 可逐档点开）。失败 run 也执行（if: always()），摘要里
+  # 标出失败档位与缺 metrics 的档位；合并失败直接让 job 变红。
+  report:
+    needs: [detect, smoke]
+    if: always() && needs.detect.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Download per-entry reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: report-*
+          path: report
+      - name: Merge reports
+        run: |
+          bun scripts/merge-reports.ts \
+            --root report \
+            --md report/summary.md \
+            --html report/index.html \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Step summary
+        if: always()
+        run: |
+          if [ -f report/summary.md ]; then
+            cat report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "报告汇总没有生成（见上一步日志）" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload merged report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-summary
+          path: report/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # 稳定的聚合 required check 名：compat-gate。无变化时套件 skipped 算通过；
-  # detect 失败或任一档套件失败都会红。分支保护里把 compat-gate 设为 required。
+  # detect 失败、任一档套件失败或报告生成/合并失败都会红。分支保护里把
+  # compat-gate 设为 required。
   compat-gate:
     name: compat-gate
-    needs: [detect, unit, smoke]
+    needs: [detect, unit, smoke, report]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Aggregate detect / unit / smoke
+      - name: Aggregate detect / unit / smoke / report
         env:
           DETECT: ${{ needs.detect.result }}
           UNIT: ${{ needs.unit.result }}
           SMOKE: ${{ needs.smoke.result }}
+          REPORT: ${{ needs.report.result }}
         run: |
           set -euo pipefail
-          echo "detect=$DETECT unit=$UNIT smoke=$SMOKE"
+          echo "detect=$DETECT unit=$UNIT smoke=$SMOKE report=$REPORT"
           if [ "$DETECT" != "success" ]; then
             echo "::error::变化检测失败（detect=$DETECT）"
             exit 1
           fi
-          for result in "$UNIT" "$SMOKE"; do
+          for result in "$UNIT" "$SMOKE" "$REPORT"; do
             if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
-              echo "::error::门禁未通过（unit/smoke 结果：$result）"
+              echo "::error::门禁未通过（unit/smoke/report 结果：$result）"
               exit 1
             fi
           done

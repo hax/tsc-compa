@@ -383,11 +383,13 @@ src/compare.ts         匹配与指标（含错锚配对、按类聚合）
 src/classify.ts        用例分类标签与过滤
 src/baselines.ts       多基线配置（tsc × 语料 tag）
 src/gate.ts            CI 门禁（--gate 的检查项与结论渲染）
+src/report.ts          人类可读报告（Markdown + 自包含 HTML，含 delta/门禁结论/失败 callout）
 src/run.ts             运行器入口
 src/adapters/          tsc-cli / checker-cli / cli / batch / mock-batch / 工厂
 scripts/select-smoke.ts  生成冒烟 manifest
 scripts/select-official-baseline-cases.ts  生成官方基线可消费清单
 scripts/detect-changes.ts  CI 每日 cron 的变化检测（本地输入哈希 / HEAD / 外部 pin）
+scripts/merge-reports.ts   合并各档 CI 报告为 step summary 与 HTML 索引
 config/baselines.json    基线配置（三个 tsc × 两套语料）
 config/smoke-cases.json  strada 冒烟用例集（入库、可复现）
 config/smoke-cases-5.9.json  5.9 语料冒烟集
@@ -412,6 +414,7 @@ test/                  单测（bun test）
 - [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
 - [x] 基线守门 `--gate`（§4.3：ratchet + 条数/覆盖率阈值，已接 `smoke.yml` 的 push/PR；每日 cron 先经 `scripts/detect-changes.ts` 判变化，未变跳过）；`--update-baseline` 未做，更新由 ratchet 改善写回承担；
 - [ ] 更大规模的用例选择策略（按码族/目录分层抽样，避免只覆盖编译器用例）；
+- [x] 人类可读报告（`--report-md` / `--report-html` / `--report-out`，markdown 摘要 + 自包含 HTML + 与上次的 delta；CI 每档 artifact 与合并后的 step summary，见 README「Reports」）；
 - [ ] 并行执行与结果合并（shard / merge）；
 - [ ] L2/L3 判定粒度（宽度、消息文案）；
 - [ ] 实现声明「已知不支持的错误码/能力」，用于 SKIP 而非算漏报；

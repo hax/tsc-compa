@@ -59,6 +59,39 @@ ratchet 文件里只记这三档（旧的 full 条目读入时归一为 text）�
 `.errors.txt` 摘要块字节相等）仍是报告档**——未达只进 `totals.byTier` /
 `totals.t3Failures` / `samples.t3`，不判红。
 
+### 人类可读报告（P0）
+
+每档跑完都会从同一份 `metrics.json` / `details.json` 生成 `report.md` 与自包含
+`report.html`（内联 CSS + 内联 SVG 阶梯，不重跑套件）：
+
+- `smoke.yml` 的 "Smoke + gate" 步骤带 `--report-md` / `--report-html`；随后
+  `if: always()` 的 "Generate report" 再用 `bun src/report.ts --from .cache/run`
+  兜底——运行提前崩溃、没写出 metrics 时生成「失败占位报告」，红/失败的 run 也有
+  报告可看；报告生成失败会让 job 变红，不会被吞掉。
+- 每档上传 artifact `report-<slug>`（`report.md`、`report.html`、`metrics.json`、
+  `details.json`；metrics/details 供下游下钻），失败档位的 artifact 同样上传。
+- `report` job（`needs: [detect, smoke]`、`if: always()`）下载所有档的报告，用
+  `scripts/merge-reports.ts` 合并成一份 Markdown 摘要写进本次 run 的 **Summary** 页，
+  并把 `report/index.html`（逐档链接到 `report.html`）上传为 artifact
+  `report-summary`；失败档位、缺 metrics 的档位在汇总表里直接标出。`report` 也纳入
+  `compat-gate` 的聚合。
+- 没有做 PR 评论：本 workflow 只有 `contents: read`，写评论需要
+  `pull-requests: write`，且 fork PR 的 token 只读；step summary + artifact 已经
+  覆盖「在哪看」的需求，评论等 P1 再评估。
+- 本地生成、`--prev-report` delta 与报告内容见 README 的「Reports」小节；单独补报告：
+
+```bash
+# 无门禁时也能出报告；delta 用上次运行的 metrics.json（或它的输出目录）
+bun src/run.ts --baseline 6.0.3 --corpus /path/to/strada/tests/cases \
+  --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc \
+  --report-out .cache/run/report --prev-report .cache/previous/metrics.json
+
+# 跑完事后补一次：没给 --prev-report 时，与 run.ts 内直接生成的结果逐字节一致
+# （两边都默认读 <from>/prev/metrics.json；run.ts 用了显式 --prev-report 时，
+#  这里要传同一份才一致）
+bun src/report.ts --from .cache/run --md .cache/run/report.md --html .cache/run/report.html
+```
+
 ### 每日 cron 的变化检测（`scripts/detect-changes.ts`）
 
 detect 把当前状态与「上次套件全部通过后」记录的状态（`actions/cache` 里的
@@ -94,9 +127,9 @@ GITHUB_EVENT_NAME=schedule GITHUB_SHA=$(git rev-parse HEAD) bun scripts/detect-c
 ```
 
 要把门禁真正用于「阻断合并」，需在仓库设置里把稳定聚合 job **`compat-gate`** 设为
-required status check（它汇总 `detect` / `unit` / `smoke` 的结果：无变化时套件 skipped
-也算通过，套件失败或 detect 失败都会红；也可同时要求 `unit` / `smoke`。分支保护是
-仓库设置，不在 workflow 文件里）。
+required status check（它汇总 `detect` / `unit` / `smoke` / `report` 的结果：无变化时
+套件与报告 job skipped 也算通过，套件失败、detect 失败或报告生成/合并失败都会红；
+也可同时要求 `unit` / `smoke`。分支保护是仓库设置，不在 workflow 文件里）。
 
 本地复现：
 
@@ -146,6 +179,9 @@ bun src/run.ts --baseline 7.1.0-beta-official \
   （CI 里清单已入库，正常不应产生写回；若 artifact 显示有改善，维护者审阅后提交）；workflow 里用显式
   `--ratchet config/ratchet-ts71-official.tsv` + `--gate`（与 `smoke.yml` 的 28 例档同口径；
   ratchet 只记 T0–T2，T3 不判红）。
+- 报告：跑完（含门禁红）生成 `out/report.md` / `out/report.html`，job summary 贴出
+  Markdown 全文，`ts7-official-metrics` artifact 里可直接打开 HTML；没有 metrics 时
+  由 `src/report.ts` 出失败占位报告；
 - **尚未在 GitHub Actions 上实际跑过**：先手动 dispatch 跑绿一次，再决定是否给它单独挂 cron；
   在那之前，`smoke.yml` 的每日变化检测在判「有变化」时会覆盖同一组 28 例官方基线冒烟。
 

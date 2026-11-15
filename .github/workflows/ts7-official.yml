@@ -5,6 +5,9 @@
 # ts71-official corpus 现场解析（当前 3e92363，= npm typescript@7.1.0-beta 的 gitHead）。
 # cases 在 tsc/testdata/tests/cases，基线在 tsc/testdata/baselines/reference。
 #
+# 跑完（含门禁红）会生成 Markdown/HTML 报告，随 out/ artifact 一起上传，并贴进
+# job summary；没有 metrics 时由 src/report.ts 出「失败占位报告」。
+#
 # 只手动触发；不跑全量（全量留给后续批量/分片设施）。--gate 与 smoke.yml 的
 # 7.1.0-beta-official 档同口径（ratchet 只记 T0–T2 门禁档、回落即红；T3 是
 # 报告档，归一为 text，不判红）。
@@ -70,7 +73,13 @@ jobs:
             --ratchet config/ratchet-ts71-official.tsv \
             --gate \
             $LIMIT_ARGS \
-            --out out
+            --out out \
+            --report-md out/report.md \
+            --report-html out/report.html
+
+      - name: Generate report（失败兜底）
+        if: always()
+        run: mkdir -p out && bun src/report.ts --from out --md out/report.md --html out/report.html
 
       - name: Step summary
         if: always()
@@ -83,7 +92,11 @@ jobs:
             echo "- corpus: microsoft/TypeScript@${CORPUS_REF}"
             echo "- adapter: ${{ inputs.adapter }}"
             echo ""
-            if [ -f out/metrics.json ]; then
+            if [ -f out/report.md ]; then
+              echo "完整报告见 artifact \`ts7-official-metrics\` 的 \`report.md\` / \`report.html\`。"
+              echo ""
+              cat out/report.md
+            elif [ -f out/metrics.json ]; then
               echo '```json'
               jq '{gate: (.meta.gate | {passed, thresholds, checks}), totals: (.totals | {cases, ran, skipped, fpCases, fpTotal, coverage, messageMismatch, byTier}), ratchet: .meta.ratchet}' out/metrics.json 2>/dev/null || head -c 3000 out/metrics.json
               echo '```'

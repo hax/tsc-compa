@@ -8,6 +8,8 @@
 //   CHECKER_BIN=/path/to/checker bun src/run.ts --adapter checker-cli --mode fixed --cases config/smoke-cases.json
 //
 // 运行结果写 <out>/metrics.json 与 <details.json>，并在 stdout 打印摘要。
+// --report-md / --report-html（或 --report-out <dir>）用同一份结果生成人类可读报告
+// （不重跑套件，见 src/report.ts）；报告写盘失败会让进程非零退出。
 // 默认退出码为 0（除非运行本身失败）；--gate 打开兼容性门禁：ratchet 回落、
 // 假阳性/漏报/错锚超限、覆盖率不足、口径不可作结论等任一命中即非零退出，
 // 并在 stdout 与 metrics.meta.gate 里给出逐项结论（见 docs/CI.md）。
@@ -17,6 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { createAdapter } from "./adapters/index.ts";
 import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, type Metrics, type RunMeta } from "./compare.ts";
 import { evaluateGate, formatGate, type GateThresholds } from "./gate.ts";
+import { readRunData, REPORT_HTML_FILENAME, REPORT_MD_FILENAME, writeReport } from "./report.ts";
 import { checkRatchet, ratchetPathFor, readRatchet, writeRatchet, type RatchetRegression } from "./ratchet.ts";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "./baselines.ts";
 import { classifyCase, exclusionOf, parseTagList, runtimeTags } from "./classify.ts";
@@ -72,6 +75,15 @@ interface Args {
   gateMaxMiss?: number;
   gateMaxMisanchor?: number;
   gateMinCoverage?: number;
+  /** 人类可读报告：显式 Markdown / HTML 路径，或 --report-out 指定目录。 */
+  reportMd?: string;
+  reportHtml?: string;
+  reportOut?: string;
+  /** 上次运行数据（metrics.json 或运行输出目录），用于报告里的 delta。 */
+  prevReport?: string;
+  /** 报告里的实现显示名与二进制路径（缺省用适配器中性名，二进制从 `:<bin>` 推断）。 */
+  reportImplName?: string;
+  reportImplBin?: string;
 }
 
 /** 非负整数参数。 */
@@ -250,6 +262,24 @@ function parseArgs(argv: string[]): Args {
       case "--gate-min-coverage":
         args.gateMinCoverage = coverageRatio(next());
         break;
+      case "--report-md":
+        args.reportMd = next();
+        break;
+      case "--report-html":
+        args.reportHtml = next();
+        break;
+      case "--report-out":
+        args.reportOut = next();
+        break;
+      case "--prev-report":
+        args.prevReport = next();
+        break;
+      case "--report-impl-name":
+        args.reportImplName = next();
+        break;
+      case "--report-impl-bin":
+        args.reportImplBin = next();
+        break;
       case "--verbose":
         args.verbose = true;
         break;
@@ -261,9 +291,13 @@ function parseArgs(argv: string[]): Args {
             "[--expectation-source tsc|official-baseline] [--exclude-class <tags>] [--only-class <tags>] " +
             "[--ratchet <file> | --ratchet-impl <impl>] [--ratchet-init] [--perf-ratio] [--perf-sample N] [--perf-seed <s>] [--perf-timeout ms] " +
             "[--gate] [--gate-max-fp N] [--gate-max-miss N] [--gate-max-misanchor N] [--gate-min-coverage P] " +
+            "[--report-md <path>] [--report-html <path>] [--report-out <dir>] [--prev-report <path>] " +
+            "[--report-impl-name <name>] [--report-impl-bin <path>] " +
             "[--out <dir>] [--limit N] [--verbose]",
         );
-        console.log("基线见 config/baselines.json；标签见 src/classify.ts 的 CASE_TAGS；门禁语义见 docs/CI.md。");
+        console.log(
+          "基线见 config/baselines.json；标签见 src/classify.ts 的 CASE_TAGS；门禁语义见 docs/CI.md；报告见 README「Reports」。",
+        );
         process.exit(0);
       default:
         throw new Error(`未知参数 ${arg}`);
@@ -643,30 +677,53 @@ async function main(): Promise<void> {
     console.log(`类排除：静态 ${excludedStatic} 例、运行期 ${excludedRuntime} 例（--exclude-class / --only-class）`);
   }
 
+  const detailsJson = records.map((r) => ({
+    id: r.id,
+    status: r.status,
+    skipReason: r.skipReason,
+    classes: r.classes,
+    expected: r.expected.length,
+    actual: r.actual.length,
+    hits: r.hits,
+    fp: r.fp.map((d) => `${d.file}:${d.line + 1}:${d.col + 1} TS${d.code}`),
+    missed: r.missed.map((d) => `${d.file}:${d.line + 1}:${d.col + 1} TS${d.code}`),
+    misanchor: r.misanchor,
+    tier: r.tier,
+  }));
   mkdirSync(args.out, { recursive: true });
   writeFileSync(join(args.out, "metrics.json"), `${JSON.stringify(metrics, null, 2)}\n`);
-  writeFileSync(
-    join(args.out, "details.json"),
-    `${JSON.stringify(
-      records.map((r) => ({
-        id: r.id,
-        status: r.status,
-        skipReason: r.skipReason,
-        classes: r.classes,
-        expected: r.expected.length,
-        actual: r.actual.length,
-        hits: r.hits,
-        fp: r.fp.map((d) => `${d.file}:${d.line + 1}:${d.col + 1} TS${d.code}`),
-        missed: r.missed.map((d) => `${d.file}:${d.line + 1}:${d.col + 1} TS${d.code}`),
-        misanchor: r.misanchor,
-        tier: r.tier,
-      })),
-      null,
-      2,
-    )}\n`,
-  );
+  writeFileSync(join(args.out, "details.json"), `${JSON.stringify(detailsJson, null, 2)}\n`);
   console.log(formatSummary(metrics));
   console.log(`结果：${join(args.out, "metrics.json")}`);
+
+  // 人类可读报告：用刚写出的同一份 metrics/details 渲染（不重跑套件）。渲染/写盘
+  // 失败直接抛异常 → 进程非零退出；不能为了出报告把门禁或测试失败吞成绿。
+  const reportMd = args.reportMd ?? (args.reportOut !== undefined ? join(args.reportOut, REPORT_MD_FILENAME) : undefined);
+  const reportHtml =
+    args.reportHtml ?? (args.reportOut !== undefined ? join(args.reportOut, REPORT_HTML_FILENAME) : undefined);
+  if (reportMd !== undefined || reportHtml !== undefined) {
+    let previous = null;
+    if (args.prevReport !== undefined) {
+      previous = readRunData(args.prevReport);
+      if (previous === null) throw new Error(`--prev-report 找不到可读的运行结果：${args.prevReport}`);
+    } else {
+      // 默认约定：上次结果放在 <out>/prev/metrics.json（存在才算 delta）。
+      const defaultPrevious = join(args.out, "prev", "metrics.json");
+      if (existsSync(defaultPrevious)) previous = readRunData(defaultPrevious);
+    }
+    const written = writeReport(
+      { md: reportMd, html: reportHtml },
+      { metrics, details: detailsJson, source: args.out },
+      {
+        implName: args.reportImplName,
+        implBin: args.reportImplBin,
+        previous,
+      },
+      args.out,
+    );
+    if (written.md !== undefined) console.log(`报告（Markdown）：${written.md}`);
+    if (written.html !== undefined) console.log(`报告（HTML）：${written.html}`);
+  }
   if (exitCode !== 0) process.exitCode = exitCode;
 }
 
