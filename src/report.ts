@@ -116,11 +116,12 @@ function mdText(value: string): string {
 /** Markdown 表格单元。 */
 const mdCell = (value: string): string => mdText(value);
 
-/** 行内代码：内容含反引号时改用双反引号围栏（避免提前闭合），换行压平。 */
+/** 行内代码：围栏长度取内容里最长反引号串 + 1（避免提前闭合），换行压平。 */
 function mdCode(value: string): string {
   const text = value.replace(/\r?\n/g, " ");
-  if (!text.includes("`")) return `\`${text}\``;
-  const fence = text.includes("``") ? "```" : "``";
+  const longestRun = (text.match(/`+/g) ?? []).reduce((max, run) => Math.max(max, run.length), 0);
+  const fence = "`".repeat(longestRun + 1);
+  // 内容以反引号开头/结尾时，CommonMark 要求围栏两侧补一个空格才不会被吞。
   const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
   return `${fence}${pad}${text}${pad}${fence}`;
 }
@@ -645,6 +646,14 @@ interface RegressionCallout {
   t3Samples: string[];
   ratchetRegressions: number;
   deltaRegressions: CaseMovement[];
+  /** metrics 级差异计数：没有 details.json 时也要能判断「有没有失败/回归」。 */
+  fpTotal: number;
+  missTotal: number;
+  misanchorTotal: number;
+  messageMismatch: number;
+  hasT3Failures: boolean;
+  /** false 表示产物里没有 details.json（只能用 metrics/samples 展示，不能逐例下钻）。 */
+  detailsAvailable: boolean;
 }
 
 function calloutsOf(model: ReportModel): RegressionCallout {
@@ -656,15 +665,31 @@ function calloutsOf(model: ReportModel): RegressionCallout {
     t3Samples: model.samples.t3,
     ratchetRegressions: model.ratchet?.regressions ?? 0,
     deltaRegressions: model.delta?.regressions ?? [],
+    fpTotal: model.totals.fpTotal,
+    missTotal: model.totals.missTotal,
+    misanchorTotal: model.totals.misanchorTotal,
+    messageMismatch: model.totals.messageMismatch,
+    hasT3Failures: model.totals.t3Failures.length > 0,
+    detailsAvailable: model.details.length > 0,
   };
 }
 
 function hasFailures(callouts: RegressionCallout): boolean {
+  // 失败/回归不能只看 details 逐例列表：`--from` 只有 metrics.json（没有 details.json）时，
+  // fp/漏报/错锚/文案差仍在 totals 与 samples 里，必须照样进入「失败与回归」。
   return (
     callouts.gateFailed.length > 0 ||
     callouts.failing.length > 0 ||
     callouts.ratchetRegressions > 0 ||
-    callouts.deltaRegressions.length > 0
+    callouts.deltaRegressions.length > 0 ||
+    callouts.fpTotal > 0 ||
+    callouts.missTotal > 0 ||
+    callouts.misanchorTotal > 0 ||
+    callouts.messageMismatch > 0 ||
+    callouts.fpSamples.length > 0 ||
+    callouts.missSamples.length > 0 ||
+    callouts.t3Samples.length > 0 ||
+    callouts.hasT3Failures
   );
 }
 
@@ -766,6 +791,10 @@ function renderFailuresMd(model: ReportModel, callouts: RegressionCallout): stri
     lines.push("未发现失败或回归。");
     return lines;
   }
+  if (!callouts.detailsAvailable && (callouts.fpTotal > 0 || callouts.missTotal > 0 || callouts.misanchorTotal > 0)) {
+    lines.push("> 本次产物里没有 `details.json`，无法逐例下钻；以下差异数字来自 `metrics.json` 的汇总与样例。");
+    lines.push("");
+  }
   if (callouts.gateFailed.length > 0) {
     lines.push(`**门禁失败项（${callouts.gateFailed.length}）**`);
     lines.push("");
@@ -815,6 +844,17 @@ function renderFailuresMd(model: ReportModel, callouts: RegressionCallout): stri
     lines.push("");
     for (const sample of callouts.t3Samples.slice(0, 10)) lines.push(`- ${mdCode(sample)}`);
     if (callouts.t3Samples.length > 10) lines.push(`- …… 共 ${callouts.t3Samples.length} 条样例`);
+    lines.push("");
+  } else if (callouts.hasT3Failures) {
+    lines.push(
+      `**T3 未达 ${model.totals.t3Failures.reduce((sum, [, n]) => sum + n, 0)} 例**：` +
+        model.totals.t3Failures.map(([reason, n]) => `${mdCode(reason)} ×${n}`).join("、") +
+        "（未保留样例）。",
+    );
+    lines.push("");
+  }
+  if (callouts.messageMismatch > 0) {
+    lines.push(`**首行文案不同 ${callouts.messageMismatch} 条**：位置命中、文案不同（T1 与 T2 的差）。`);
     lines.push("");
   }
   return lines;
@@ -1066,9 +1106,15 @@ function renderDeltaHtml(model: ReportModel): string {
   );
 }
 
-function renderFailuresHtml(callouts: RegressionCallout): string {
+function renderFailuresHtml(model: ReportModel, callouts: RegressionCallout): string {
   if (!hasFailures(callouts)) return "<p>未发现失败或回归。</p>";
   const blocks: string[] = [];
+  if (!callouts.detailsAvailable && (callouts.fpTotal > 0 || callouts.missTotal > 0 || callouts.misanchorTotal > 0)) {
+    blocks.push(
+      "<p class=\"note\">本次产物里没有 <code>details.json</code>，无法逐例下钻；" +
+        "以下差异数字来自 <code>metrics.json</code> 的汇总与样例。</p>",
+    );
+  }
   const ul = (items: string[], cap = 20): string => {
     const shown = items
       .slice(0, cap)
@@ -1110,6 +1156,18 @@ function renderFailuresHtml(callouts: RegressionCallout): string {
   sampleBlocks("假阳性样例", callouts.fpSamples, true);
   sampleBlocks("漏报样例", callouts.missSamples, true);
   sampleBlocks("T3 未达样例", callouts.t3Samples, true);
+  if (callouts.t3Samples.length === 0 && callouts.hasT3Failures) {
+    const total = model.totals.t3Failures.reduce((sum, [, n]) => sum + n, 0);
+    const reasons = model.totals.t3Failures
+      .map(([reason, n]) => `<code>${escapeHtml(reason)}</code> ×${n}`)
+      .join("、");
+    blocks.push(`<p><strong>T3 未达 ${total} 例</strong>：${reasons}（未保留样例）。</p>`);
+  }
+  if (callouts.messageMismatch > 0) {
+    blocks.push(
+      `<p><strong>首行文案不同 ${callouts.messageMismatch} 条</strong>：位置命中、文案不同（T1 与 T2 的差）。</p>`,
+    );
+  }
   return blocks.join("\n");
 }
 
@@ -1185,7 +1243,7 @@ export function renderHtml(model: ReportModel): string {
   sections.push(`<h2>T0–T3 阶梯</h2>\n${renderTierHtml(model)}`);
   sections.push(`<h2>门禁结论</h2>\n${renderGateHtml(model)}`);
   sections.push(`<h2>与上次报告对比</h2>\n${renderDeltaHtml(model)}`);
-  sections.push(`<h2>失败与回归</h2>\n${renderFailuresHtml(callouts)}`);
+  sections.push(`<h2>失败与回归</h2>\n${renderFailuresHtml(model, callouts)}`);
   if (model.fpByCode.length > 0 || model.missByCode.length > 0) {
     const blocks: string[] = [];
     if (model.fpByCode.length > 0) {
@@ -1242,9 +1300,22 @@ export function generateReport(data: RunData, options: ReportOptions = {}): Gene
   return { markdown: renderMarkdown(model), html: renderHtml(model) };
 }
 
+/** 默认上次运行数据：`<dir>/prev/metrics.json`（与 run.ts 的默认约定一致）。 */
+function defaultPreviousPath(from: string): string | null {
+  let base = resolve(from);
+  try {
+    if (!statSync(base).isDirectory()) base = dirname(base);
+  } catch {
+    return null;
+  }
+  const candidate = join(base, "prev", "metrics.json");
+  return existsSync(candidate) ? candidate : null;
+}
+
 /**
  * 读 metrics.json（+ 同目录 details.json）；不存在返回 null（调用方决定出占位报告还是报错）。
- * source 保留调用方给的路径写法（不强行绝对化），这样 `run.ts` 写的报告与事后用
+ * source 保留调用方给的路径写法（不强行绝对化），这样在「同一目录、同一份 prev、
+ * 没有显式 --prev-report」时，`run.ts` 内直接写的报告与事后
  * `report.ts --from <同一目录>` 重生成的报告逐字节一致。
  */
 export function readRunData(path: string): RunData | null {
@@ -1271,7 +1342,7 @@ export function readRunData(path: string): RunData | null {
 function missingReport(from: string, options: ReportOptions): GeneratedReport {
   const title = options.title ?? "tsc-compa 兼容性报告 — 数据缺失";
   const reason = `没有找到本次运行的 metrics.json（${join(resolve(from), "metrics.json")}）：套件可能在写出结果前就失败或被取消了。`;
-  const hint = "请查看本次 CI run 里该档位的运行日志；metrics 写出后重跑 `bun src/report.ts --from <运行输出目录>` 即可补齐报告。";
+  const hint = "请查看本次 CI run 里该档位的运行日志；metrics 写出后把 --from 指向同一个输出目录重跑 bun src/report.ts 即可补齐报告。";
   const markdown = [
     `# ${mdText(title)}`,
     "",
@@ -1387,7 +1458,8 @@ function parseReportArgs(argv: string[]): ReportCliArgs {
       case "-h":
         console.log(
           "用法：bun src/report.ts [--from <运行输出目录>] [--md <path>] [--html <path>] [--out <dir>] " +
-            "[--prev-report <上次 metrics.json 或运行目录>] [--impl-name <显示名>] [--impl-bin <二进制路径>] " +
+            "[--prev-report <上次 metrics.json 或运行目录；缺省读 <from>/prev/metrics.json>] " +
+            "[--impl-name <显示名>] [--impl-bin <二进制路径>] " +
             "[--title <标题>] [--require-metrics]",
         );
         process.exit(0);
@@ -1415,7 +1487,16 @@ function main(): void {
   if (data === null) {
     console.warn(`警告：没有找到 ${resolve(args.from)}/metrics.json，生成失败占位报告。`);
   }
-  const prevReport = args.prevReport !== undefined ? readRunData(args.prevReport) : null;
+  // 与 run.ts 一致：没显式给 --prev-report 时默认读 <运行输出目录>/prev/metrics.json；
+  // 显式给了但读不到则报错（否则 delta 会静默消失）。
+  let prevReport = null;
+  if (args.prevReport !== undefined) {
+    prevReport = readRunData(args.prevReport);
+    if (prevReport === null) throw new Error(`--prev-report 找不到可读的运行结果：${args.prevReport}`);
+  } else {
+    const defaultPrevious = defaultPreviousPath(args.from);
+    if (defaultPrevious !== null) prevReport = readRunData(defaultPrevious);
+  }
   const written = writeReport(
     { md: args.md, html: args.html },
     data,

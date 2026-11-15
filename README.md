@@ -154,9 +154,15 @@ resources — and is deterministic (same inputs, same bytes), so it can be cache
 diffed. Report rendering/writing failures exit non-zero: a broken report never turns a
 failed run green.
 
+The standalone CLI also defaults to the same `<out>/prev/metrics.json` previous run as
+`run.ts`, so `bun src/report.ts --from <out>` reproduces the in-run report byte for byte
+when the previous-run data is the default one (pass the same `--prev-report` if `run.ts`
+was given an explicit path).
+
 In CI, every `smoke.yml` matrix entry writes `report.md` / `report.html` and uploads them
-as artifact `report-<entry>` (also when the gate fails or the run crashed before writing
-metrics — then a failure placeholder report is generated). The `report` job merges all
+as artifact `report-<entry>` together with `metrics.json` / `details.json` (also when the
+gate fails or the run crashed before writing metrics — then a failure placeholder report
+is generated). The `report` job merges all
 entries into one summary on the run's **Summary** page and uploads one `report-summary`
 artifact; download it and open `report/index.html` to browse each entry's HTML report.
 PR comments are intentionally not posted: the workflow token is read-only

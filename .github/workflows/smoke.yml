@@ -210,8 +210,9 @@ jobs:
             --report-html "$OUT/report.html" \
             "${GATE_ARGS[@]}"
       # 兜底：run.ts 是在写出 metrics 后才落报告；运行提前崩溃时这里用独立入口补一份
-      # 「失败占位报告」，保证红/失败的 run 也有 artifact 可看。正常情况重生成与
-      # run.ts 的输出逐字节一致；报告生成失败会让 job 变红，不吞掉测试/门禁失败。
+      # 「失败占位报告」，保证红/失败的 run 也有 artifact 可看。没有 prev 时重生成与
+      # run.ts 的输出逐字节一致（两边默认读同一个 <out>/prev/metrics.json；显式
+      # --prev-report 只加在 run.ts 侧时则不一致）。报告生成失败会让 job 变红。
       - name: Generate report — ${{ matrix.name }}
         if: always()
         run: |
@@ -251,6 +252,7 @@ jobs:
             .cache/run/report.md
             .cache/run/report.html
             .cache/run/metrics.json
+            .cache/run/details.json
           if-no-files-found: ignore
           retention-days: 14
 

@@ -68,8 +68,8 @@ ratchet 文件里只记这三档（旧的 full 条目读入时归一为 text）�
   `if: always()` 的 "Generate report" 再用 `bun src/report.ts --from .cache/run`
   兜底——运行提前崩溃、没写出 metrics 时生成「失败占位报告」，红/失败的 run 也有
   报告可看；报告生成失败会让 job 变红，不会被吞掉。
-- 每档上传 artifact `report-<slug>`（`report.md`、`report.html`、`metrics.json`），
-  失败档位的 artifact 同样上传。
+- 每档上传 artifact `report-<slug>`（`report.md`、`report.html`、`metrics.json`、
+  `details.json`；metrics/details 供下游下钻），失败档位的 artifact 同样上传。
 - `report` job（`needs: [detect, smoke]`、`if: always()`）下载所有档的报告，用
   `scripts/merge-reports.ts` 合并成一份 Markdown 摘要写进本次 run 的 **Summary** 页，
   并把 `report/index.html`（逐档链接到 `report.html`）上传为 artifact
@@ -86,7 +86,9 @@ bun src/run.ts --baseline 6.0.3 --corpus /path/to/strada/tests/cases \
   --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc \
   --report-out .cache/run/report --prev-report .cache/previous/metrics.json
 
-# 跑完事后补一次（与 run.ts 内直接生成的结果逐字节一致）
+# 跑完事后补一次：没给 --prev-report 时，与 run.ts 内直接生成的结果逐字节一致
+# （两边都默认读 <from>/prev/metrics.json；run.ts 用了显式 --prev-report 时，
+#  这里要传同一份才一致）
 bun src/report.ts --from .cache/run --md .cache/run/report.md --html .cache/run/report.html
 ```
 

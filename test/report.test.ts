@@ -149,6 +149,47 @@ describe("报告渲染：最小 metrics 输入", () => {
     expect(markdown).toContain("none");
   });
 
+  test("缺 details.json：按 metrics 的 fp/漏报/样例判断失败，不误报「未发现」", () => {
+    const withSamples = generateReport({
+      metrics: metricsOf({ samples: { fp: ["a.ts:1:1 TS1000", "b.ts:2:3 TS1001"], miss: [], textDiff: [], messageDiff: [], t3: [] } }),
+      details: [],
+    });
+    expect(withSamples.markdown).not.toContain("未发现失败或回归");
+    expect(withSamples.markdown).toContain("没有 `details.json`");
+    expect(withSamples.markdown).toContain("a.ts:1:1 TS1000");
+    expect(withSamples.html).toContain("没有 <code>details.json</code>");
+    // 连样例都没保留时，totals 里的假阳性也要触发失败小节。
+    const totalsOnly = generateReport({
+      metrics: metricsOf({ samples: { fp: [], miss: [], textDiff: [], messageDiff: [], t3: [] } }),
+      details: [],
+    });
+    expect(totalsOnly.markdown).not.toContain("未发现失败或回归");
+    expect(totalsOnly.markdown).toContain("T3 未达 1 例");
+    // 只有「位置命中但文案不同」的差异也不能落到「未发现」。
+    const mismatchOnly = generateReport({
+      metrics: metricsOf({
+        totals: { messageMismatch: 2, fpCases: 0, fpTotal: 0, missTotal: 0, misanchorTotal: 0 },
+        samples: { fp: [], miss: [], textDiff: [], messageDiff: [], t3: [] },
+      }),
+      details: [],
+    });
+    expect(mismatchOnly.markdown).toContain("首行文案不同 2 条");
+    expect(mismatchOnly.markdown).not.toContain("未发现失败或回归");
+  });
+
+  test("行内代码围栏按内容里最长反引号串加长，避免提前闭合", () => {
+    const { markdown } = generateReport({
+      metrics: metricsOf({
+        samples: { fp: ["a.ts:1:1 TS1000 ```", "c.ts:4:5 TS1002 `x`"], miss: [], textDiff: [], messageDiff: [], t3: [] },
+      }),
+      details: BASE_DETAILS,
+    });
+    // 含 3 连反引号的样例用 4 连围栏，且两侧补空格。
+    expect(markdown).toContain("```` a.ts:1:1 TS1000 ``` ````");
+    // 含单反引号的样例用 2 连围栏；内容以反引号收尾时两侧补空格。
+    expect(markdown).toContain("`` c.ts:4:5 TS1002 `x` ``");
+  });
+
   test("非官方期望源（tsc 现场生成）：T3 全文档标注为不可比", () => {
     const { markdown, html } = generateReport(
       { metrics: metricsOf({ meta: { expectationSource: "tsc" } }), details: BASE_DETAILS },
@@ -286,6 +327,8 @@ describe("报告 CLI（src/report.ts）", () => {
     expect(r.status).toBe(0);
     expect(r.stderr).toContain("失败占位报告");
     expect(readFileSync(md, "utf8")).toContain("失败占位报告");
+    expect(readFileSync(md, "utf8")).not.toContain("&lt;");
+    expect(readFileSync(md, "utf8")).toContain("重跑 bun src/report.ts");
     expect(readFileSync(html, "utf8")).toContain("失败占位报告");
     const strict = spawnReport(["--from", dir, "--md", join(dir, "strict.md"), "--require-metrics"]);
     expect(strict.status).not.toBe(0);
@@ -297,6 +340,29 @@ describe("报告 CLI（src/report.ts）", () => {
     writeFileSync(join(dir, "metrics.json"), JSON.stringify(metricsOf()));
     expect(spawnReport(["--from", dir]).status).not.toBe(0);
     expect(spawnReport(["--from", dir, "--md", join(dir, "x.md"), "--bogus"]).status).not.toBe(0);
+  });
+
+  test("CLI 缺省读 <dir>/prev/metrics.json 作 delta；显式 --prev-report 缺失则报错", () => {
+    const dir = tempDir("tsc-compa-report-prev-");
+    writeFileSync(join(dir, "metrics.json"), JSON.stringify(metricsOf()));
+    writeFileSync(join(dir, "details.json"), JSON.stringify(BASE_DETAILS));
+    mkdirSync(join(dir, "prev"), { recursive: true });
+    writeFileSync(
+      join(dir, "prev", "metrics.json"),
+      JSON.stringify(
+        metricsOf({
+          meta: { generatedAt: "2026-11-15T00:00:00.000Z" },
+          totals: { coverage: 1, hitTotal: 4, fpCases: 0, fpTotal: 0, passCases: 3 },
+        }),
+      ),
+    );
+    const md = join(dir, "report.md");
+    const r = spawnReport(["--from", dir, "--md", md]);
+    expect(r.status).toBe(0);
+    expect(readFileSync(md, "utf8")).toContain("对比基准：2026-11-15T00:00:00.000Z");
+    const bad = spawnReport(["--from", dir, "--md", join(dir, "bad.md"), "--prev-report", join(dir, "missing.json")]);
+    expect(bad.status).not.toBe(0);
+    expect(bad.stderr).toContain("--prev-report");
   });
 
   test("readRunData 支持运行目录与 metrics.json 路径，缺目录返回 null", () => {
@@ -403,6 +469,35 @@ describe("run.ts 报告接入", () => {
     expect(r.stdout).toContain("门禁：失败");
     expect(existsSync(markdown)).toBe(true);
     expect(readFileSync(markdown, "utf8")).toContain("门禁：失败");
+  });
+
+  test("有 prev 时：run.ts 报告与 report CLI 重生成逐字节一致（两者默认同一份 prev）", () => {
+    const fixture = gateFixture();
+    mkdirSync(join(fixture.out, "prev"), { recursive: true });
+    writeFileSync(
+      join(fixture.out, "prev", "metrics.json"),
+      JSON.stringify(
+        metricsOf({
+          meta: { generatedAt: "2026-11-15T00:00:00.000Z" },
+          totals: { coverage: 1, hitTotal: 1, fpCases: 0, fpTotal: 0, passCases: 1 },
+        }),
+      ),
+    );
+    const md = join(fixture.out, "report.md");
+    const html = join(fixture.out, "report.html");
+    const r = spawnRun(fixture, [...baseArgs(fixture), "--report-md", md, "--report-html", html]);
+    expect(r.status).toBe(0);
+    expect(readFileSync(md, "utf8")).toContain("对比基准：2026-11-15T00:00:00.000Z");
+    const md2 = join(fixture.dir, "regen.md");
+    const html2 = join(fixture.dir, "regen.html");
+    const cli = spawnSync(
+      process.execPath,
+      ["src/report.ts", "--from", fixture.out, "--md", md2, "--html", html2],
+      { cwd: REPO_ROOT, encoding: "utf8" },
+    );
+    expect(cli.status).toBe(0);
+    expect(readFileSync(md2, "utf8")).toBe(readFileSync(md, "utf8"));
+    expect(readFileSync(html2, "utf8")).toBe(readFileSync(html, "utf8"));
   });
 
   test("报告写盘失败 → 非零退出（不吞掉本来通过的门禁）", () => {
