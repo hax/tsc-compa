@@ -86,8 +86,7 @@ detect 把当前状态与「上次套件全部通过后」记录的状态（`act
 本地模拟两种输入（改 config 文件即等价于「输入变化」）：
 
 ```bash
-# 第一次：无状态 → run=true；再跑一次：run=false；改 config 后 → run=true
-GITHUB_EVENT_NAME=schedule GITHUB_SHA=$(git rev-parse HEAD) bun scripts/detect-changes.ts --out .cache/smoke-detect
+# 第一次：无状态 → run=true；不改输入复跑同一条命令 → run=false；改 config → run=true
 GITHUB_EVENT_NAME=schedule GITHUB_SHA=$(git rev-parse HEAD) bun scripts/detect-changes.ts --out .cache/smoke-detect
 
 # 强制跑（等价于 workflow_dispatch 勾 force）；--offline 可跳过网络查询
