@@ -146,8 +146,8 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 （`file(line,col): error TSxxxx: msg`，位置 1-based），指标层不变。支持两种布局：
 
 - **strada / 6.0 线**：基线在 `tests/baselines/reference/` 下按 basename 平铺；
-- **TS7 官方 Go 布局**（pin `microsoft/TypeScript@aa814927…`，取自 reference/tsc-rs 的
-  `vendor/typescript-native/7.1.0-dev-aa814927/manifest.json`）：cases 在
+- **TS7 官方 Go 布局**（pin `microsoft/TypeScript@3e92363…`，即 npm
+  `typescript@7.1.0-beta` 的 gitHead）：cases 在
   `tsc/testdata/tests/cases/`，基线在 `tsc/testdata/baselines/reference/` 下。注意 Go
   布局内部并不统一：`compiler` 套件按用例相对目录分层（`compiler/Foo.errors.txt`），
   而 `conformance` 等套件把子目录**拍平**（`conformance/es6/Symbols/Foo.ts` →
@@ -332,7 +332,7 @@ adapter、不改它的源码；获取方式与能力差异登记在 `config/impl
 
 ```json
 {
-  "corpora": { "strada": {"repo": "microsoft/TypeScript", "ref": "b465fdbf…"},
+  "corpora": { "strada": {"repo": "microsoft/TypeScript", "ref": "050880ce…"},
                "v5.9.3": {"repo": "microsoft/TypeScript", "ref": "v5.9.3"} },
   "baselines": [
     { "id": "5.9.3", "tsc": "node_modules/typescript-5-9/bin/tsc",

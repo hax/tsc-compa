@@ -2,10 +2,15 @@
 
 日期：2026-11-15
 环境：macOS arm64 本机；Bun 1.4.4；语料为 `microsoft/TypeScript` 的 `tests/cases`
-（6.0 strada 线 `b465fdbf` 与 5.9 发布 tag `v5.9.3` 两套）；tsc 5.9.3 / 6.0.3 /
+（6.0 strada 语料与 5.9 发布 tag `v5.9.3` 两套；6.0 语料自 2026-11-16 起 pin 到
+v6.0.3 tag `050880ce`，此前是 strada 分支快照 `b465fdbf`）；tsc 5.9.3 / 6.0.3 /
 7.1.0-beta 三个版本经 npm alias 装在 `node_modules/typescript-*`。
 冒烟集为 `config/smoke-cases.json`（strada 28 例）与 `config/smoke-cases-5.9.json`
 （5.9 语料 28 例），**样本很小，以下数字都不是兼容性结论**。
+
+2026-11-16 追记：官方基线的语料 pin 已对齐 npm 包的 gitHead（6.0.3 →
+`050880ce`，TS7 官方基线 → `3e92363`），复跑对照见结论 11；结论 6/7/10 里的旧
+pin 数字保留为历史记录。
 
 ## 目的
 
@@ -22,8 +27,8 @@
 | baseline | tsc | 语料 | 冒烟集 | 基础参数 |
 | --- | --- | --- | --- | --- |
 | `5.9.3` | `typescript-5-9` | `v5.9.3` tag | `smoke-cases-5.9.json` | `--noEmit --pretty false` |
-| `6.0.3` | `typescript-6-0` | strada `b465fdbf` | `smoke-cases.json` | `--noEmit --ignoreConfig --pretty false` |
-| `7.1.0-beta` | `typescript-7-1` | strada `b465fdbf` | `smoke-cases.json` | `--noEmit --ignoreConfig --pretty false` |
+| `6.0.3` | `typescript-6-0` | strada（v6.0.3 tag `050880ce`） | `smoke-cases.json` | `--noEmit --ignoreConfig --pretty false` |
+| `7.1.0-beta` | `typescript-7-1` | strada（v6.0.3 tag `050880ce`） | `smoke-cases.json` | `--noEmit --ignoreConfig --pretty false` |
 
 5.9 的 CLI 不认 `--ignoreConfig`（报 TS5023），且用例材料写到临时目录后没有
 tsconfig 可发现，故省略该参数，口径不变。冒烟集已按分类标签排除
@@ -118,9 +123,11 @@ miss 两侧**，跨版本对照时可以直接看出「判定一致、位置口�
 | 漏报 | 4 条（TS2441×2、TS2322×1、TS4023×1） |
 | 错锚 | 0 |
 
-已知偏差：官方基线来自仓库源码快照（strada `b465fdbf`），与 npm 上发布的
-`typescript@6.0.3` 补丁不完全一致，所以「基线期望 × 同版本 npm tsc 适配器」仍有
-2 例假阳性、4 条漏报。正式口径前要么改用与基线同源的编译器，要么把这些点位登记豁免。
+已知偏差（2026-11-16 追记）：当时语料是 strada 分支快照 `b465fdbf`，与 npm 上的
+`typescript@6.0.3`（gitHead `050880ce`）不是同一提交。把 pin 对齐到 v6.0.3 tag 后
+复跑同一 191 例，结果逐项不变（结论 11）：这 2 例假阳性、4 条漏报来自 harness
+保真度缺口（UTF-16 用例、`@pretty` 基线、`--noEmit`/emit 指令），不是仓库快照与
+npm 补丁的逐条差异。
 
 ## 结论 7：TS7 官方基线（T0–T3）与 ratchet（v0）
 
@@ -129,11 +136,12 @@ miss 两侧**，跨版本对照时可以直接看出「判定一致、位置口�
 （pin 取自 reference/tsc-rs 的 `vendor/typescript-native/7.1.0-dev-aa814927/manifest.json`）。
 冒烟集 28 例（18 有错 + 10 无错，`select-smoke.ts --errors 18 --clean 10` 生成）；
 另跑 120 例错误用例做扩展样本（`config/official-baseline-cases-ts71.json`）。
+2026-11-16 起 pin 改为 npm 包的 gitHead `3e92363`，复跑数字不变（见结论 11）。
 
 | 运行 | 用例 | ≥T0 location | ≥T2 text | T3 full | messageMismatch | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
 | tsc 7.1.0-beta 自比（冒烟 28） | 28 | 28（100%） | 28 | **28** | 0 | 修正基线映射后 0 假阳性；T3 整份渲染见结论 10 |
-| tsc 7.1.0-beta 自比（错误样本 120） | 120 | 119（99.2%） | 118（98.3%） | **118** | 1 | 2 例为 npm 补丁与仓库快照漂移（见结论 10） |
+| tsc 7.1.0-beta 自比（错误样本 120） | 120 | 119（99.2%） | 118（98.3%） | **118** | 1 | 2 例归因见结论 11（与 pin 无关） |
 
 **修正记录（2026-11-15）**：本表初版里 tsc 自比只有 22/28、6 例 none，并把原因归为
 「npm 补丁与仓库快照漂移」——那是错的。根因是 `baselineFileOf` 只按「id 相对路径」
@@ -198,26 +206,110 @@ missing / extra / diagnostics / order / elaboration / related / other。
 | 运行 | 用例 | T3 full（改前 → 改后） | 未达归因 | 备注 |
 | --- | --- | --- | --- | --- |
 | tsc 7.1.0-beta 自比 | 28 | 4 → **28** | 0 | 0 假阳性 |
-| tsc 7.1.0-beta 自比（错误样本 120） | 120 | 0 → **118** | diagnostics×2 | 已知 pin 漂移：`complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound`（文案差）、`conflictingTypeParameterSymbolTransfer`（位置差） |
+| tsc 7.1.0-beta 自比（错误样本 120） | 120 | 0 → **118** | diagnostics×2 | pin 对齐后仍在（结论 11）：`complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound`（文案差）、`conflictingTypeParameterSymbolTransfer`（位置差） |
 | tsrs 0.25.0（npm） | 28 | 4 → **28** | 0 | 与 tsc 自比完全一致 |
 | tsrs 0.25.0（npm，错误样本 120） | 120 | — → **118** | diagnostics×2 | 同上两例 |
 
-口径与偏差：本地语料是 `reference/typescript` 的 b7917e5 快照，与配置 pin
-`aa814927` 不同；CI 用 pin checkout 后需复跑对照。`tsc-cli` 系适配器（含第三方
-tsc 兼容实现）只要能提供多行输出即可参与 T3；只有单行 message 的实现最多到 T2。
-T3 仍是报告档，未达不判红。
+口径与偏差：当时本地语料是 `reference/typescript` 的 b7917e5 快照，与配置 pin
+`aa814927` 不同。2026-11-16 已把 pin 对齐 npm gitHead `3e92363` 并以该 pin 复跑，
+120 例仍是 118/120（结论 11）：剩 2 例分别因未传官方 harness 固定的
+`--noErrorTruncation`（文案截断）与无冒号指令行的剥离规则不同（行号 -2），都不是
+语料版本问题。`tsc-cli` 系适配器（含第三方 tsc 兼容实现）只要能提供多行输出即可
+参与 T3；只有单行 message 的实现最多到 T2。T3 仍是报告档，未达不判红。
+
+## 结论 11：官方基线 pin 对齐 npm gitHead 后的复跑（v1，2026-11-16）
+
+背景（#7 审计）：`config/baselines.json` 的两个官方基线语料 pin 都不是 npm 包的发布
+提交——6.0.3 用 strada 分支快照 `b465fdbf`（与 v6.0.3 分叉：33 ahead / 11 behind），
+7.1.0-beta-official 用 `aa814927`（比 `typescript@7.1.0-beta` 的 gitHead `3e92363` 早
+53 个提交）；审计推测这是 6.0 官方基线「2 例假阳性 / 4 条漏报」与 TS7「2 例 T3 未达」
+的原因。本次把 pin 对齐到 npm gitHead 后复跑同一批用例：**指标逐项不变；残留项与 pin
+无关，全部可归因到 harness 保真度缺口**。
+
+pin 变更与依据：
+
+| 语料 | 旧 ref | 新 ref | 依据 |
+| --- | --- | --- | --- |
+| `strada`（6.0.3 与 7.1.0-beta 共用） | `b465fdbf…`（strada 分支快照，2026-07-28） | `050880ce…` | `node_modules/typescript-6-0/package.json.gitHead`；提交 "Bump version to 6.0.3 and LKG"，2026-04-15，即 v6.0.3 tag |
+| `ts71-official` | `aa814927…` | `3e92363…` | `node_modules/typescript-7-1/package.json.gitHead`；"Merge remote-tracking branch 'origin/main' into release-7.1"，2026-10-19；与 tsrs / ts-rust 登记的 upstreamPin 一致 |
+
+语料获取：6.0.3 从本地 `reference/typescript` 完整克隆
+`git archive 050880ce… tests/cases tests/baselines/reference` 取出；TS7 用 GitHub
+codeload 下载 `3e92363` 的源码包，只解出 `tsc/testdata/{tests/cases,baselines/reference}`。
+CI 的 workflow 不硬编码 pin，`smoke.yml` 与 `ts7-official.yml` 都从
+`config/baselines.json` 现场解析 ref（`third-party.yml` 原本如此），改配置即生效；
+两份语料里 191 例 / 120 例 manifest 的用例全部存在。新增 `test/baseline-pins.test.ts`
+断言两个官方基线语料的 ref 等于对应 npm 包的 gitHead、且 CI workflow 保持配置驱动
+（不硬编码 SHA），防止再次漂移。
+
+复跑（同机 macOS arm64、Bun 1.4.4、tsc 走 npm alias；命令按 #11 后的 CI 口径加
+`--gate`）：
+
+| 运行 | 指标 | 旧 pin | 新 pin |
+| --- | --- | --- | --- |
+| 6.0.3 官方基线 191 例 | 跑 / 跳 | 191 / 0 | 191 / 0 |
+| | 完全通过 | 187 | 187 |
+| | 假阳性 | 2 例 / 12 条 | 2 例 / 12 条 |
+| | 覆盖 | 1338/1342 = 99.7% | 1338/1342 = 99.7% |
+| | 漏报 | 4 条 | 4 条 |
+| | T3 full | 185/191 | 185/191 |
+| TS7 官方基线 120 例 | T3 full | 118/120 | 118/120 |
+| | 分档 | none=1、category=1 | none=1、category=1 |
+| | 假阳性 / 漏报 | 0 / 0 | 0 / 0 |
+| | 错锚 | 1 例 / 2 条 | 1 例 / 2 条 |
+
+**数字不变的原因**：对两批样本做逐字节哈希比对——191 例的 case 与 `.errors.txt` 在
+旧 pin（strada `b465fdbf` 检出）与新 pin（v6.0.3 tag）下都是 191/191 一致；TS7 120 例
+的 case 与基线在 `aa814927` 与 `3e92363` 下都是 120/120 一致。**该逐字节一致只覆盖这
+两批样本**：TS7 全语料在两个 pin 之间实际有差异（cases 2 改 / 145 增、baselines 19 改
+/ 469 增），只是都不在 120 例样本内。6.0 全语料层面，两个 pin 的 `tests/cases` 没有
+文件差异，只有 29 个基线文件不同：28 个是 TS1344 文案差异、1 个是 lib 补全基线
+（`completionsStringMethods.baseline`），其中 12 个带多值指令变体后缀（如
+`(alwaysstrict=true)`）；这些也都不在 191 例样本内。因此「pin 漂移解释 2 fp/4 miss /
+2 例 T3」的假设不成立。
+
+残留项逐条归因（均为 harness 与我们消费方式的差距，与 pin 无关）：
+
+| 运行 | 用例 | 现象 | 根因 |
+| --- | --- | --- | --- |
+| 6.0 | manyCompilerErrorsInTheTwoFiles | 期望 0 条、实际 11 条语法错误（11 条假阳性） | 用例带 `@pretty: true`，官方基线是 ANSI 着色格式；`parseOfficialBaselineText` 只认 `file(line,col): error TS…` 平文本，读成 0 条期望 |
+| 6.0 | promiseTest | 假阳性 TS1490、漏报 TS2322 | 用例文件是 UTF-16LE（BOM `FF FE`）；`case.ts` 按 UTF-8 读成 NUL 交错乱码，tsc 报 TS1490 "File appears to be binary" |
+| 6.0 | collisionExportsRequireAndAlias | 漏报 TS2441×2 | TS2441 用 `errorSkippedOn("noEmit")` 注册；官方 harness 正常 emit，`tsc-cli` 适配器固定传 `--noEmit`，该诊断被跳过（去掉 `--noEmit` 单跑可复现 2 条） |
+| 6.0 | declarationEmitComputedPropertyNameSymbol2 | 漏报 TS4023 | 期望来自 `@declaration` + `@emitDeclarationOnly` 的 declaration emit；这两个指令在 v0 忽略列表，适配器又固定 `--noEmit`，不会产生该诊断 |
+| 6.0 | esModuleInteropDefaultImports、parserRealSource14 | T3 未达（tier=text / category） | 续行或消息里带临时目录绝对路径（`import("/var/folders/…/mod")`、`File '/var/folders/…/typescript.ts' not found`）；目前只归一诊断首行路径 |
+| TS7 | complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound | tier=category（位置一致、首行文案差） | 适配器没传官方 harness 固定的 `--noErrorTruncation`，长类型被截成 `ChannelOfType<...>`；补上该参数后该例 T3 一致 |
+| TS7 | conflictingTypeParameterSymbolTransfer | tier=none（同码不同位，2 条错锚） | 用例第 2 行是无冒号的 `// @strict`；官方 Go harness 的指令正则要求 `@name:`，该行按普通注释留在源文本，而 tsc-compa 的解析器两种写法都剥离，源文本少 2 行，行号整体 -2（只删 `@target` 行后单跑正好复现基线的 13/29 行） |
+
+这些缺口（pretty 基线、UTF-16、`--noEmit`/emit 指令、续行路径归一、
+`--noErrorTruncation`、无冒号指令行）都可以单独修掉，但都不属于 #7 的 pin 对齐
+范围；本结论先把它们登记清楚，#7 的验收按「只剩可解释项」处理。
+
+CI 口径复核（本地按 #11 后的 workflow 命令等值跑）：
+
+- 三档自比（`--gate` 零差异）：5.9.3 / 6.0.3 / 7.1.0-beta 各 28/28，假阳性、漏报、
+  错锚全 0，门禁通过；
+- `7.1.0-beta-official` 28 例 + ratchet（T0–T2 门禁档）+ `--gate`：T3 full 28/28，
+  ratchet 无回落、无写回（#11 已把清单归一为 T0–T2，「清单停在 T3 渲染前、会写回
+  24 例 text→full」的陈旧问题由 #11 一并解决），门禁通过；
+- `6.0.3` 官方基线子集 191 例 + `--gate-max-fp 12 --gate-max-miss 4
+  --gate-min-coverage 0.99`：fp 12 条、miss 4 条、覆盖 99.7%，门禁通过——阈值正好
+  卡在实测值上，pin 对齐没有改变它们；
+- `ts7-official.yml` 尚未在 GitHub 实际 dispatch（本地按同一命令跑通），合并后需手动
+  触发一次，才算 #7 的「CI 用新 pin 跑通」验收完成；在那之前 `smoke.yml` 的
+  7.1.0-beta-official 档已覆盖同一组 28 例。
 
 ## 局限
 
 - 冒烟集每档只有 28 例、官方基线子集只抽了 191 例，指标不能外推；报「通过率」之前必须先对齐口径。
 - 官方基线只接了 plain 名子集：多值指令变体（约 1,200 例）、语法错误基线（约 1,065 例）、
   配置错误基线（约 309 例）、绝对路径 `@filename`（约 659 例）暂不可消费。
-- 官方基线来自仓库源码快照，与 npm 补丁版本存在少量逐条差异（见结论 6/7），暂未做豁免登记；
-  这一偏差要靠「同源编译器生成期望」消除。
+- 官方基线语料 pin 已对齐 npm gitHead（结论 11）；残留的假阳性/漏报/T3 未达是
+  harness 保真度缺口（UTF-16 用例、`@pretty` 基线、`--noEmit`/emit 指令、续行绝对
+  路径、`--noErrorTruncation`、无冒号指令行），不是语料版本差异，逐条归因见结论 11。
 - T3 已支持整份基线渲染（结论 10）：期望只取 `====` 前摘要块，实现侧用
   `CaseOutcome.fullText`；仍不是门禁档。
-- 7.1 的普通基线（`7.1.0-beta`）仍复用 strada 语料；官方基线走单独的
-  `ts71-official` 语料 pin。
+- 7.1 的普通基线（`7.1.0-beta`）与 6.0.3 共用 v6.0.3 tag 的 strada 语料；官方基线
+  走单独的 `ts71-official` 语料 pin。
 
 ## 复现
 
@@ -226,13 +318,18 @@ T3 仍是报告档，未达不判红。
 git clone --depth 1 --branch v5.9.3 --single-branch \
   https://github.com/microsoft/TypeScript /tmp/tsc-compa-corpus-5.9
 
-# 自比（三档）
+# 6.0.3 语料：microsoft/TypeScript@v6.0.3（npm gitHead 050880ce），cases 在 tests/cases
+git clone --depth 1 --branch v6.0.3 --single-branch \
+  https://github.com/microsoft/TypeScript /tmp/tsc-compa-corpus-6.0.3
+export TSC60_CORPUS=/tmp/tsc-compa-corpus-6.0.3
+
+# 自比（三档；按 #11 的门禁口径加 --gate）
 bun src/run.ts --baseline 5.9.3 --corpus /tmp/tsc-compa-corpus-5.9/tests/cases \
-  --adapter tsc-cli:node_modules/typescript-5-9/bin/tsc
-bun src/run.ts --baseline 6.0.3 --corpus ../reference/typescript-strada/tests/cases \
-  --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
-bun src/run.ts --baseline 7.1.0-beta --corpus ../reference/typescript-strada/tests/cases \
-  --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc
+  --adapter tsc-cli:node_modules/typescript-5-9/bin/tsc --gate
+bun src/run.ts --baseline 6.0.3 --corpus "$TSC60_CORPUS/tests/cases" \
+  --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc --gate
+bun src/run.ts --baseline 7.1.0-beta --corpus "$TSC60_CORPUS/tests/cases" \
+  --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc --gate
 
 # 5.9 期望 × 6.0.3 适配器（默认口径 → 对齐口径）
 bun src/run.ts --baseline 5.9.3 --corpus /tmp/tsc-compa-corpus-5.9/tests/cases \
@@ -241,23 +338,27 @@ bun src/run.ts --baseline 5.9.3 --corpus /tmp/tsc-compa-corpus-5.9/tests/cases \
   --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc \
   --base-arg strict=false --base-arg target=es2015
 
-# 官方基线子集（先扫描可消费清单，再跑）
-bun scripts/select-official-baseline-cases.ts --corpus "$TSC_COMPA_CORPUS" --limit 200
-bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" \
+# 官方基线子集（语料同 v6.0.3；--expectation-source 读 tests/baselines/reference 的 .errors.txt；
+# 按 #11 的 CI 门禁口径带阈值）
+bun scripts/select-official-baseline-cases.ts --corpus "$TSC60_CORPUS/tests/cases" --limit 200
+bun src/run.ts --baseline 6.0.3 --corpus "$TSC60_CORPUS/tests/cases" \
   --expectation-source official-baseline --cases config/official-baseline-cases.json \
-  --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
+  --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc \
+  --gate --gate-max-fp 12 --gate-max-miss 4 --gate-min-coverage 0.99
 
-# TS7 官方基线冒烟（T0–T3 + ratchet）
-# 语料：microsoft/TypeScript@aa814927，layout tsc/testdata/{tests/cases,baselines/reference}
+# TS7 官方基线冒烟（T0–T3 + ratchet + gate）
+# 语料：microsoft/TypeScript@3e92363（= npm typescript@7.1.0-beta gitHead），
+#       Go 布局：cases 在 tsc/testdata/tests/cases，基线在同级 baselines/reference
 bun src/run.ts --baseline 7.1.0-beta-official \
   --corpus /tmp/ts71-corpus/tsc/testdata/tests/cases \
   --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc \
   --expectation-source official-baseline --mode official \
   --cases config/smoke-cases-ts71-official.json \
-  --ratchet config/ratchet-ts71-official.tsv
+  --ratchet config/ratchet-ts71-official.tsv \
+  --gate
 
 # 锚点用例
-bun src/run.ts --baseline 6.0.3 --corpus ../reference/typescript-strada/tests/cases \
+bun src/run.ts --baseline 6.0.3 --corpus "$TSC60_CORPUS/tests/cases" \
   --cases config/anchor-cases.json --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc
 ```
 
@@ -269,8 +370,11 @@ bun src/run.ts --baseline 6.0.3 --corpus ../reference/typescript-strada/tests/ca
 - [x] 官方基线 v0 子集接入（结论 6）；
 - [x] TS7 官方 Go 布局基线（缺基线=无错）、T0–T3 分档与 ratchet（结论 7）；
 - [x] T3 整份基线渲染（elaboration/related/顺序；结论 10）；
+- [x] 官方基线语料 pin 对齐 npm gitHead 并复跑对照（结论 11）；
+- [ ] 修 harness 保真度缺口：pretty 基线、UTF-16 用例、`--noEmit`/emit 指令、续行
+  路径归一、`--noErrorTruncation`、无冒号指令行（结论 11 的残留项归因）；
 - [ ] 多值指令变体基线与官方配置命名（扩大官方基线覆盖面）；
-- [ ] 与基线同源的编译器构建，消除「仓库快照 vs npm 补丁」偏差；
+- [ ] 与基线同源的编译器构建（pin 对齐已先行，见结论 11）；
 - 扩大样本（按码族/目录分层抽样）并接到公开仓 workflow 矩阵；
 - 基于这批数据回答「是否长期保留 5.9 基线」：目前看 5.9 与 6.0/7.1 的差异
   主要是默认值漂移 + 少量模块上下文差异，保留 5.9 的成本主要是语料与期望
