@@ -136,9 +136,9 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 
 与上面「接收二进制」的流程独立，手动触发，直接消费 TS7 官方仓库的 errors 基线：
 
-- 语料 pin：`config/baselines.json` 的 `ts71-official` corpus（当前 `aa814927`；pin 对齐
-  #7 后自动跟随，workflow 现场解析 ref）。Go 布局：cases 在 `tsc/testdata/tests/cases`，
-  基线在 `tsc/testdata/baselines/reference`；
+- 语料 pin：`config/baselines.json` 的 `ts71-official` corpus（当前 `3e92363`，= npm
+  `typescript@7.1.0-beta` 的 gitHead；workflow 现场解析 ref，不硬编码）。Go 布局：cases 在
+  `tsc/testdata/tests/cases`，基线在 `tsc/testdata/baselines/reference`；
 - 期望源：`--expectation-source official-baseline`（缺基线 = 该用例无期望错误）；
 - 分档：`metrics.totals.byTier` 给 T0 location / T1 category / T2 text / T3 full
   的用例分布，`totals.messageMismatch` 给「位置命中但首行文案不同」的诊断条数；

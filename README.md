@@ -97,9 +97,14 @@ default manifest and the base CLI args (e.g. 5.9 does not accept
 | baseline | tsc | corpus | default manifest |
 | --- | --- | --- | --- |
 | `5.9.3` | `typescript-5-9` | `v5.9.3` tag | `config/smoke-cases-5.9.json` |
-| `6.0.3` | `typescript-6-0` | strada `b465fdbf` | `config/smoke-cases.json` |
-| `7.1.0-beta` | `typescript-7-1` | strada `b465fdbf` | `config/smoke-cases.json` |
-| `7.1.0-beta-official` | `typescript-7-1` | TS7 Go pin `aa814927` | `config/smoke-cases-ts71-official.json` |
+| `6.0.3` | `typescript-6-0` | strada, v6.0.3 tag `050880ce` | `config/smoke-cases.json` |
+| `7.1.0-beta` | `typescript-7-1` | strada, v6.0.3 tag `050880ce` | `config/smoke-cases.json` |
+| `7.1.0-beta-official` | `typescript-7-1` | TS7 Go pin `3e92363` | `config/smoke-cases-ts71-official.json` |
+
+Both official-baseline corpus pins equal the `gitHead` of the corresponding npm
+package (`typescript@6.0.3` / `typescript@7.1.0-beta`); `test/baseline-pins.test.ts`
+guards the alignment, and the CI workflows resolve corpus refs from
+`config/baselines.json` instead of hardcoding SHAs.
 
 Each baseline's `baseArgs` explicitly encode the **official harness defaults**
 (see `docs/DESIGN.md` section 3.3): 5.9 -> target ES5 / module CommonJS /
@@ -150,7 +155,7 @@ The suite matrix (only executed when detection says "run"):
 | --- | --- | --- |
 | self-compare × `5.9.3` / `6.0.3` / `7.1.0-beta` | pinned tsc | `--gate` zero-diff self-check: no false positives, misses or mis-anchors |
 | `7.1.0-beta-official` 28 cases | TS7 official `.errors.txt` | per-case ratchet (`config/ratchet-ts71-official.tsv`): any tier drop fails |
-| `6.0.3` official-baseline subset (191 cases) | strada `.errors.txt` | tolerates the known npm-patch vs repo-snapshot drift (12 fp diagnostics / 4 misses) with `--gate-max-fp 12 --gate-max-miss 4 --gate-min-coverage 0.99` |
+| `6.0.3` official-baseline subset (191 cases) | strada `.errors.txt` | tolerates the known harness-fidelity drift (12 fp diagnostics / 4 misses; see `docs/RESULTS.md` conclusion 11) with `--gate-max-fp 12 --gate-max-miss 4 --gate-min-coverage 0.99` |
 
 `--gate` fails the run (non-zero exit; per-item results are printed and stored in
 `metrics.meta.gate.checks`) unless all of these hold:

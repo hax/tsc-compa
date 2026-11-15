@@ -2,7 +2,7 @@
 # 跑 T0–T3 一致性分档并用 ratchet 清单门禁。
 #
 # 语料：microsoft/TypeScript（TS7 Go 布局），ref 从 config/baselines.json 的
-# ts71-official corpus 现场解析（当前 aa814927；pin 对齐 #7 后自动跟随）。
+# ts71-official corpus 现场解析（当前 3e92363，= npm typescript@7.1.0-beta 的 gitHead）。
 # cases 在 tsc/testdata/tests/cases，基线在 tsc/testdata/baselines/reference。
 #
 # 只手动触发；不跑全量（全量留给后续批量/分片设施）。--gate 与 smoke.yml 的
