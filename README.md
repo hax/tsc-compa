@@ -34,8 +34,8 @@ runs unit tests plus gate-enabled smoke on every push/PR, and a daily *change
 detector* re-runs the suites only when inputs (config/lockfile hash, repository
 head, external pins) changed: `--gate` turns false positives / misses / mis-anchors
 / ratchet regressions into a non-zero exit code (T0–T2 are gated; T3 is
-report-only), and a manually triggered workflow runs the TS7 official-baseline
-smoke.
+report-only), each CI entry publishes Markdown/HTML reports merged into the run
+summary, and a manually triggered workflow runs the TS7 official-baseline smoke.
 
 Design: [docs/DESIGN.md](docs/DESIGN.md). Self-compare and cross-version numbers
 (including the default-option drift between tsc versions):
@@ -123,6 +123,45 @@ bun src/run.ts --baseline 5.9.3 --corpus /path/to/v5.9.3/tests/cases --adapter t
 See [docs/RESULTS.md](docs/RESULTS.md) for what changes between baselines and why
 these pins matter.
 
+## Reports
+
+Every run can emit a human-readable report from the same `metrics.json` / `details.json`
+it already writes; the suite is not re-run:
+
+```bash
+# Markdown + self-contained HTML (default filenames report.md / report.html)
+bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" \
+  --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc \
+  --report-out .cache/run/report
+
+# explicit paths, plus a delta against the previous run (metrics.json or its output dir)
+bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" \
+  --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc \
+  --report-md report/report.md --report-html report/report.html \
+  --prev-report .cache/previous/metrics.json
+
+# regenerate a report afterwards from an existing output directory
+bun src/report.ts --from .cache/run --md .cache/run/report.md --html .cache/run/report.html
+```
+
+The Markdown report has the run header (time, corpus/tsc pin, implementation display name
+and binary sha256, baseline/mode), summary cards (coverage, false positives, misses,
+mis-anchors, skips, fully-passing cases), the T0–T3 ladder, the `--gate` conclusion when
+gated, the delta against the previous run (`--prev-report`; without it, a report at
+`<out>/prev/metrics.json` is used when present) and failure/regression callouts. The HTML
+report carries the same content with inline CSS and an inline SVG ladder — no external
+resources — and is deterministic (same inputs, same bytes), so it can be cached or
+diffed. Report rendering/writing failures exit non-zero: a broken report never turns a
+failed run green.
+
+In CI, every `smoke.yml` matrix entry writes `report.md` / `report.html` and uploads them
+as artifact `report-<entry>` (also when the gate fails or the run crashed before writing
+metrics — then a failure placeholder report is generated). The `report` job merges all
+entries into one summary on the run's **Summary** page and uploads one `report-summary`
+artifact; download it and open `report/index.html` to browse each entry's HTML report.
+PR comments are intentionally not posted: the workflow token is read-only
+(`contents: read`), so the step summary plus artifacts are the published surface.
+
 ## CI and compatibility gate
 
 `.github/workflows/smoke.yml` runs on every push / PR, where the matrix below is the
@@ -180,9 +219,9 @@ report-only** — T3 misses are recorded in `totals.byTier` / `totals.t3Failures
 never fail the gate.
 
 For branch protection, make the stable aggregate job **`compat-gate`** the required
-status check (it aggregates `detect` / `unit` / `smoke`: a "no changes, skip" run
-passes, a failed suite or failed detection fails). Required checks are a repository
-setting, not something the workflow file can express. The `ts7-official.yml` workflow is
+status check (it aggregates `detect` / `unit` / `smoke` / `report`: a "no changes, skip"
+run passes, while a failed suite, a failed detection or a failed report job fails).
+Required checks are a repository setting, not something the workflow file can express. The `ts7-official.yml` workflow is
 still manual: it has `--gate` too, but has not run on GitHub Actions yet — dispatch
 it once green before adding a separate cron for it (the change-driven `smoke.yml`
 schedule re-runs the same 28 official-baseline cases whenever an input changes).
@@ -257,6 +296,7 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `src/compare.ts` | matching (incl. mis-anchor pairing), T0-T3 agreement ladder (T3 compares the `.errors.txt` summary block before `====`, with per-case failure reason) and metrics |
 | `src/ratchet.ts` | `--ratchet` / `--ratchet-impl` lists: only go up, regression fails the run (per implementation × baseline) |
 | `src/gate.ts` | `--gate`: ratchet / false-positive / miss / mis-anchor / coverage checks and the gate summary |
+| `src/report.ts` | human-readable report: Markdown + self-contained HTML from a run's metrics/details (`run.ts --report-md/--report-html/--report-out`; standalone `bun src/report.ts --from <out>` with a failure placeholder when metrics are missing) |
 | `src/run.ts` | smoke runner entry |
 | `src/adapters/` | reference `tsc-cli` adapter (keeps multi-line elaboration/related text for T3), `checker-cli` per-case checker adapter, generic `cli:<bin>` adapter, batch protocol client, mock batch implementation |
 | `config/baselines.json` | baseline definitions (three tsc versions × two corpora) |
@@ -271,7 +311,8 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `scripts/select-official-baseline-cases.ts` | scan a corpus for cases consumable from official baselines |
 | `scripts/install-impl.ts` | fetch a third-party implementation per its registry entry |
 | `scripts/detect-changes.ts` | daily-cron change detection: local input hash, repository head, external pin drift → run suites or "no changes, skip" |
-| `.github/workflows/smoke.yml` | CI gate: unit tests + self-compare `--gate` smoke + official-baseline gate entries on push/PR; daily cron only detects changes first |
+| `scripts/merge-reports.ts` | merge the per-entry CI reports into one step summary (Markdown) and an HTML index |
+| `.github/workflows/smoke.yml` | CI gate: unit tests + self-compare `--gate` smoke + official-baseline gate entries on push/PR; per-entry reports + merged step summary/artifact; daily cron only detects changes first |
 | `.github/workflows/ts7-official.yml` | manual CI: TS7 official-baseline smoke (T0–T3 + ratchet + `--gate`) |
 | `.github/workflows/third-party.yml` | manual CI: third-party implementation × baseline smoke |
 | `docs/RESULTS.md` | self-compare, default drift and cross-version numbers |
