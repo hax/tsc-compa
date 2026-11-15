@@ -30,10 +30,12 @@ layout (`tsc/testdata/...`) the suite consumes the official `.errors.txt`
 baselines directly, grades every case on the T0–T3 agreement ladder
 (location → category → text → whole-baseline-bytes) and maintains a
 `--ratchet` list that only goes up (per implementation × baseline). GitHub Actions
-runs unit tests plus gate-enabled smoke on every push/PR and once a day:
-`--gate` turns false positives / misses / mis-anchors / ratchet regressions into
-a non-zero exit code (T0–T2 are gated; T3 is report-only), and a manually
-triggered workflow runs the TS7 official-baseline smoke.
+runs unit tests plus gate-enabled smoke on every push/PR, and a daily *change
+detector* re-runs the suites only when inputs (config/lockfile hash, repository
+head, external pins) changed: `--gate` turns false positives / misses / mis-anchors
+/ ratchet regressions into a non-zero exit code (T0–T2 are gated; T3 is
+report-only), and a manually triggered workflow runs the TS7 official-baseline
+smoke.
 
 Design: [docs/DESIGN.md](docs/DESIGN.md). Self-compare and cross-version numbers
 (including the default-option drift between tsc versions):
@@ -118,9 +120,31 @@ these pins matter.
 
 ## CI and compatibility gate
 
-`.github/workflows/smoke.yml` runs on every push / pull request and once a day
-(cron `23 19 * * *`, i.e. 19:23 UTC / 03:23 Beijing time, off the hour). Its matrix
-is the compatibility gate:
+`.github/workflows/smoke.yml` runs on every push / PR, where the matrix below is the
+compatibility gate, and once a day on a schedule (`cron 23 19 * * *`, i.e. 19:23 UTC
+/ 03:23 Beijing time, off the hour). **The daily schedule is change-driven, not a
+daily full run**: it only runs a `detect` job (~30 s), and the suites run only when
+the detection reports a change. Suites never run when nothing changed; the run
+concludes green with a "no changes, skip" summary.
+
+Detection (`scripts/detect-changes.ts`) compares the current state against the state
+recorded after the last **successful** suite run (stored with `actions/cache`):
+
+| signal | how | queryable? |
+| --- | --- | --- |
+| local inputs | SHA-256 of `config/**` (baselines/corpora/manifests/implementations/ratchet) + `package.json` + `bun.lock` | always |
+| repository HEAD | current `github.sha` vs the head recorded after the last successful run | always |
+| npm pins | `dist.integrity` of each exact pinned version (tsc aliases + `implementations.json` npm versions) from the npm registry | needs network; unavailable → treated as unchanged |
+| corpus pins | each `config/baselines.json` `corpora.*.ref` resolved through the GitHub API (a moved tag changes the commit) | needs network/GitHub API; unavailable → treated as unchanged |
+| third-party cargo git pins | the pinned commit still exists on GitHub (`tsc-rs`, `tsz`); non-GitHub URLs are reported as not comparable | needs network/GitHub API; unavailable → treated as unchanged |
+| upstream default-branch heads | reported only, never a trigger (pins are fixed, so the inputs do not change) | informational |
+
+On the scheduled/manual events a first run with no cached state counts as a change.
+`workflow_dispatch` runs also go through detection by default; set the `force` input
+to skip detection and always run the suites. Only a run where all suites pass updates
+the stored state, so a failure is retried by the next detection until it goes green.
+
+The suite matrix (only executed when detection says "run"):
 
 | entry | expectation source | gate |
 | --- | --- | --- |
@@ -150,8 +174,8 @@ T3 misses are recorded in `totals.t3Failures` but do not fail the gate.
 Making the jobs *required* for merging is a repository setting (branch protection),
 not something the workflow file can express. The `ts7-official.yml` workflow is
 still manual: it has `--gate` too, but has not run on GitHub Actions yet — dispatch
-it once green before adding a separate cron for it (the daily `smoke.yml` schedule
-already covers the same 28 official-baseline cases).
+it once green before adding a separate cron for it (the change-driven `smoke.yml`
+schedule re-runs the same 28 official-baseline cases whenever an input changes).
 
 ## Case classification
 
@@ -236,7 +260,8 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `scripts/select-smoke.ts` | regenerate class-filtered smoke case lists |
 | `scripts/select-official-baseline-cases.ts` | scan a corpus for cases consumable from official baselines |
 | `scripts/install-impl.ts` | fetch a third-party implementation per its registry entry |
-| `.github/workflows/smoke.yml` | CI gate: unit tests + self-compare `--gate` smoke + official-baseline gate entries, on push/PR and daily schedule |
+| `scripts/detect-changes.ts` | daily-cron change detection: local input hash, repository head, external pin drift → run suites or "no changes, skip" |
+| `.github/workflows/smoke.yml` | CI gate: unit tests + self-compare `--gate` smoke + official-baseline gate entries on push/PR; daily cron only detects changes first |
 | `.github/workflows/ts7-official.yml` | manual CI: TS7 official-baseline smoke (T0–T3 + ratchet + `--gate`) |
 | `.github/workflows/third-party.yml` | manual CI: third-party implementation × baseline smoke |
 | `docs/RESULTS.md` | self-compare, default drift and cross-version numbers |

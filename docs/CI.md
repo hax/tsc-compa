@@ -28,8 +28,10 @@
 
 ## CI 兼容性门禁（`smoke.yml`）
 
-`smoke.yml` 在每次 push / PR 上跑「单元测试 + 门禁式冒烟」，并每天定时跑一次
-（cron `23 19 * * *`，UTC 19:23 / 北京时间 03:23，避开整点）。冒烟矩阵五档：
+`smoke.yml` 在每次 push / PR 上跑「单元测试 + 门禁式冒烟」（每次提交都要有兼容性结论）。
+每日 cron（`23 19 * * *`，UTC 19:23 / 北京时间 03:23，避开整点）是**变化驱动**的：
+先只跑 `detect` job（约半分钟），输入没变就输出「no changes, skip」并结束、不跑套件；
+有变化才跑下面的矩阵。冒烟矩阵五档：
 
 | 档位 | 基线 | 语料 | 期望源 | 门禁口径 |
 | --- | --- | --- | --- | --- |
@@ -53,6 +55,41 @@
 **门禁档位**：T0 location / T1 category / T2 text 经 ratchet 清单按用例兜底；
 **T3 full（整份 `.errors.txt` 摘要块字节相等）仍是报告档**——未达只进
 `totals.t3Failures` 与 `samples.t3`，不判红。
+
+### 每日 cron 的变化检测（`scripts/detect-changes.ts`）
+
+detect 把当前状态与「上次套件全部通过后」记录的状态（`actions/cache` 里的
+`state.json`）比较，任一变化即跑套件：
+
+| 检测项 | 怎么查 | 可查性 |
+| --- | --- | --- |
+| 本地输入 | `config/**`（baselines / corpora / manifest / implementations / ratchet）+ `package.json` + `bun.lock` 的内容 SHA-256 | 总能查 |
+| 仓库 HEAD | 当前 `github.sha` vs 上次成功后记录的 headSha | 总能查 |
+| npm pin | package.json 的 npm alias 与 implementations.json 的 npm 版本，查 registry 精确版本的 `dist.integrity`（重发布/撤包会变） | 需网络；查不到记 unavailable、按未变化处理 |
+| 语料 pin | `config/baselines.json` 的 `corpora.*.ref` 经 GitHub API 解析成 commit sha（tag 被移动会变） | 需网络 / GitHub API；查不到记 unavailable |
+| 第三方实现 cargo git pin | `tsc-rs` / `tsz` 的 pin commit 是否仍存在；非 GitHub 地址列为「不可比对」 | 需网络 / GitHub API；查不到记 unavailable |
+| 上游默认分支 HEAD | 只写进 summary 报告，不触发（pin 固定，被测输入没变） | 信息项 |
+
+补充约定：
+
+- 首次运行 / 缓存缺失视为有变化；只有套件**全部通过**后 record job 才更新状态，
+  失败的输入下次会被重新判为有变化并重跑（不会把失败输入记成「已跑过」）；
+- push / PR 不走变化判定（门禁每次都要结论）；`workflow_dispatch` 默认同样先检测，
+  勾 `force` 输入可跳过检测强制跑；
+- 缓存按分支隔离：push / 手动 dispatch 的套件全部通过后保存状态（pull_request 不保存）；
+  每日 cron 在默认分支只读得到默认分支保存的状态。7 天未使用的 cache 会被 GitHub
+  清理，清理后下一次视为首次运行（多跑一次，不影响正确性）。
+
+本地模拟两种输入（改 config 文件即等价于「输入变化」）：
+
+```bash
+# 第一次：无状态 → run=true；再跑一次：run=false；改 config 后 → run=true
+GITHUB_EVENT_NAME=schedule GITHUB_SHA=$(git rev-parse HEAD) bun scripts/detect-changes.ts --out .cache/smoke-detect
+GITHUB_EVENT_NAME=schedule GITHUB_SHA=$(git rev-parse HEAD) bun scripts/detect-changes.ts --out .cache/smoke-detect
+
+# 强制跑（等价于 workflow_dispatch 勾 force）；--offline 可跳过网络查询
+GITHUB_EVENT_NAME=schedule GITHUB_SHA=$(git rev-parse HEAD) bun scripts/detect-changes.ts --out .cache/smoke-detect --force
+```
 
 要把门禁真正用于「阻断合并」，需在仓库设置里把 `unit` / `smoke` job 设为 required
 status checks（分支保护是仓库设置，不在 workflow 文件里）。
@@ -88,6 +125,7 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 
 - 只跑冒烟集（28 例）；全量 12k 用例走批量协议（`checker-batch`，见 `src/adapters/batch.ts`），复用本 workflow。
 - 门禁目前只接 `smoke.yml`（自比 + 官方基线子集）：`native-suite.yml` / `third-party.yml` 仍是手动触发、跑成功即记录指标；third-party 的官方基线档配了 ratchet（回落会非零退出），但没有叠加 `--gate` 的条数/覆盖率阈值。
+- 每日 cron 的变化检测只覆盖上表列出的输入：范围版本、非 GitHub 获取源、无网络/API 限流时按「未变化」处理；上游发了新版本但 pin 未改不会触发重跑（需要人工改 pin，走推送门禁）。无变化时当天不产出新的兼容性指标，历史指标以最近一次运行为准。
 - 目前只接 linux-x64；其它平台在实现侧加构建矩阵即可，本 workflow 不区分平台。
 
 ## TS7 官方基线冒烟（`ts7-official.yml`）
@@ -103,7 +141,7 @@ bun src/run.ts --baseline 7.1.0-beta-official \
   （CI 里清单已入库，正常不应产生写回；若 artifact 显示有改善，维护者审阅后提交）；workflow 里用显式
   `--ratchet config/ratchet-ts71-official.tsv` + `--gate`（与 `smoke.yml` 的 28 例档同口径，T3 不判红）。
 - **尚未在 GitHub Actions 上实际跑过**：先手动 dispatch 跑绿一次，再决定是否给它单独挂 cron；
-  在那之前，`smoke.yml` 的每日 schedule 已覆盖同一组 28 例官方基线冒烟。
+  在那之前，`smoke.yml` 的每日变化检测在判「有变化」时会覆盖同一组 28 例官方基线冒烟。
 
 ## 第三方实现冒烟（`third-party.yml`）
 

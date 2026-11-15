@@ -14,8 +14,8 @@ tsc-compa 是一个**与实现无关**的 TSC 兼容性测试套件：输入是�
 
 v0 把协议、口径、指标固化下来并用小规模 smoke 集跑通全链路；当前版本加入
 用例分类、多 tsc 基线（5.9.3 / 6.0.3 / 7.1.0-beta）、错锚口径、官方基线期望源
-与 CI 门禁（`--gate`，§4.3）。门禁已接 `smoke.yml` 的 push/PR 与每日定时；
-全量运行仍未做，见 §10。
+与 CI 门禁（`--gate`，§4.3）。门禁已接 `smoke.yml` 的 push/PR；每日 cron 是变化驱动的
+（先跑 `scripts/detect-changes.ts` 判断输入是否变化，未变则跳过套件），全量运行仍未做，见 §10。
 
 ## 2. 流水线
 
@@ -204,8 +204,8 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 显式路径不存在时默认报错，需要首次创建时加 `--ratchet-init`。清单入库，CI 按实现分别传入。
 
 **CI 门禁（`--gate`）**：把一次运行折算成通过/失败，失败时退出码非零，逐项结论
-同时打印到 stdout 并写入 `metrics.meta.gate`（`smoke.yml` 每次 push/PR 与每日定时
-都带它跑，见 docs/CI.md）。检查项：
+同时打印到 stdout 并写入 `metrics.meta.gate`（`smoke.yml` 的 push/PR，以及每日 cron
+在 detect 判「有变化」时才带它跑，见 docs/CI.md）。检查项：
 
 - 口径：本次运行必须是兼容性结论（`--mode official` 且适配器接受外部选项）；
 - 执行：至少跑完一个用例；
@@ -382,6 +382,7 @@ src/run.ts             运行器入口
 src/adapters/          tsc-cli / checker-cli / cli / batch / mock-batch / 工厂
 scripts/select-smoke.ts  生成冒烟 manifest
 scripts/select-official-baseline-cases.ts  生成官方基线可消费清单
+scripts/detect-changes.ts  CI 每日 cron 的变化检测（本地输入哈希 / HEAD / 外部 pin）
 config/baselines.json    基线配置（三个 tsc × 两套语料）
 config/smoke-cases.json  strada 冒烟用例集（入库、可复现）
 config/smoke-cases-5.9.json  5.9 语料冒烟集
@@ -404,7 +405,7 @@ test/                  单测（bun test）
 - [ ] 同源编译器生成期望（消除 npm 补丁版本与仓库基线的偏差）；
 - [ ] 官方基线多值指令变体与配置命名复刻；
 - [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
-- [x] 基线守门 `--gate`（§4.3：ratchet + 条数/覆盖率阈值，已接 `smoke.yml` 的 push/PR 与每日 schedule）；`--update-baseline` 未做，更新由 ratchet 改善写回承担；
+- [x] 基线守门 `--gate`（§4.3：ratchet + 条数/覆盖率阈值，已接 `smoke.yml` 的 push/PR；每日 cron 先经 `scripts/detect-changes.ts` 判变化，未变跳过）；`--update-baseline` 未做，更新由 ratchet 改善写回承担；
 - [ ] 更大规模的用例选择策略（按码族/目录分层抽样，避免只覆盖编译器用例）；
 - [ ] 并行执行与结果合并（shard / merge）；
 - [ ] L2/L3 判定粒度（宽度、消息文案）；
