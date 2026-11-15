@@ -29,9 +29,13 @@ anchors and per-class breakdowns. For the official TypeScript 7 repository
 layout (`tsc/testdata/...`) the suite consumes the official `.errors.txt`
 baselines directly, grades every case on the T0–T3 agreement ladder
 (location → category → text → whole-baseline-bytes) and maintains a
-`--ratchet` list that only goes up (per implementation × baseline). A GitHub Actions workflow runs unit tests
-plus a self-compare smoke for every baseline on push/PR, and a manually
-triggered workflow runs the TS7 official-baseline smoke.
+`--ratchet` list that only goes up (per implementation × baseline). GitHub Actions
+runs unit tests plus gate-enabled smoke on every push/PR, and a daily *change
+detector* re-runs the suites only when inputs (config/lockfile hash, repository
+head, external pins) changed: `--gate` turns false positives / misses / mis-anchors
+/ ratchet regressions into a non-zero exit code (T0–T2 are gated; T3 is
+report-only), and a manually triggered workflow runs the TS7 official-baseline
+smoke.
 
 Design: [docs/DESIGN.md](docs/DESIGN.md). Self-compare and cross-version numbers
 (including the default-option drift between tsc versions):
@@ -114,6 +118,70 @@ bun src/run.ts --baseline 5.9.3 --corpus /path/to/v5.9.3/tests/cases --adapter t
 See [docs/RESULTS.md](docs/RESULTS.md) for what changes between baselines and why
 these pins matter.
 
+## CI and compatibility gate
+
+`.github/workflows/smoke.yml` runs on every push / PR, where the matrix below is the
+compatibility gate, and once a day on a schedule (`cron 23 19 * * *`, i.e. 19:23 UTC
+/ 03:23 Beijing time, off the hour). **The daily schedule is change-driven, not a
+daily full run**: it only runs a `detect` job (~30 s), and the suites run only when
+the detection reports a change. Suites never run when nothing changed; the run
+concludes green with a "no changes, skip" summary.
+
+Detection (`scripts/detect-changes.ts`) compares the current state against the state
+recorded after the last **successful** suite run (stored with `actions/cache`):
+
+| signal | how | queryable? |
+| --- | --- | --- |
+| local inputs | SHA-256 of `config/**` (baselines/corpora/manifests/implementations/ratchet) + `package.json` + `bun.lock` | always |
+| repository HEAD | current `github.sha` vs the head recorded after the last successful run | always |
+| npm pins | `dist.integrity` of each exact pinned version (tsc aliases + `implementations.json` npm versions) from the npm registry | needs network; unavailable → treated as unchanged |
+| corpus pins | each `config/baselines.json` `corpora.*.ref` resolved through the GitHub API (a moved tag changes the commit) | needs network/GitHub API; unavailable → treated as unchanged |
+| third-party cargo git pins | the pinned commit still exists on GitHub (`tsc-rs`, `tsz`); non-GitHub URLs are reported as not comparable | needs network/GitHub API; unavailable → treated as unchanged |
+| upstream default-branch heads | reported only, never a trigger (pins are fixed, so the inputs do not change) | informational |
+
+On the scheduled/manual events a first run with no cached state counts as a change.
+`workflow_dispatch` runs also go through detection by default; set the `force` input
+to skip detection and always run the suites. Only a run where all suites pass updates
+the stored state, so a failure is retried by the next detection until it goes green.
+
+The suite matrix (only executed when detection says "run"):
+
+| entry | expectation source | gate |
+| --- | --- | --- |
+| self-compare × `5.9.3` / `6.0.3` / `7.1.0-beta` | pinned tsc | `--gate` zero-diff self-check: no false positives, misses or mis-anchors |
+| `7.1.0-beta-official` 28 cases | TS7 official `.errors.txt` | per-case ratchet (`config/ratchet-ts71-official.tsv`): any tier drop fails |
+| `6.0.3` official-baseline subset (191 cases) | strada `.errors.txt` | tolerates the known npm-patch vs repo-snapshot drift (12 fp diagnostics / 4 misses) with `--gate-max-fp 12 --gate-max-miss 4 --gate-min-coverage 0.99` |
+
+`--gate` fails the run (non-zero exit; per-item results are printed and stored in
+`metrics.meta.gate.checks`) unless all of these hold:
+
+1. the run is a real compatibility verdict (`--mode official` and an adapter that
+   accepts external options — a `--mode fixed` run is rejected instead of passing);
+2. at least one case ran;
+3. no ratchet regression on gate tiers T0–T2, and the list must be non-empty and
+   already committed (gate mode does not auto-initialize and does not write
+   improvements back; an empty list is rejected instead of passing);
+4. false positives / misses / mis-anchors within `--gate-max-fp` / `--gate-max-miss`
+   / `--gate-max-misanchor`, and coverage at least `--gate-min-coverage`.
+
+Without a ratchet list the three count limits default to 0 (self-check); with one
+they default to unlimited, leaving per-case strictness to the list, and explicit
+limits can still be added.
+
+**Gate tiers**: only T0 location / T1 category / T2 text are gated, per case through
+the ratchet list (ratchet files store `location|category|text`; a legacy `full` entry
+is normalized to `text` on read). **T3 full (the whole `.errors.txt` summary block) is
+report-only** — T3 misses are recorded in `totals.byTier` / `totals.t3Failures` but
+never fail the gate.
+
+For branch protection, make the stable aggregate job **`compat-gate`** the required
+status check (it aggregates `detect` / `unit` / `smoke`: a "no changes, skip" run
+passes, a failed suite or failed detection fails). Required checks are a repository
+setting, not something the workflow file can express. The `ts7-official.yml` workflow is
+still manual: it has `--gate` too, but has not run on GitHub Actions yet — dispatch
+it once green before adding a separate cron for it (the change-driven `smoke.yml`
+schedule re-runs the same 28 official-baseline cases whenever an input changes).
+
 ## Case classification
 
 Every case is tagged (orthogonally) by `src/classify.ts` — e.g. `suite:compiler`,
@@ -183,6 +251,7 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `src/officialBaseline.ts` | expectation source reading official `.errors.txt` baselines (strada flat layout + TS7 Go layout incl. flattened suites; missing baseline = no errors) |
 | `src/compare.ts` | matching (incl. mis-anchor pairing), T0-T3 agreement ladder (T3 compares the `.errors.txt` summary block before `====`, with per-case failure reason) and metrics |
 | `src/ratchet.ts` | `--ratchet` / `--ratchet-impl` lists: only go up, regression fails the run (per implementation × baseline) |
+| `src/gate.ts` | `--gate`: ratchet / false-positive / miss / mis-anchor / coverage checks and the gate summary |
 | `src/run.ts` | smoke runner entry |
 | `src/adapters/` | reference `tsc-cli` adapter (keeps multi-line elaboration/related text for T3), `checker-cli` per-case checker adapter, generic `cli:<bin>` adapter, batch protocol client, mock batch implementation |
 | `config/baselines.json` | baseline definitions (three tsc versions × two corpora) |
@@ -192,12 +261,13 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `config/official-baseline-cases.json` | sample case list consumable from official baselines |
 | `config/smoke-cases-ts71-official.json` | TS7 official-baseline smoke list (18 error cases + 10 clean) |
 | `config/official-baseline-cases-ts71.json` | 120 error-bearing TS7 cases (extended local sample) |
-| `config/ratchet/` | per-implementation T0–T3 ratchet lists (`<impl>-<baseline>.tsv`); `config/ratchet-ts71-official.tsv` is the legacy shared list |
+| `config/ratchet/` | per-implementation T0–T2 gate ratchet lists (`<impl>-<baseline>.tsv`; T3 full is report-only and normalized to text); `config/ratchet-ts71-official.tsv` is the legacy shared list |
 | `scripts/select-smoke.ts` | regenerate class-filtered smoke case lists |
 | `scripts/select-official-baseline-cases.ts` | scan a corpus for cases consumable from official baselines |
 | `scripts/install-impl.ts` | fetch a third-party implementation per its registry entry |
-| `.github/workflows/smoke.yml` | CI: unit tests + self-compare smoke matrix |
-| `.github/workflows/ts7-official.yml` | manual CI: TS7 official-baseline smoke (T0–T3 + ratchet) |
+| `scripts/detect-changes.ts` | daily-cron change detection: local input hash, repository head, external pin drift → run suites or "no changes, skip" |
+| `.github/workflows/smoke.yml` | CI gate: unit tests + self-compare `--gate` smoke + official-baseline gate entries on push/PR; daily cron only detects changes first |
+| `.github/workflows/ts7-official.yml` | manual CI: TS7 official-baseline smoke (T0–T3 + ratchet + `--gate`) |
 | `.github/workflows/third-party.yml` | manual CI: third-party implementation × baseline smoke |
 | `docs/RESULTS.md` | self-compare, default drift and cross-version numbers |
 | `src/perf.ts` | optional performance appendix: fixed sample × official tsc reference ratio |

@@ -13,8 +13,9 @@ tsc-compa 是一个**与实现无关**的 TSC 兼容性测试套件：输入是�
 6.0.3 / 7.1.0-beta，规划中）、语料来源（官方 `tests/cases`，后续可对接官方基线）。
 
 v0 把协议、口径、指标固化下来并用小规模 smoke 集跑通全链路；当前版本加入
-用例分类、多 tsc 基线（5.9.3 / 6.0.3 / 7.1.0-beta）与错锚口径。门禁、全量
-运行与官方基线仍未做，见 §10。
+用例分类、多 tsc 基线（5.9.3 / 6.0.3 / 7.1.0-beta）、错锚口径、官方基线期望源
+与 CI 门禁（`--gate`，§4.3）。门禁已接 `smoke.yml` 的 push/PR；每日 cron 是变化驱动的
+（先跑 `scripts/detect-changes.ts` 判断输入是否变化，未变则跳过套件），全量运行仍未做，见 §10。
 
 ## 2. 流水线
 
@@ -195,12 +196,32 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 （related information 不同）/`other`；`samples.t3` 给样例。T3 是报告档不是门禁档。
 
 `--ratchet <file>` 维护 TSV 清单（`<case id>\t<tier>`，只登记 ≥T0 的用例）：
-改善自动写回、回落退出非零、先前登记的用例变成 SKIP 也视为回落。
+改善自动写回、回落退出非零、先前登记的用例变成 SKIP 也视为回落。**清单只记门禁档
+T0–T2**：T3 full 是报告档，读入/写回时归一成 `text`（`gateTierOf`），所以 full → text
+不算回落，text → category 才算；旧清单里的 full 条目会被自动归一。
 
 **按实现分账**：`--ratchet-impl <impl> --baseline <id>` 推导 `config/ratchet/<impl>-<baseline>.tsv`；
 清单不存在时**自动初始化**（只登记当前档位，不产生回落判定），因此首次接入的实现（如目标版本更旧的
 `tsz`）不会被判红，后续轮次严格只升不降。`--ratchet-impl` 与显式 `--ratchet` 二选一；
 显式路径不存在时默认报错，需要首次创建时加 `--ratchet-init`。清单入库，CI 按实现分别传入。
+
+**CI 门禁（`--gate`）**：把一次运行折算成通过/失败，失败时退出码非零，逐项结论
+同时打印到 stdout 并写入 `metrics.meta.gate`（`smoke.yml` 的 push/PR，以及每日 cron
+在 detect 判「有变化」时才带它跑，见 docs/CI.md）。检查项：
+
+- 口径：本次运行必须是兼容性结论（`--mode official` 且适配器接受外部选项）；
+- 执行：至少跑完一个用例；
+- ratchet：配置了清单时不允许 T0–T2 门禁档位回落（T3 归一为 text、不参与）。门禁模式
+  要求清单已入库且非空（不自动初始化、拒绝空清单，避免 CI 里凭空生成「全绿」清单），
+  也不回写改善；
+- 阈值：`--gate-max-fp` / `--gate-max-miss` / `--gate-max-misanchor` /
+  `--gate-min-coverage`。没有 ratchet 时前三者默认 0（自比自检口径）；配了 ratchet
+  时默认不设条数上限（逐例严格性由清单承载），显式参数可叠加；阈值参数不带
+  `--gate` 时直接报错，不会静默忽略。
+
+**门禁档位**：T0 location / T1 category / T2 text 由 ratchet 清单按用例兜底；
+**T3 full 是报告档**——ratchet 清单不记 full（归一为 text），未达只记入
+`totals.byTier` / `totals.t3Failures` / `samples.t3`，不判红。
 
 ### 4.4 第三方实现接入
 
@@ -361,10 +382,12 @@ src/officialBaseline.ts 官方基线期望源（.errors.txt 子集）
 src/compare.ts         匹配与指标（含错锚配对、按类聚合）
 src/classify.ts        用例分类标签与过滤
 src/baselines.ts       多基线配置（tsc × 语料 tag）
+src/gate.ts            CI 门禁（--gate 的检查项与结论渲染）
 src/run.ts             运行器入口
 src/adapters/          tsc-cli / checker-cli / cli / batch / mock-batch / 工厂
 scripts/select-smoke.ts  生成冒烟 manifest
 scripts/select-official-baseline-cases.ts  生成官方基线可消费清单
+scripts/detect-changes.ts  CI 每日 cron 的变化检测（本地输入哈希 / HEAD / 外部 pin）
 config/baselines.json    基线配置（三个 tsc × 两套语料）
 config/smoke-cases.json  strada 冒烟用例集（入库、可复现）
 config/smoke-cases-5.9.json  5.9 语料冒烟集
@@ -372,7 +395,7 @@ config/anchor-cases.json     锚点专用用例集
 config/official-baseline-cases.json  官方基线子集用例（示例清单）
 config/smoke-cases-ts71-official.json  TS7 官方基线冒烟集（18 有错 + 10 无错）
 config/official-baseline-cases-ts71.json  错误用例扩展样本（120 例，本地口径）
-config/ratchet-ts71-official.tsv      TS7 官方基线 T0–T3 ratchet 清单
+config/ratchet-ts71-official.tsv      TS7 官方基线 T0–T2 门禁 ratchet 清单（T3 归一 text）
 test/                  单测（bun test）
 ```
 
@@ -382,12 +405,12 @@ test/                  单测（bun test）
 - [ ] 期望生成本身进程内化（用各基线 typescript API 取代每案 CLI spawn，冷跑大头在这里）；
 - [x] 官方 harness 默认值对齐（§3.3：三档 baseArgs 显式化，期望/适配器参数分离）；
 - [x] 官方基线作为期望来源（§4.2；strada 平铺 + TS7 Go 分层两种布局，缺基线=无错）；
-- [x] TS7 官方基线 T0–T3 分档与 ratchet（§4.3）；
+- [x] TS7 官方基线 T0–T3 分档与 T0–T2 门禁 ratchet（§4.3；T3 只报告）；
 - [x] T3 整份基线渲染：adapter `fullText` 保留 elaboration/related 续行，期望只比摘要块，失败按 missing/extra/diagnostics/order/elaboration/related 归因（§4.3，RESULTS 结论 10）；
 - [ ] 同源编译器生成期望（消除 npm 补丁版本与仓库基线的偏差）；
 - [ ] 官方基线多值指令变体与配置命名复刻；
 - [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
-- [ ] 基线守门 `--gate` / `--update-baseline`；
+- [x] 基线守门 `--gate`（§4.3：ratchet + 条数/覆盖率阈值，已接 `smoke.yml` 的 push/PR；每日 cron 先经 `scripts/detect-changes.ts` 判变化，未变跳过）；`--update-baseline` 未做，更新由 ratchet 改善写回承担；
 - [ ] 更大规模的用例选择策略（按码族/目录分层抽样，避免只覆盖编译器用例）；
 - [ ] 并行执行与结果合并（shard / merge）；
 - [ ] L2/L3 判定粒度（宽度、消息文案）；

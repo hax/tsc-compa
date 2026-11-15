@@ -14,6 +14,7 @@
 // 让覆盖率略低于 100%；配套的 misanchor 数字负责解释这部分差额。
 
 import { summaryBlockOf } from "./officialBaseline.ts";
+import type { GateReport } from "./gate.ts";
 import type { Diagnostic } from "./types.ts";
 
 /**
@@ -31,6 +32,18 @@ export type Tier = "none" | "location" | "category" | "text" | "full";
 export const TIER_RANK: Record<Tier, number> = { none: 0, location: 1, category: 2, text: 3, full: 4 };
 
 export const TIERS: readonly Tier[] = ["none", "location", "category", "text", "full"];
+
+/**
+ * 门禁只看 T0–T2：T3 full 是报告档，归一到 text 后再参与 ratchet/门禁。
+ * 因此「full → text」不算回落（不判红），「text → category」才算回落。
+ * T3 的实际分布仍记录在 metrics.totals.byTier / t3Failures 里供报告。
+ */
+export const GATE_TOP_TIER: Tier = "text";
+
+/** 把一致档位归一成门禁档位：full → text，其余不变。 */
+export function gateTierOf(tier: Tier): Tier {
+  return TIER_RANK[tier] > TIER_RANK[GATE_TOP_TIER] ? GATE_TOP_TIER : tier;
+}
 
 export interface CaseRecord {
   id: string;
@@ -266,6 +279,8 @@ export interface RunMeta {
     improvements: number;
     wrote: boolean;
   };
+  /** 设置了 --gate 时的门禁结论（逐项检查结果，CI 用它判断红绿）。 */
+  gate?: GateReport;
 }
 
 export interface ClassTotals {
