@@ -81,7 +81,7 @@ export interface CaseOutcome {
 /**
  * 适配器接口。
  *
- * - per-case：每个用例单独起进程（v0 的 maat-zig 适配器）；
+ * - per-case：每个用例单独起进程（v0 的逐案 CLI 适配器）；
  * - batch：一个进程消费多个用例，见 adapters/batch.ts 的 NDJSON 协议（推荐）；
  * - api：实现本身是 JS/TS，进程内调用。
  */

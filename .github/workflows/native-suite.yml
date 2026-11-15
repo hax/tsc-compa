@@ -1,27 +1,27 @@
 # 公开仓：接收远程二进制并跑兼容性套件（native-suite）
 #
 # 两种入口：
-#   1) repository_dispatch（自动，event_type = maat-binary，由 hax/maat 的
-#      release-native workflow 发起）：payload 带 implementation / source_sha /
-#      release_tag / asset_name / platform / baseline。
+#   1) repository_dispatch（自动，event_type = checker-binary，由实现侧 CI
+#      发起）：payload 带 implementation / source_sha / release_tag /
+#      asset_name / platform / baseline。
 #   2) workflow_dispatch（手动回退）：release_tag + asset_name 从本仓 release
 #      下载；或 binary_url 直接下载任意实现的二进制。
 #
-# 本仓不需要任何私有凭据：repo 自己的 GITHUB_TOKEN 即可下载自己的 release asset。
+# 本仓只用自己的 GITHUB_TOKEN 下载本仓的 release asset，不需要额外凭据。
 #
 # 用法示例（手动回退）：
-#   release_tag: binary-maat-9962a4f-linux-x64
-#   asset_name:  maat-9962a4f-linux-x64
+#   release_tag: binary-checker-<sha>-linux-x64
+#   asset_name:  checker-<sha>-linux-x64
 name: native-suite
 
 on:
   repository_dispatch:
-    types: [maat-binary]
+    types: [checker-binary]
   workflow_dispatch:
     inputs:
       implementation:
         description: "实现名（报告用）"
-        default: "maat"
+        default: "checker"
       release_tag:
         description: "本仓 release tag（binary-<impl>-<sha>-<platform>）"
         default: ""
@@ -37,7 +37,7 @@ on:
         options: ["7.1.0-beta", "6.0.3", "5.9.3"]
         default: "7.1.0-beta"
       mode:
-        description: "fixed（固定 strict+esnext 口径，maat 当前只支持这个）或 official"
+        description: "fixed（固定 strict+esnext 口径，实现只支持这个时用）或 official"
         type: choice
         options: ["fixed", "official"]
         default: "fixed"
@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      IN_IMPL: ${{ github.event.client_payload.implementation || inputs.implementation || 'maat' }}
+      IN_IMPL: ${{ github.event.client_payload.implementation || inputs.implementation || 'checker' }}
       IN_SHA: ${{ github.event.client_payload.source_sha || '' }}
       IN_TAG: ${{ github.event.client_payload.release_tag || inputs.release_tag }}
       IN_ASSET: ${{ github.event.client_payload.asset_name || inputs.asset_name }}
@@ -104,14 +104,14 @@ jobs:
       - name: Run compatibility suite
         run: |
           BIN="$GITHUB_WORKSPACE/bin/$IN_IMPL"
-          export MAAT_BIN="$BIN"
+          export CHECKER_BATCH_BIN="$BIN"
           LIMIT_ARGS=""
           if [ "${IN_LIMIT}" != "0" ] && [ -n "${IN_LIMIT}" ]; then LIMIT_ARGS="--limit ${IN_LIMIT}"; fi
           echo "impl=$IN_IMPL sha=$IN_SHA baseline=$IN_BASELINE mode=$IN_MODE"
           bun src/run.ts \
             --baseline "$IN_BASELINE" \
             --corpus "$GITHUB_WORKSPACE/reference/corpus/tests/cases" \
-            --adapter "maat-batch" \
+            --adapter "checker-batch" \
             --mode "$IN_MODE" \
             $LIMIT_ARGS \
             --out out
