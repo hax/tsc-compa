@@ -9,7 +9,7 @@ tsc-compa 是一个**与实现无关**的 TSC 兼容性测试套件：输入是�
 检查器（二进制、进程内 API 或批量进程），输出是「误报率 / 覆盖率 / SKIP 分类」
 这组指标，目标是在官方 TypeScript 测试语料上证明「近乎 100% 兼容」。
 
-不绑定的东西：实现语言（Zig / Rust / Go / TS 均可）、tsc 基线版本（5.9.x /
+不绑定的东西：实现语言（Rust / Go / TS 等均可）、tsc 基线版本（5.9.x /
 6.0.3 / 7.1.0-beta，规划中）、语料来源（官方 `tests/cases`，后续可对接官方基线）。
 
 v0 把协议、口径、指标固化下来并用小规模 smoke 集跑通全链路；当前版本加入
@@ -170,7 +170,7 @@ v0 用「固定版本的 tsc CLI 现场生成」：
 `config/official-baseline-cases-ts71.json`）。
 
 已知偏差：官方基线来自仓库源码快照，与 npm 上发布的补丁版本不一定逐条一致
-（见 docs/RESULTS.md；同源编译器生成期望是 #34 的待办）。
+（见 docs/RESULTS.md；同源编译器生成期望列为后续待办）。
 
 ### 4.3 T0–T3 一致性分档与 ratchet
 
@@ -268,7 +268,7 @@ adapter、不改它的源码；获取方式与能力差异登记在 `config/impl
  "diagnostics":[{"file":"a.ts","line":0,"col":4,"code":2322,"severity":"error","message":"..."}]}
 {"protocol":1,"type":"result","id":"...","status":"skip","skipReason":"@jsx"}
 {"protocol":1,"type":"result","id":"...","status":"crash","message":"..."}
-{"protocol":1,"type":"hello","implementation":{"name":"maat","version":"..."}}
+{"protocol":1,"type":"hello","implementation":{"name":"checker","version":"..."}}
 ```
 
 约定：行列 0-based；诊断文件路径用请求里的 `path`；`severity` 缺省 `error`；
@@ -355,17 +355,17 @@ adapter、不改它的源码；获取方式与能力差异登记在 `config/impl
 **官方基线对接**：已接 v0 子集（§4.2），与「现场生成」并列、指标层不变；
 多值变体基线、语法/配置错误基线、`.d.ts` 用例仍待后续。
 
-## 8. 二进制分发
+## 8. 二进制分发（可选）
 
-源码在私有仓库，二进制在这里分发（公开仓只有「被测输入」）：
+被测实现的源码可以在本仓库之外，本仓库只接收构建出的二进制与测试输入：
 
-1. 私有仓库 CI 构建平台二进制（linux-x64 起步），打 tag
+1. 实现侧 CI 构建平台二进制（linux-x64 起步），打 tag
    `binary-<impl>-<srcSha>-<platform>`；
 2. 上传为本仓库的 Release Asset；
 3. 通过 `repository_dispatch` 触发本仓库 workflow，参数里带实现名与 tag；
 4. 本仓库下载 asset 后跑套件，指标作为 artifact 或 issue 评论回写。
 
-公开仓不需要读私有源码的凭据；实现名与版本进入 metrics 的 `meta`。
+本仓库不读实现源码，只需要下载本仓 release asset 的权限；实现名与版本进入 metrics 的 `meta`。
 
 ## 9. 目录
 
@@ -379,7 +379,7 @@ src/classify.ts        用例分类标签与过滤
 src/baselines.ts       多基线配置（tsc × 语料 tag）
 src/gate.ts            CI 门禁（--gate 的检查项与结论渲染）
 src/run.ts             运行器入口
-src/adapters/          cli / batch / mock-batch / 工厂
+src/adapters/          tsc-cli / checker-cli / cli / batch / mock-batch / 工厂
 scripts/select-smoke.ts  生成冒烟 manifest
 scripts/select-official-baseline-cases.ts  生成官方基线可消费清单
 config/baselines.json    基线配置（三个 tsc × 两套语料）
@@ -395,21 +395,21 @@ test/                  单测（bun test）
 
 ## 10. v0 限制与 TODO
 
-- [x] 批量适配器接真实实现：maat 主线新增 `--batch`（NDJSON，见 maat README），tsc-compa 注册 `maat-batch`（固定口径，与逐案 CLI 结果逐字段一致）；
+- [x] 批量适配器接真实实现：被测实现提供 `--batch`（NDJSON，协议见 §5.1），tsc-compa 注册 `checker-batch`（固定口径，与 `checker-cli` 逐案结果逐字段一致）；
 - [ ] 期望生成本身进程内化（用各基线 typescript API 取代每案 CLI spawn，冷跑大头在这里）；
 - [x] 官方 harness 默认值对齐（§3.3：三档 baseArgs 显式化，期望/适配器参数分离）；
 - [x] 官方基线作为期望来源（§4.2；strada 平铺 + TS7 Go 分层两种布局，缺基线=无错）；
 - [x] TS7 官方基线 T0–T3 分档与 ratchet（§4.3）；
 - [x] T3 整份基线渲染：adapter `fullText` 保留 elaboration/related 续行，期望只比摘要块，失败按 missing/extra/diagnostics/order/elaboration/related 归因（§4.3，RESULTS 结论 10）；
-- [ ] 同源编译器生成期望（消除 npm 补丁版本与仓库基线的偏差，见 #34）；
-- [ ] 官方基线多值指令变体与配置命名复刻（#34）；
+- [ ] 同源编译器生成期望（消除 npm 补丁版本与仓库基线的偏差）；
+- [ ] 官方基线多值指令变体与配置命名复刻；
 - [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
 - [x] 基线守门 `--gate`（§4.3：ratchet + 条数/覆盖率阈值，已接 `smoke.yml` 的 push/PR 与每日 schedule）；`--update-baseline` 未做，更新由 ratchet 改善写回承担；
 - [ ] 更大规模的用例选择策略（按码族/目录分层抽样，避免只覆盖编译器用例）；
 - [ ] 并行执行与结果合并（shard / merge）；
 - [ ] L2/L3 判定粒度（宽度、消息文案）；
 - [ ] 实现声明「已知不支持的错误码/能力」，用于 SKIP 而非算漏报；
-- [x] CI workflow（私仓 build → release asset → dispatch，见 §8；官方基线冒烟见 `.github/workflows/ts7-official.yml`）。
+- [x] CI workflow（实现侧 build → release asset → dispatch，见 §8；官方基线冒烟见 `.github/workflows/ts7-official.yml`）。
 
 
 ## 11. 性能附录（`--perf-ratio`，v0）

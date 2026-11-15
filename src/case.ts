@@ -245,8 +245,8 @@ export const OFFICIAL_DEFAULTS: CompilerOptions = [];
 
 /**
  * 固定口径选项：给「实现还不接受外部选项」的适配器做冒烟管线验证用。
- * 与 maat-zig 当前内部口径一致（strict + esnext + Bundler + 空 types）。
- * 这种模式下的指标不是兼容性结论，运行器会明确标注。
+ * 固定项为 strict + esnext + Bundler + 空 types；这种模式下的指标不是
+ * 兼容性结论，运行器会明确标注。
  */
 export const FIXED_STRICT_ESNEXT: CompilerOptions = [
   { name: "strict", value: true },

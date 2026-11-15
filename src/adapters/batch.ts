@@ -15,7 +15,7 @@
 //    "diagnostics":[{"file":"a.ts","line":0,"col":4,"code":2322,"severity":"error"}]}
 //   {"protocol":1,"type":"result","id":"...","status":"skip","skipReason":"@jsx"}
 //   {"protocol":1,"type":"result","id":"...","status":"crash","message":"..."}
-//   {"protocol":1,"type":"hello","implementation":{"name":"maat-zig","version":"..."}}
+//   {"protocol":1,"type":"hello","implementation":{"name":"checker","version":"..."}}
 //
 // 约定：行列 0-based（shim 负责把实现自己的 1-based 位置换算过来）；诊断文件
 // 路径用请求里的 file.path；severity 缺省 error。一行只对应一个用例。
@@ -56,7 +56,7 @@ export interface BatchAdapterOptions {
   timeoutMs?: number;
   /**
    * 实现是否接受 per-case 编译选项。缺省 true（协议本来就能带 options）；
-   * 像 maat 这样只支持固定口径的实现应显式设 false，配合 fixedOptions 使用。
+   * 只支持固定口径的实现应显式设 false，配合 fixedOptions 使用。
    */
   supportsOptions?: boolean;
   /** supportsOptions=false 时实现实际采用的选项（用于 --mode fixed）。 */

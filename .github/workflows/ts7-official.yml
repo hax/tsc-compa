@@ -19,7 +19,7 @@ on:
         description: "只跑前 N 例（0 = 全部 28 例）"
         default: "0"
       adapter:
-        description: "适配器（默认 tsc 自比；也可填 maat-batch 等已注册适配器）"
+        description: "适配器（默认 tsc 自比；也可填 checker-batch 等已注册适配器）"
         default: "tsc-cli:node_modules/typescript-7-1/bin/tsc"
 
 permissions:

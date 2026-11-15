@@ -1,6 +1,6 @@
-# 公开仓：接收 maat 原生二进制并跑兼容性套件
+# 接收检查器二进制并跑兼容性套件（native-suite）
 
-maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为本仓的 Release Asset 上传，并发送 `repository_dispatch`（`event_type = maat-binary`）触发本 workflow。本仓用自带的 `GITHUB_TOKEN` 下载自己的 release asset，不需要任何私有凭据。
+实现侧 CI 构建二进制后，会把它作为本仓的 Release Asset 上传，并发送 `repository_dispatch`（`event_type = checker-binary`）触发本 workflow。本仓用自带的 `GITHUB_TOKEN` 下载自己的 release asset，不需要额外凭据。
 
 ## 触发
 
@@ -8,10 +8,10 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
 
 ```json
 {
-  "implementation": "maat",
-  "source_sha": "9962a4f",
-  "release_tag": "binary-maat-9962a4f-linux-x64",
-  "asset_name": "maat-9962a4f-linux-x64",
+  "implementation": "checker",
+  "source_sha": "<源码提交 sha>",
+  "release_tag": "binary-checker-<sha>-linux-x64",
+  "asset_name": "checker-<sha>-linux-x64",
   "platform": "linux-x64",
   "baseline": "7.1.0-beta"
 }
@@ -23,7 +23,7 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
 
 1. 按 `baseline` 从 `config/baselines.json` 解析对应语料 tag，checkout 官方语料到 `reference/corpus`；
 2. 下载 release asset 并校验可执行；
-3. 用 `maat:<bin>` 适配器跑该基线的冒烟集（`config/smoke-cases.json`，28 例）；
+3. 用 `checker-batch` 适配器跑该基线的冒烟集（`config/smoke-cases.json`，28 例）；
 4. 上传 `metrics-<impl>-<baseline>` artifact，并在 job summary 里贴 fp / miss / coverage / skip / verdictEligible 摘要。
 
 ## CI 兼容性门禁（`smoke.yml`）
@@ -41,7 +41,7 @@ maat 私有仓的 `release-native` workflow 构建二进制后，会把它作为
 `metrics.meta.gate`）：
 
 1. **口径**：本次运行必须是兼容性结论（`--mode official` 且适配器接受外部选项）；
-   `--mode fixed` 或 `maat-batch` 这类实现忽略指令的运行会被门禁拒绝；
+   `--mode fixed` 或 `checker-batch` 这类实现忽略指令的运行会被门禁拒绝；
 2. **执行**：至少跑完一个用例（全 skip / 空 manifest 不算绿）；
 3. **ratchet**：配置了清单（`--ratchet` / `--ratchet-impl`）时任何用例档位回落即失败。
    门禁模式要求清单已入库：不会自动初始化（避免 CI 里凭空生成一份全绿清单），
@@ -75,9 +75,9 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 
 ## 适配器
 
-`src/adapters/maat.ts` 把 maat 二进制的 `--json` 输出（字段 `file/start/end/line/col/end_line/end_col/severity/code/message`，1-based 行列）映射为套件协议：
+`src/adapters/checker-cli.ts` 把检查器二进制的 `--json` 输出（字段 `file/start/end/line/col/end_line/end_col/severity/code/message`，1-based 行列）映射为套件协议：
 
-- 跳过 `code === 0`（yuku early error，不对应 tsc 码）与非数字码；
+- 跳过 `code === 0`（实现自己的 early error，不对应 tsc 错误码）与非数字码；
 - 路径按用例临时目录前缀裁剪成相对路径；
 - 行列转 0-based，宽度取 `end - start`；
 - 超时（30s）记为 skip，异常退出/非 JSON 输出记为 crash，不静默通过。
@@ -86,9 +86,9 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 
 ## 当前限制
 
-- 只跑冒烟集（28 例）；全量 12k 用例需要批量协议（maat issue #8），届时在 `src/adapters/` 加 batch shim 后复用本 workflow。
+- 只跑冒烟集（28 例）；全量 12k 用例走批量协议（`checker-batch`，见 `src/adapters/batch.ts`），复用本 workflow。
 - 门禁目前只接 `smoke.yml`（自比 + 官方基线子集）：`native-suite.yml` / `third-party.yml` 仍是手动触发、跑成功即记录指标；third-party 的官方基线档配了 ratchet（回落会非零退出），但没有叠加 `--gate` 的条数/覆盖率阈值。
-- 目前只接 linux-x64；其它平台在 maat 侧加构建矩阵即可，本 workflow 不区分平台。
+- 目前只接 linux-x64；其它平台在实现侧加构建矩阵即可，本 workflow 不区分平台。
 
 ## TS7 官方基线冒烟（`ts7-official.yml`）
 

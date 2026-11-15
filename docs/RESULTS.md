@@ -134,8 +134,6 @@ miss 两侧**，跨版本对照时可以直接看出「判定一致、位置口�
 | --- | --- | --- | --- | --- | --- | --- |
 | tsc 7.1.0-beta 自比（冒烟 28） | 28 | 28（100%） | 28 | **28** | 0 | 修正基线映射后 0 假阳性；T3 整份渲染见结论 10 |
 | tsc 7.1.0-beta 自比（错误样本 120） | 120 | 119（99.2%） | 118（98.3%） | **118** | 1 | 2 例为 npm 补丁与仓库快照漂移（见结论 10） |
-| maat 主线 fixed 口径（冒烟 28） | 28 | 10（35.7%） | 8（28.6%） | 3 | 5 | 位置不一致 18 例属检查面差异，掩盖了文案差；T3 归因见结论 10 |
-| maat 主线 fixed 口径（错误样本 120） | 120 | 28（23.3%） | 28（23.3%） | 0 | 17 | 漏报 282 条是主因；T3 未达归因 missing×80 / diagnostics×35 / extra×5 |
 
 **修正记录（2026-11-15）**：本表初版里 tsc 自比只有 22/28、6 例 none，并把原因归为
 「npm 补丁与仓库快照漂移」——那是错的。根因是 `baselineFileOf` 只按「id 相对路径」
@@ -148,12 +146,6 @@ miss 两侧**，跨版本对照时可以直接看出「判定一致、位置口�
 读法：T0−T2 = 判定/锚点一致但首行文案不同；T2−T3 = elaboration/related 文本与
 顺序未对齐。T3 的整份渲染能力已在 2026-11-15 后续实现，见结论 10（120 例自比
 T3 由 0 升到 118/120）。
-
-文案差异样例（maat vs 官方基线，17 条代表）：
-- int 显示：`number` → `int`（functionCall12、inheritedConstructorWithRestParams、numberToString 等 5 条）；
-- 泛型实参丢失：`PullTypeSymbol<A, B, C>` → `PullTypeSymbol`、`List<U>` → `List`、`M<unknown>` → `M`、`Bar<string>` 截断；
-- elaboration 内联进首行（`A & B` / `never` 一行带 Property 说明）；
-- 联合收窄与操作数类型差：`"c" | "d"` vs 更宽联合、`number` vs `1 | 3`、`""` vs `''`。
 
 ratchet：`--ratchet config/ratchet-ts71-official.tsv` 当前登记 28 例（≥T0），
 复跑无回落、清单幂等；回落会以非零退出，CI 用同一份清单门禁。2026-11-15 修
@@ -185,14 +177,13 @@ ratchet：`--ratchet config/ratchet-ts71-official.tsv` 当前登记 28 例（≥
 | --- | --- | ---: | ---: | --- |
 | tsc 7.1.0-beta 自比（tsc-cli） | 自洽 | 0.992 | 0.995 | sanity，≈1 |
 | tsrs 0.25.0（tsc-cli:<bin>） | 28/28 通过、覆盖 100% | 0.365 | 0.366 | P25 0.359 / P75 0.373 |
-| maat 主线（maat:<bin>） | 固定口径 10/28 | n/a | n/a | 无 Check 相位，wall 差分被守卫判不可靠 |
 
-- 用时增量：28 例正确性 + 20 例样本，自比 10.7s、tsrs 6.7s、maat 5.7s；参考跑约 3.7s（≈185ms/案），
+- 用时增量：28 例正确性 + 20 例样本，自比 10.7s、tsrs 6.7s；参考跑约 3.7s（≈185ms/案），
   按 300 例约 55s，在「≤1 分钟」预算内。样本组成示例：compiler 16 / conformance 4，行数档 <=50 18 / 51–200 2，
   错误 17 / 无错 3，对冲顺序 10/10。
 - tsc-cli 适配器解析 `--extendedDiagnostics` 回填 `checkMs`，因此任何 tsc 风格实现（tsrs/tsc-rs/ts-rust）
-  都能直接得到 Check 比值；maat 要进同一张表，需要 maat 侧自报每案检查耗时（或批量协议 `checkMs`），
-  这是 M 级后续。
+  都能直接得到 Check 比值；只输出单行诊断、没有 Check 相位的实现要进同一张表，需要实现侧
+  自报每案检查耗时（或批量协议 `checkMs`），这是 M 级后续。
 - 不门禁：不参与退出码；结果只在 `metrics.json.perf`。
 
 ## 结论 10：T3 整份基线与 elaboration 渲染（v1，2026-11-15）
@@ -209,8 +200,6 @@ missing / extra / diagnostics / order / elaboration / related / other。
 | tsc 7.1.0-beta 自比（错误样本 120） | 120 | 0 → **118** | diagnostics×2 | 已知 pin 漂移：`complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound`（文案差）、`conflictingTypeParameterSymbolTransfer`（位置差） |
 | tsrs 0.25.0（npm） | 28 | 4 → **28** | 0 | 与 tsc 自比完全一致 |
 | tsrs 0.25.0（npm，错误样本 120） | 120 | — → **118** | diagnostics×2 | 同上两例 |
-| maat 主线 batch（冒烟 28） | 28 | 6 → 3 | diagnostics×24 | 适配器不提供多行渲染，T3 不可与 CLI 实现横比 |
-| maat 主线 batch（错误样本 120） | 120 | 0 → 0 | missing×80 / diagnostics×35 / extra×5 | 同上 |
 
 口径与偏差：本地语料是 `reference/typescript` 的 b7917e5 快照，与配置 pin
 `aa814927` 不同；CI 用 pin checkout 后需复跑对照。`tsc-cli` 系适配器（含第三方
@@ -223,7 +212,7 @@ T3 仍是报告档，未达不判红。
 - 官方基线只接了 plain 名子集：多值指令变体（约 1,200 例）、语法错误基线（约 1,065 例）、
   配置错误基线（约 309 例）、绝对路径 `@filename`（约 659 例）暂不可消费。
 - 官方基线来自仓库源码快照，与 npm 补丁版本存在少量逐条差异（见结论 6/7），暂未做豁免登记；
-  这一偏差要靠「同源编译器生成期望」消除（#34）。
+  这一偏差要靠「同源编译器生成期望」消除。
 - T3 已支持整份基线渲染（结论 10）：期望只取 `====` 前摘要块，实现侧用
   `CaseOutcome.fullText`；仍不是门禁档。
 - 7.1 的普通基线（`7.1.0-beta`）仍复用 strada 语料；官方基线走单独的

@@ -75,7 +75,7 @@
       ],
       "corpus": "ts71-official",
       "manifest": "config/smoke-cases-ts71-official.json",
-      "note": "与 7.1.0-beta 同一 tsc，但期望源改为仓库官方 .errors.txt（--expectation-source official-baseline），语料用 TS7 Go 布局 pin aa814927。tiers/ratchet 口径见 docs/DESIGN.md「官方基线消费（TS7）」；用于 #34 的官方基线主路径。"
+      "note": "与 7.1.0-beta 同一 tsc，但期望源改为仓库官方 .errors.txt（--expectation-source official-baseline），语料用 TS7 Go 布局 pin aa814927。tiers/ratchet 口径见 docs/DESIGN.md「官方基线消费（TS7）」；官方基线主路径。"
     }
   ]
 }

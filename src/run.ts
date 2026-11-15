@@ -5,7 +5,7 @@
 //   bun src/run.ts --baseline 6.0.3 --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
 //
 //   # 或显式指定 tsc 与期望参数（不读 config/baselines.json）
-//   TSC_BIN=/path/to/tsc bun src/run.ts --adapter maat-zig --mode fixed --cases config/smoke-cases.json
+//   CHECKER_BIN=/path/to/checker bun src/run.ts --adapter checker-cli --mode fixed --cases config/smoke-cases.json
 //
 // 运行结果写 <out>/metrics.json 与 <details.json>，并在 stdout 打印摘要。
 // 默认退出码为 0（除非运行本身失败）；--gate 打开兼容性门禁：ratchet 回落、
@@ -127,7 +127,7 @@ function parseArgs(argv: string[]): Args {
     corpus: process.env.TSC_COMPA_CORPUS,
     cases: undefined,
     tsc: process.env.TSC_BIN,
-    adapter: process.env.TSC_COMPA_ADAPTER ?? "maat-zig",
+    adapter: process.env.TSC_COMPA_ADAPTER ?? "tsc-cli",
     mode: "official",
     out: ".cache/run",
     verbose: false,

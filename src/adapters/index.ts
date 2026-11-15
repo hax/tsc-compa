@@ -1,19 +1,19 @@
 // 适配器工厂：按名字创建适配器。
 //
-// v0 内置：
-//   tsc-cli     参考实现：直接用真实 tsc 跑逐案 CLI（TSC_COMPA_ADAPTER_TSC 覆盖二进制）
-//   maat        原生二进制（Zig 主线）逐案 CLI（MAAT_BIN 或 maat:<bin>），固定 strict+esnext 口径
-//   maat-zig    旧 maat-zig 二进制逐案 CLI（环境变量 MAAT_ZIG_BIN），固定 strict+esnext 口径
-//   none        永远不报诊断（用于跑通流水线/看漏报全貌）
-//   mock-batch  批量协议的参考实现（src/adapters/mock-batch.ts）
-//   cli:<bin>   通用逐案 CLI（参数取 TSC_COMPA_CLI_ARGS，按空白切分）
+// 内置：
+//   tsc-cli        参考实现：直接用真实 tsc 跑逐案 CLI（TSC_COMPA_ADAPTER_TSC 覆盖二进制）
+//   checker-cli    被测检查器逐案 CLI（CHECKER_BIN 或 checker-cli:<bin>），固定 strict+esnext 口径
+//   checker-batch  同一检查器的批量 NDJSON 模式（CHECKER_BATCH_BIN，缺省回落 CHECKER_BIN），固定口径
+//   none           永远不报诊断（用于跑通流水线/看漏报全貌）
+//   mock-batch     批量协议的参考实现（src/adapters/mock-batch.ts）
+//   cli:<bin>      通用逐案 CLI（参数取 TSC_COMPA_CLI_ARGS，按空白切分）
 
 import { join, resolve } from "node:path";
 import { FIXED_STRICT_ESNEXT } from "../case.ts";
 import type { Adapter, CaseInput, CaseOutcome } from "../types.ts";
 import { BatchAdapter } from "./batch.ts";
+import { CheckerCliAdapter } from "./checker-cli.ts";
 import { CliAdapter } from "./cli.ts";
-import { MaatAdapter } from "./maat.ts";
 import { TscCliAdapter } from "./tsc-cli.ts";
 
 class NoopAdapter implements Adapter {
@@ -25,7 +25,15 @@ class NoopAdapter implements Adapter {
   }
 }
 
-export const ADAPTER_NAMES = ["tsc-cli", "maat", "maat:<bin>", "maat-zig", "none", "mock-batch", "cli:<bin>"] as const;
+export const ADAPTER_NAMES = [
+  "tsc-cli",
+  "checker-cli",
+  "checker-cli:<bin>",
+  "checker-batch",
+  "none",
+  "mock-batch",
+  "cli:<bin>",
+] as const;
 
 export async function createAdapter(name: string): Promise<Adapter> {
   if (name === "tsc-cli" || name.startsWith("tsc-cli:")) {
@@ -41,40 +49,27 @@ export async function createAdapter(name: string): Promise<Adapter> {
     const extraArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter((s) => s.length > 0);
     return new TscCliAdapter({ name: embedded.length > 0 ? name : "tsc-cli", bin, extraArgs });
   }
-  if (name === "maat" || name.startsWith("maat:")) {
-    // maat 原生二进制（Zig 主线）；maat:<bin> 显式指定路径，缺省读 MAAT_BIN。
-    const embedded = name.startsWith("maat:") ? name.slice("maat:".length) : "";
-    const raw = embedded.length > 0 ? embedded : (process.env.MAAT_BIN ?? "");
+  if (name === "checker-cli" || name.startsWith("checker-cli:")) {
+    // 被测检查器的逐案 CLI；checker-cli:<bin> 显式指定路径，缺省读 CHECKER_BIN。
+    const embedded = name.startsWith("checker-cli:") ? name.slice("checker-cli:".length) : "";
+    const raw = embedded.length > 0 ? embedded : (process.env.CHECKER_BIN ?? "");
     if (raw.length === 0) {
-      throw new Error("适配器 maat 需要 MAAT_BIN 或 maat:<bin> 指向可执行文件");
+      throw new Error("适配器 checker-cli 需要 CHECKER_BIN 或 checker-cli:<bin> 指向可执行文件");
     }
-    return new MaatAdapter({
-      name: embedded.length > 0 ? name : "maat",
+    return new CheckerCliAdapter({
+      name: embedded.length > 0 ? name : "checker-cli",
       bin: raw.includes("/") ? resolve(raw) : raw,
     });
   }
-  if (name === "maat-zig") {
-    const raw = process.env.MAAT_ZIG_BIN;
+  if (name === "checker-batch") {
+    // 同一检查器的批量模式：一个常驻进程吃完整 --cases，协议见 batch.ts。
+    // 只支持固定口径，故 supportsOptions=false。
+    const raw = process.env.CHECKER_BATCH_BIN ?? process.env.CHECKER_BIN;
     if (raw === undefined || raw.length === 0) {
-      throw new Error("适配器 maat-zig 需要环境变量 MAAT_ZIG_BIN 指向 maat-zig 可执行文件");
-    }
-    return new CliAdapter({
-      name: "maat-zig",
-      bin: raw.includes("/") ? resolve(raw) : raw,
-      args: ["--json"],
-      fixedOptions: FIXED_STRICT_ESNEXT,
-      supportsOptions: false,
-    });
-  }
-  if (name === "maat-batch") {
-    // maat 主线（Zig）的批量模式：一个常驻进程吃完整 --cases，协议见 batch.ts。
-    // 只支持固定口径（与 maat-zig 逐案 CLI 一致），故 supportsOptions=false。
-    const raw = process.env.MAAT_BIN ?? process.env.MAAT_ZIG_BIN;
-    if (raw === undefined || raw.length === 0) {
-      throw new Error("适配器 maat-batch 需要环境变量 MAAT_BIN（或 MAAT_ZIG_BIN）指向 maat 可执行文件");
+      throw new Error("适配器 checker-batch 需要环境变量 CHECKER_BATCH_BIN（或 CHECKER_BIN）指向检查器可执行文件");
     }
     const adapter = new BatchAdapter({
-      name: "maat-batch",
+      name: "checker-batch",
       command: raw.includes("/") ? resolve(raw) : raw,
       args: ["--batch"],
       fixedOptions: FIXED_STRICT_ESNEXT,

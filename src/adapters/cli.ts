@@ -1,7 +1,7 @@
 // 逐案 CLI 适配器：每个用例起一次实现的命令行，解析 JSON 诊断。
 //
-// v0 用它驱动 maat-zig（`--json`）。这种方式每案付一次进程启动成本，
-// 只适合做冒烟与协议验证；正式批量口径见 adapters/batch.ts。
+// v0 用它驱动输出 JSON 诊断数组的检查器 CLI（固定参数 `--json`）。这种方式每案
+// 付一次进程启动成本，只适合做冒烟与协议验证；正式批量口径见 adapters/batch.ts。
 
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -10,8 +10,8 @@ import { join } from "node:path";
 import { materializeCase } from "../case.ts";
 import type { Adapter, CaseInput, CaseOutcome, CompilerOptions, Diagnostic } from "../types.ts";
 
-/** maat-zig `--json` 的诊断形状。 */
-interface MaatJsonDiagnostic {
+/** `--json` 诊断数组里单条诊断的形状。 */
+interface JsonDiagnostic {
   file: string;
   start: number;
   end: number;
@@ -107,9 +107,9 @@ export class CliAdapter implements Adapter {
     }
     if (!Array.isArray(raw)) return null;
     const out: Diagnostic[] = [];
-    for (const item of raw as MaatJsonDiagnostic[]) {
+    for (const item of raw as JsonDiagnostic[]) {
       if (typeof item.file !== "string" || typeof item.code !== "number") continue;
-      if (item.code === 0) continue; // yuku early error 不带 tsc 码
+      if (item.code === 0) continue; // 实现自己的 early error，无对应 tsc 错误码
       const rel = item.file.startsWith(`${tmp}/`) ? item.file.slice(tmp.length + 1) : item.file;
       out.push({
         file: rel,
