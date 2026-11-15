@@ -2,7 +2,8 @@
 // 失败时 run.ts 以非零退出码结束。检查分四类：
 // 1. 口径：本次运行必须是兼容性结论（official 模式 + 适配器接受外部选项）；
 // 2. 执行：至少跑完一个用例（全跳过/空 manifest 不能当绿）；
-// 3. ratchet：配置了清单且出现回落即失败（按用例一致档位，只升不降）；
+// 3. ratchet：配置了清单且出现回落即失败（按用例 T0–T2 门禁档位，只升不降；
+//    T3 full 是报告档，归一为 text，不参与门禁）；空清单视为配置错误；
 // 4. 阈值：假阳性 / 漏报 / 错锚条数上限与覆盖率下限。没有 ratchet 时默认
 //    三者全 0（自比自检口径），配置了 ratchet 时默认不设上限（由清单承载
 //    逐例严格性），可用 --gate-max-* 显式叠加。
@@ -78,15 +79,24 @@ export function evaluateGate(input: GateInput): GateReport {
 
   if (input.ratchet !== undefined && input.ratchet !== null) {
     const { path, registered, regressions } = input.ratchet;
-    const shown = regressions.slice(0, 3).map(formatRegression).join("；");
-    checks.push({
-      name: "ratchet",
-      ok: regressions.length === 0,
-      detail:
-        regressions.length === 0
-          ? `无回落（清单 ${path}，登记 ${registered} 例）`
-          : `回落 ${regressions.length} 例：${shown}` + (regressions.length > 3 ? ` 等 ${regressions.length} 例` : ""),
-    });
+    if (registered === 0) {
+      // 空清单等于没有基准：任何用例都「不算回落」，会变成永远通过的门禁。
+      checks.push({
+        name: "ratchet",
+        ok: false,
+        detail: `清单 ${path} 没有登记任何用例，拒绝把空清单当门禁（请先本地初始化并提交清单）`,
+      });
+    } else {
+      const shown = regressions.slice(0, 3).map(formatRegression).join("；");
+      checks.push({
+        name: "ratchet",
+        ok: regressions.length === 0,
+        detail:
+          regressions.length === 0
+            ? `无回落（清单 ${path}，登记 ${registered} 例）`
+            : `回落 ${regressions.length} 例：${shown}` + (regressions.length > 3 ? ` 等 ${regressions.length} 例` : ""),
+      });
+    }
   }
 
   const countChecks: [string, number, number | null][] = [

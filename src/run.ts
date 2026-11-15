@@ -272,6 +272,15 @@ function parseArgs(argv: string[]): Args {
   if (args.corpus === undefined) {
     throw new Error("缺少语料目录：用 --corpus 或环境变量 TSC_COMPA_CORPUS 指定 tests/cases");
   }
+  if (
+    !args.gate &&
+    (args.gateMaxFp !== undefined ||
+      args.gateMaxMiss !== undefined ||
+      args.gateMaxMisanchor !== undefined ||
+      args.gateMinCoverage !== undefined)
+  ) {
+    throw new Error("--gate-max-fp / --gate-max-miss / --gate-max-misanchor / --gate-min-coverage 需要配合 --gate 使用");
+  }
   return args;
 }
 

@@ -1,12 +1,13 @@
 # TS7 官方基线冒烟：直接消费 TypeScript 7 官方仓库的 .errors.txt 基线，
 # 跑 T0–T3 一致性分档并用 ratchet 清单门禁。
 #
-# 语料：microsoft/TypeScript@aa814927（TS7 Go 布局，pin 取自 reference/tsc-rs 的
-# vendor manifest）。cases 在 tsc/testdata/tests/cases，基线在
-# tsc/testdata/baselines/reference。
+# 语料：microsoft/TypeScript（TS7 Go 布局），ref 从 config/baselines.json 的
+# ts71-official corpus 现场解析（当前 aa814927；pin 对齐 #7 后自动跟随）。
+# cases 在 tsc/testdata/tests/cases，基线在 tsc/testdata/baselines/reference。
 #
 # 只手动触发；不跑全量（全量留给后续批量/分片设施）。--gate 与 smoke.yml 的
-# 7.1.0-beta-official 档同口径（ratchet 回落即红；T3 是报告档不判红）。
+# 7.1.0-beta-official 档同口径（ratchet 只记 T0–T2 门禁档、回落即红；T3 是
+# 报告档，归一为 text，不判红）。
 # 本 workflow 尚未在 GitHub Actions 上实际跑过：先手动 dispatch 跑绿一次，
 # 再决定是否给它单独挂 cron；在它跑绿之前，smoke.yml 的每日 schedule 已覆盖
 # 同一组 28 例官方基线冒烟。
@@ -25,9 +26,6 @@ on:
 permissions:
   contents: read
 
-env:
-  TS7_CORPUS_REF: aa8149273b23401f0a79a5f0384c42de51888693
-
 jobs:
   official-baseline:
     runs-on: ubuntu-latest
@@ -35,16 +33,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Checkout TS7 corpus
-        uses: actions/checkout@v4
-        with:
-          repository: microsoft/TypeScript
-          ref: ${{ env.TS7_CORPUS_REF }}
-          path: reference/corpus-ts71
-
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
+
+      - name: Resolve corpus ref（config/baselines.json）
+        id: corpus
+        run: |
+          REF=$(bun -e 'const c = require("./config/baselines.json"); const b = c.baselines.find((x) => x.id === "7.1.0-beta-official"); if (!b) { console.error("unknown baseline 7.1.0-beta-official"); process.exit(1); } const corpus = c.corpora[b.corpus]; if (!corpus) { console.error("unknown corpus: " + b.corpus); process.exit(1); } console.log(corpus.ref)')
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "corpus_ref=$REF"
+
+      - name: Checkout TS7 corpus (${{ steps.corpus.outputs.ref }})
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/TypeScript
+          ref: ${{ steps.corpus.outputs.ref }}
+          path: reference/corpus-ts71
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -69,11 +74,13 @@ jobs:
 
       - name: Step summary
         if: always()
+        env:
+          CORPUS_REF: ${{ steps.corpus.outputs.ref }}
         run: |
           {
             echo "## TS7 official-baseline smoke"
             echo ""
-            echo "- corpus: microsoft/TypeScript@${TS7_CORPUS_REF}"
+            echo "- corpus: microsoft/TypeScript@${CORPUS_REF}"
             echo "- adapter: ${{ inputs.adapter }}"
             echo ""
             if [ -f out/metrics.json ]; then

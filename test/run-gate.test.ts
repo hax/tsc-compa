@@ -42,37 +42,44 @@ function writeErrorBaseline(f: Fixture): void {
   );
 }
 
-function runGate(f: Fixture, extra: string[]): { status: number | null; stdout: string; stderr: string } {
+interface RunResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+function spawnRun(f: Fixture, args: string[]): RunResult {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
-    if (key.startsWith("TSC_COMPA_") || key === "TSC_BIN" || key.startsWith("MAAT_")) continue;
+    if (key.startsWith("TSC_COMPA_") || key === "TSC_BIN") continue;
     env[key] = value;
   }
-  const r = spawnSync(
-    process.execPath,
-    [
-      "src/run.ts",
-      "--corpus",
-      f.corpus,
-      "--cases",
-      f.manifest,
-      "--adapter",
-      "none",
-      "--mode",
-      "official",
-      "--expectation-source",
-      "official-baseline",
-      "--tsc",
-      TSC_6_0,
-      "--out",
-      f.out,
-      "--gate",
-      ...extra,
-    ],
-    { cwd: REPO_ROOT, env, encoding: "utf8" },
-  );
+  const r = spawnSync(process.execPath, ["src/run.ts", ...args], { cwd: REPO_ROOT, env, encoding: "utf8" });
   return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+function baseArgs(f: Fixture): string[] {
+  return [
+    "--corpus",
+    f.corpus,
+    "--cases",
+    f.manifest,
+    "--adapter",
+    "none",
+    "--mode",
+    "official",
+    "--expectation-source",
+    "official-baseline",
+    "--tsc",
+    TSC_6_0,
+    "--out",
+    f.out,
+  ];
+}
+
+function runGate(f: Fixture, extra: string[]): RunResult {
+  return spawnRun(f, [...baseArgs(f), "--gate", ...extra]);
 }
 
 afterEach(() => {
@@ -108,7 +115,7 @@ describe("--gate 端到端", () => {
     const r = runGate(f, ["--ratchet", ratchet]);
     expect(r.status).toBe(1);
     expect(r.stdout).toContain("ratchet 回落 1 例");
-    expect(r.stdout).toContain("[失败] ratchet：回落 1 例：compiler/clean.ts full → none");
+    expect(r.stdout).toContain("[失败] ratchet：回落 1 例：compiler/clean.ts text → none");
   });
 
   test("门禁模式只读：改善不写回清单", () => {
@@ -120,6 +127,13 @@ describe("--gate 端到端", () => {
     expect(r.status).toBe(0);
     expect(r.stdout).toContain("门禁模式不写回清单");
     expect(readFileSync(ratchet, "utf8")).toBe(content);
+  });
+
+  test("--gate-max-* 等阈值参数不带 --gate 时显式报错", () => {
+    const f = fixture();
+    const r = spawnRun(f, [...baseArgs(f), "--gate-max-fp", "1"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("需要配合 --gate 使用");
   });
 
   test("--gate 要求 ratchet 清单已入库（不允许 CI 里自动初始化）", () => {

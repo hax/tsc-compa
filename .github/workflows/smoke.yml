@@ -16,11 +16,11 @@
 #
 #   两个官方基线档是兼容性门禁（`--expectation-source official-baseline`）：
 #   - 7.1.0-beta-official 28 例：直接消费 TS7 Go 布局的官方 .errors.txt，按
-#     `config/ratchet-ts71-official.tsv` 的 ratchet 清单门禁（T0–T2 按用例只升不降，
-#     回落即红；T3 整份基线仍是报告档，未达只进 metrics，不判红）；
+#     `config/ratchet-ts71-official.tsv` 的 ratchet 清单门禁（只记 T0–T2 门禁档、
+#     按用例只升不降，回落即红；T3 整份基线是报告档，未达只进 metrics，不判红）；
 #   - 6.0.3 官方基线子集 191 例：strada 平铺布局，容忍 npm 补丁版与仓库快照的已知
-#     偏差（当前 2 例假阳性共 12 条、4 条漏报，见 docs/RESULTS.md 结论 6），超出阈值即红；
-#     同源编译器（#34）落地后应把阈值收紧到 0。
+#     偏差（当前 2 例假阳性共 12 条、4 条漏报，见 docs/RESULTS.md 结论 6），另设
+#     覆盖率下限 0.99；超出阈值即红。官方基线 pin 对齐（#7）落地后应把阈值收紧到 0。
 name: smoke
 
 on:
@@ -103,68 +103,76 @@ jobs:
             name: 5.9.3 自比（零差异 gate）
             baseline: 5.9.3
             tsc: node_modules/typescript-5-9/bin/tsc
-            corpus_ref: v5.9.3
             corpus_path: tests/cases
             cases: config/smoke-cases-5.9.json
             expectation_source: ""
             ratchet: ""
             gate_max_fp: ""
             gate_max_miss: ""
+            gate_min_coverage: ""
           - slug: 6.0.3-self
             name: 6.0.3 自比（零差异 gate）
             baseline: 6.0.3
             tsc: node_modules/typescript-6-0/bin/tsc
-            corpus_ref: b465fdbfe175304d9b977da137b2c178ae1091d3
             corpus_path: tests/cases
             cases: config/smoke-cases.json
             expectation_source: ""
             ratchet: ""
             gate_max_fp: ""
             gate_max_miss: ""
+            gate_min_coverage: ""
           - slug: 7.1.0-beta-self
             name: 7.1.0-beta 自比（零差异 gate）
             baseline: 7.1.0-beta
             tsc: node_modules/typescript-7-1/bin/tsc
-            corpus_ref: b465fdbfe175304d9b977da137b2c178ae1091d3
             corpus_path: tests/cases
             cases: config/smoke-cases.json
             expectation_source: ""
             ratchet: ""
             gate_max_fp: ""
             gate_max_miss: ""
+            gate_min_coverage: ""
           - slug: 7.1.0-beta-official
             name: 7.1.0-beta-official 28 例（官方基线 + ratchet gate）
             baseline: 7.1.0-beta-official
             tsc: node_modules/typescript-7-1/bin/tsc
-            corpus_ref: aa8149273b23401f0a79a5f0384c42de51888693
             corpus_path: tsc/testdata/tests/cases
             cases: config/smoke-cases-ts71-official.json
             expectation_source: official-baseline
             ratchet: config/ratchet-ts71-official.tsv
             gate_max_fp: ""
             gate_max_miss: ""
+            gate_min_coverage: ""
           - slug: 6.0.3-official-subset
             name: 6.0.3 官方基线子集 191 例（gate，容忍已知 npm 偏差）
             baseline: 6.0.3
             tsc: node_modules/typescript-6-0/bin/tsc
-            corpus_ref: b465fdbfe175304d9b977da137b2c178ae1091d3
             corpus_path: tests/cases
             cases: config/official-baseline-cases.json
             expectation_source: official-baseline
             ratchet: ""
             gate_max_fp: 12
             gate_max_miss: 4
+            gate_min_coverage: 0.99
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout TypeScript corpus (${{ matrix.corpus_ref }})
-        uses: actions/checkout@v4
-        with:
-          repository: microsoft/TypeScript
-          ref: ${{ matrix.corpus_ref }}
-          path: reference/corpus
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
+      - name: Resolve corpus ref（config/baselines.json）
+        id: corpus
+        env:
+          BASELINE: ${{ matrix.baseline }}
+        run: |
+          REF=$(bun -e 'const c = require("./config/baselines.json"); const b = c.baselines.find((x) => x.id === process.env.BASELINE); if (!b) { console.error("unknown baseline: " + process.env.BASELINE); process.exit(1); } const corpus = c.corpora[b.corpus]; if (!corpus) { console.error("unknown corpus: " + b.corpus); process.exit(1); } console.log(corpus.ref)')
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "baseline=$BASELINE corpus_ref=$REF"
+      - name: Checkout TypeScript corpus (${{ steps.corpus.outputs.ref }})
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/TypeScript
+          ref: ${{ steps.corpus.outputs.ref }}
+          path: reference/corpus
       - name: Install deps
         run: bun install --frozen-lockfile
       - name: Smoke + gate — ${{ matrix.name }}
@@ -177,6 +185,7 @@ jobs:
           RATCHET: ${{ matrix.ratchet }}
           MAX_FP: ${{ matrix.gate_max_fp }}
           MAX_MISS: ${{ matrix.gate_max_miss }}
+          MIN_COVERAGE: ${{ matrix.gate_min_coverage }}
           OUT: .cache/run
         run: |
           set -euo pipefail
@@ -185,6 +194,7 @@ jobs:
           if [ -n "${RATCHET:-}" ]; then GATE_ARGS+=(--ratchet "$RATCHET"); fi
           if [ -n "${MAX_FP:-}" ]; then GATE_ARGS+=(--gate-max-fp "$MAX_FP"); fi
           if [ -n "${MAX_MISS:-}" ]; then GATE_ARGS+=(--gate-max-miss "$MAX_MISS"); fi
+          if [ -n "${MIN_COVERAGE:-}" ]; then GATE_ARGS+=(--gate-min-coverage "$MIN_COVERAGE"); fi
           bun src/run.ts \
             --baseline "$BASELINE" \
             --corpus "$CORPUS" \
@@ -215,11 +225,43 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # 稳定的聚合 required check 名：compat-gate。无变化时套件 skipped 算通过；
+  # detect 失败或任一档套件失败都会红。分支保护里把 compat-gate 设为 required。
+  compat-gate:
+    name: compat-gate
+    needs: [detect, unit, smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate detect / unit / smoke
+        env:
+          DETECT: ${{ needs.detect.result }}
+          UNIT: ${{ needs.unit.result }}
+          SMOKE: ${{ needs.smoke.result }}
+        run: |
+          set -euo pipefail
+          echo "detect=$DETECT unit=$UNIT smoke=$SMOKE"
+          if [ "$DETECT" != "success" ]; then
+            echo "::error::变化检测失败（detect=$DETECT）"
+            exit 1
+          fi
+          for result in "$UNIT" "$SMOKE"; do
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "::error::门禁未通过（unit/smoke 结果：$result）"
+              exit 1
+            fi
+          done
+          if [ "$UNIT" = "skipped" ]; then
+            echo "结论：no changes, skip（本次未跑套件）"
+          else
+            echo "结论：套件全部通过"
+          fi
+
   # 只有套件全部通过才更新「上次成功状态」：失败时保留旧状态，下次 detect 会重新判为
   # 有变化并重跑（不会因为一次失败把失败输入记成「已跑过」）。
   # 缓存按分支隔离：每日 cron 在默认分支只读得到默认分支保存的状态；PR 不保存。
   record:
-    needs: [detect, unit, smoke]
+    needs: [detect, unit, smoke, compat-gate]
     if: success() && needs.detect.outputs.run == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5

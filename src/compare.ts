@@ -33,6 +33,18 @@ export const TIER_RANK: Record<Tier, number> = { none: 0, location: 1, category:
 
 export const TIERS: readonly Tier[] = ["none", "location", "category", "text", "full"];
 
+/**
+ * 门禁只看 T0–T2：T3 full 是报告档，归一到 text 后再参与 ratchet/门禁。
+ * 因此「full → text」不算回落（不判红），「text → category」才算回落。
+ * T3 的实际分布仍记录在 metrics.totals.byTier / t3Failures 里供报告。
+ */
+export const GATE_TOP_TIER: Tier = "text";
+
+/** 把一致档位归一成门禁档位：full → text，其余不变。 */
+export function gateTierOf(tier: Tier): Tier {
+  return TIER_RANK[tier] > TIER_RANK[GATE_TOP_TIER] ? GATE_TOP_TIER : tier;
+}
+
 export interface CaseRecord {
   id: string;
   status: "ran" | "skip";

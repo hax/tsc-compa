@@ -150,7 +150,7 @@ The suite matrix (only executed when detection says "run"):
 | --- | --- | --- |
 | self-compare × `5.9.3` / `6.0.3` / `7.1.0-beta` | pinned tsc | `--gate` zero-diff self-check: no false positives, misses or mis-anchors |
 | `7.1.0-beta-official` 28 cases | TS7 official `.errors.txt` | per-case ratchet (`config/ratchet-ts71-official.tsv`): any tier drop fails |
-| `6.0.3` official-baseline subset (191 cases) | strada `.errors.txt` | tolerates the known npm-patch vs repo-snapshot drift (12 fp diagnostics / 4 misses): `--gate-max-fp 12 --gate-max-miss 4` |
+| `6.0.3` official-baseline subset (191 cases) | strada `.errors.txt` | tolerates the known npm-patch vs repo-snapshot drift (12 fp diagnostics / 4 misses) with `--gate-max-fp 12 --gate-max-miss 4 --gate-min-coverage 0.99` |
 
 `--gate` fails the run (non-zero exit; per-item results are printed and stored in
 `metrics.meta.gate.checks`) unless all of these hold:
@@ -158,8 +158,9 @@ The suite matrix (only executed when detection says "run"):
 1. the run is a real compatibility verdict (`--mode official` and an adapter that
    accepts external options — a `--mode fixed` run is rejected instead of passing);
 2. at least one case ran;
-3. no ratchet regression (the list must already be committed: gate mode does not
-   auto-initialize and does not write improvements back);
+3. no ratchet regression on gate tiers T0–T2, and the list must be non-empty and
+   already committed (gate mode does not auto-initialize and does not write
+   improvements back; an empty list is rejected instead of passing);
 4. false positives / misses / mis-anchors within `--gate-max-fp` / `--gate-max-miss`
    / `--gate-max-misanchor`, and coverage at least `--gate-min-coverage`.
 
@@ -167,12 +168,16 @@ Without a ratchet list the three count limits default to 0 (self-check); with on
 they default to unlimited, leaving per-case strictness to the list, and explicit
 limits can still be added.
 
-**Gate tiers**: T0 location / T1 category / T2 text are gated per case through the
-ratchet list. **T3 full (the whole `.errors.txt` summary block) is report-only** —
-T3 misses are recorded in `totals.t3Failures` but do not fail the gate.
+**Gate tiers**: only T0 location / T1 category / T2 text are gated, per case through
+the ratchet list (ratchet files store `location|category|text`; a legacy `full` entry
+is normalized to `text` on read). **T3 full (the whole `.errors.txt` summary block) is
+report-only** — T3 misses are recorded in `totals.byTier` / `totals.t3Failures` but
+never fail the gate.
 
-Making the jobs *required* for merging is a repository setting (branch protection),
-not something the workflow file can express. The `ts7-official.yml` workflow is
+For branch protection, make the stable aggregate job **`compat-gate`** the required
+status check (it aggregates `detect` / `unit` / `smoke`: a "no changes, skip" run
+passes, a failed suite or failed detection fails). Required checks are a repository
+setting, not something the workflow file can express. The `ts7-official.yml` workflow is
 still manual: it has `--gate` too, but has not run on GitHub Actions yet — dispatch
 it once green before adding a separate cron for it (the change-driven `smoke.yml`
 schedule re-runs the same 28 official-baseline cases whenever an input changes).
@@ -256,7 +261,7 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `config/official-baseline-cases.json` | sample case list consumable from official baselines |
 | `config/smoke-cases-ts71-official.json` | TS7 official-baseline smoke list (18 error cases + 10 clean) |
 | `config/official-baseline-cases-ts71.json` | 120 error-bearing TS7 cases (extended local sample) |
-| `config/ratchet/` | per-implementation T0–T3 ratchet lists (`<impl>-<baseline>.tsv`); `config/ratchet-ts71-official.tsv` is the legacy shared list |
+| `config/ratchet/` | per-implementation T0–T2 gate ratchet lists (`<impl>-<baseline>.tsv`; T3 full is report-only and normalized to text); `config/ratchet-ts71-official.tsv` is the legacy shared list |
 | `scripts/select-smoke.ts` | regenerate class-filtered smoke case lists |
 | `scripts/select-official-baseline-cases.ts` | scan a corpus for cases consumable from official baselines |
 | `scripts/install-impl.ts` | fetch a third-party implementation per its registry entry |

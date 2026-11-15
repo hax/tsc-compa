@@ -58,6 +58,16 @@ describe("evaluateGate", () => {
     expect(report.checks.find((c) => c.name === "ratchet")?.detail).toContain("compiler/a.ts full → text");
   });
 
+  test("ratchet 清单为空（registered=0）视为配置错误、判失败", () => {
+    const report = evaluateGate(
+      input({ ratchet: { path: "config/ratchet/empty.tsv", registered: 0, regressions: [] } }),
+    );
+    expect(report.passed).toBe(false);
+    const check = report.checks.find((c) => c.name === "ratchet");
+    expect(check?.ok).toBe(false);
+    expect(check?.detail).toContain("空清单");
+  });
+
   test("配置 ratchet 后条数阈值默认不检查（严格性由清单承载）", () => {
     const hasRatchet: GateThresholds = { maxFp: null, maxMiss: null, maxMisanchor: null, minCoverage: null };
     const report = evaluateGate(

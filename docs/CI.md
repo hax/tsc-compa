@@ -36,8 +36,8 @@
 | 档位 | 基线 | 语料 | 期望源 | 门禁口径 |
 | --- | --- | --- | --- | --- |
 | 自比 | 5.9.3 / 6.0.3 / 7.1.0-beta | 各自语料 tag | 现场 tsc | `--gate` 零差异自检：假阳性、漏报、错锚都为 0 |
-| TS7 官方基线 | 7.1.0-beta-official（28 例） | TS7 Go 布局 pin `aa814927` | 官方 `.errors.txt` | ratchet 清单 `config/ratchet-ts71-official.tsv`，按用例 T0–T2 只升不降 |
-| 6.0 官方基线子集 | 6.0.3（191 例） | strada pin `b465fdbf` | 官方 `.errors.txt` | `--gate-max-fp 12 --gate-max-miss 4`，容忍 npm 补丁与仓库快照的已知偏差（2 例假阳性共 12 条、4 条漏报，见 docs/RESULTS.md 结论 6） |
+| TS7 官方基线 | 7.1.0-beta-official（28 例） | TS7 Go 布局（pin 取自 `config/baselines.json`） | 官方 `.errors.txt` | ratchet 清单 `config/ratchet-ts71-official.tsv`，按用例 T0–T2 只升不降 |
+| 6.0 官方基线子集 | 6.0.3（191 例） | strada（pin 取自 `config/baselines.json`） | 官方 `.errors.txt` | `--gate-max-fp 12 --gate-max-miss 4 --gate-min-coverage 0.99`，容忍 npm 补丁与仓库快照的已知偏差（2 例假阳性共 12 条、4 条漏报，见 docs/RESULTS.md 结论 6） |
 
 `--gate` 的检查项（任一失败即非零退出，逐项结论同时写进 stdout 与
 `metrics.meta.gate`）：
@@ -45,16 +45,19 @@
 1. **口径**：本次运行必须是兼容性结论（`--mode official` 且适配器接受外部选项）；
    `--mode fixed` 或 `checker-batch` 这类实现忽略指令的运行会被门禁拒绝；
 2. **执行**：至少跑完一个用例（全 skip / 空 manifest 不算绿）；
-3. **ratchet**：配置了清单（`--ratchet` / `--ratchet-impl`）时任何用例档位回落即失败。
-   门禁模式要求清单已入库：不会自动初始化（避免 CI 里凭空生成一份全绿清单），
-   也不写回改善（CI 检出上的写回不持久，改善由本地跑完后提交）；
+3. **ratchet**：配置了清单（`--ratchet` / `--ratchet-impl`）时任何用例的 **T0–T2 门禁档位**
+   回落即失败（T3 full 是报告档，读入/写回时归一为 `text`，不参与门禁）。
+   门禁模式要求清单已入库且非空：不会自动初始化、拒绝空清单（避免 CI 里凭空生成一份
+   全绿清单），也不写回改善（CI 检出上的写回不持久，改善由本地跑完后提交）；
 4. **阈值**：`--gate-max-fp` / `--gate-max-miss` / `--gate-max-misanchor` /
    `--gate-min-coverage`。没有 ratchet 时前三个默认 0；配了 ratchet 时默认不设
-   条数上限（逐例严格性由清单承载），显式参数仍可叠加。
+   条数上限（逐例严格性由清单承载），显式参数仍可叠加。阈值参数必须配合 `--gate`
+   使用，单独给出会直接报错。
 
-**门禁档位**：T0 location / T1 category / T2 text 经 ratchet 清单按用例兜底；
-**T3 full（整份 `.errors.txt` 摘要块字节相等）仍是报告档**——未达只进
-`totals.t3Failures` 与 `samples.t3`，不判红。
+**门禁档位**：只有 T0 location / T1 category / T2 text 进门禁，经 ratchet 清单按用例兜底；
+ratchet 文件里只记这三档（旧的 full 条目读入时归一为 text）。**T3 full（整份
+`.errors.txt` 摘要块字节相等）仍是报告档**——未达只进 `totals.byTier` /
+`totals.t3Failures` / `samples.t3`，不判红。
 
 ### 每日 cron 的变化检测（`scripts/detect-changes.ts`）
 
@@ -91,8 +94,10 @@ GITHUB_EVENT_NAME=schedule GITHUB_SHA=$(git rev-parse HEAD) bun scripts/detect-c
 GITHUB_EVENT_NAME=schedule GITHUB_SHA=$(git rev-parse HEAD) bun scripts/detect-changes.ts --out .cache/smoke-detect --force
 ```
 
-要把门禁真正用于「阻断合并」，需在仓库设置里把 `unit` / `smoke` job 设为 required
-status checks（分支保护是仓库设置，不在 workflow 文件里）。
+要把门禁真正用于「阻断合并」，需在仓库设置里把稳定聚合 job **`compat-gate`** 设为
+required status check（它汇总 `detect` / `unit` / `smoke` 的结果：无变化时套件 skipped
+也算通过，套件失败或 detect 失败都会红；也可同时要求 `unit` / `smoke`。分支保护是
+仓库设置，不在 workflow 文件里）。
 
 本地复现：
 
@@ -132,14 +137,16 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 
 与上面「接收二进制」的流程独立，手动触发，直接消费 TS7 官方仓库的 errors 基线：
 
-- 语料 pin：`microsoft/TypeScript@aa814927`（Go 布局；cases 在
-  `tsc/testdata/tests/cases`，基线在 `tsc/testdata/baselines/reference`）；
+- 语料 pin：`config/baselines.json` 的 `ts71-official` corpus（当前 `aa814927`；pin 对齐
+  #7 后自动跟随，workflow 现场解析 ref）。Go 布局：cases 在 `tsc/testdata/tests/cases`，
+  基线在 `tsc/testdata/baselines/reference`；
 - 期望源：`--expectation-source official-baseline`（缺基线 = 该用例无期望错误）；
 - 分档：`metrics.totals.byTier` 给 T0 location / T1 category / T2 text / T3 full
   的用例分布，`totals.messageMismatch` 给「位置命中但首行文案不同」的诊断条数；
 - 门禁：`--ratchet-impl <impl>`（路径 `config/ratchet/<impl>-<baseline>.tsv`，首次自动初始化），回落即失败、改善写回
   （CI 里清单已入库，正常不应产生写回；若 artifact 显示有改善，维护者审阅后提交）；workflow 里用显式
-  `--ratchet config/ratchet-ts71-official.tsv` + `--gate`（与 `smoke.yml` 的 28 例档同口径，T3 不判红）。
+  `--ratchet config/ratchet-ts71-official.tsv` + `--gate`（与 `smoke.yml` 的 28 例档同口径；
+  ratchet 只记 T0–T2，T3 不判红）。
 - **尚未在 GitHub Actions 上实际跑过**：先手动 dispatch 跑绿一次，再决定是否给它单独挂 cron；
   在那之前，`smoke.yml` 的每日变化检测在判「有变化」时会覆盖同一组 28 例官方基线冒烟。
 
