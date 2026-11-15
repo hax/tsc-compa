@@ -35,8 +35,8 @@ triggered workflow runs the TS7 official-baseline smoke.
 
 Design: [docs/DESIGN.md](docs/DESIGN.md). Self-compare and cross-version numbers
 (including the default-option drift between tsc versions):
-[docs/RESULTS.md](docs/RESULTS.md). Work is tracked in the
-[maat](https://github.com/hax/maat/issues/6) repository.
+[docs/RESULTS.md](docs/RESULTS.md). Work is tracked in this repository's
+[issue tracker](https://github.com/hax/tsc-compa/issues).
 
 ## Quick start
 
@@ -66,11 +66,11 @@ bun src/run.ts --baseline 7.1.0-beta-official --corpus "$TSC_COMPA_CORPUS" \
   --ratchet-impl tsc-7-1 \
   --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc
 
-# the same suite against another implementation (per-case CLI adapter)
-MAAT_BIN=/path/to/maat \
-bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter maat-batch
-# 对照：同样的二进制用逐案 CLI 模式
-MAAT_ZIG_BIN=/path/to/maat bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter maat-zig
+# the same suite against another checker implementation (batch adapter)
+CHECKER_BATCH_BIN=/path/to/checker \
+bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter checker-batch
+# 对照：同一个二进制用逐案 CLI 模式
+CHECKER_BIN=/path/to/checker bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter checker-cli
 ```
 
 Runs write `.cache/run/metrics.json` and `.cache/run/details.json` and print a
@@ -137,8 +137,9 @@ bun scripts/select-smoke.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --out 
 `tsc-cli` (reference implementation, see [docs/RESULTS.md](docs/RESULTS.md)),
 `none` (reports nothing), `mock-batch` (reference batch protocol, see
 `src/adapters/mock-batch.ts`), `cli:<bin>` (generic per-case CLI; extra args via
-`TSC_COMPA_CLI_ARGS`), `maat-zig` (per-case CLI, fixed option set), `maat-batch`
-(batch NDJSON mode of the same binary, `MAAT_BIN`/`MAAT_ZIG_BIN`).
+`TSC_COMPA_CLI_ARGS`), `checker-cli` (per-case CLI for a checker binary that emits
+`--json`, fixed option set, `CHECKER_BIN` or `checker-cli:<bin>`), `checker-batch`
+(batch NDJSON mode of the same binary, `CHECKER_BATCH_BIN` falling back to `CHECKER_BIN`).
 
 `--mode fixed` ignores case directives and forces the adapter's fixed option
 set, so its numbers are pipeline validation only. `--mode official` honors case
@@ -183,7 +184,7 @@ implementation × baseline). Current results: `tsrs` 28/28, 0 false positives,
 | `src/compare.ts` | matching (incl. mis-anchor pairing), T0-T3 agreement ladder (T3 compares the `.errors.txt` summary block before `====`, with per-case failure reason) and metrics |
 | `src/ratchet.ts` | `--ratchet` / `--ratchet-impl` lists: only go up, regression fails the run (per implementation × baseline) |
 | `src/run.ts` | smoke runner entry |
-| `src/adapters/` | reference `tsc-cli` adapter (keeps multi-line elaboration/related text for T3), per-case CLI adapter, batch protocol client, mock batch implementation |
+| `src/adapters/` | reference `tsc-cli` adapter (keeps multi-line elaboration/related text for T3), `checker-cli` per-case checker adapter, generic `cli:<bin>` adapter, batch protocol client, mock batch implementation |
 | `config/baselines.json` | baseline definitions (three tsc versions × two corpora) |
 | `config/implementations.json` | third-party implementation registry (acquisition, CLI args, pins) |
 | `config/smoke-cases*.json` | reproducible smoke case lists per corpus |
@@ -211,7 +212,7 @@ through the official tsc with `--extendedDiagnostics` to produce a same-run rati
 
 ```bash
 bun src/run.ts --baseline 7.1.0-beta-official --expectation-source official-baseline \
-  --cases config/smoke-cases-ts71-official.json --adapter maat:<bin> --perf-ratio
+  --cases config/smoke-cases-ts71-official.json --adapter checker-cli:<bin> --perf-ratio
 ```
 
 The reference tsc runs on a fixed stratified sample (suite × lines bucket × expected-errors,
