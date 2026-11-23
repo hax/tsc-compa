@@ -1,445 +1,301 @@
-# tsc-compa 设计（v0）
+# tsc-compa 的设计思路
 
-本文是当前 skeleton 的权威设计说明：协议、口径与指标定义。实现位置的
-「TODO / 留给后续」都在最后一节列明。
+假设你想把项目里的 tsc 换成一个更快的类型检查器。它能启动，命令也差不多，
+但你还需要知道：原来能通过的代码会不会突然报错？原来能发现的错误会不会被放过？
+升级后，已经解决的兼容性问题会不会又回来？
 
-## 1. 目标与范围
+tsc-compa 就是围绕这些问题设计的：把同一批代码交给 tsc 和候选检查器，
+找出两边的差异，再把这些差异变成可以检查、讨论和持续跟踪的结果。
 
-tsc-compa 是一个**与实现无关**的 TSC 兼容性测试套件：输入是任意 TSC 兼容
-检查器（二进制、进程内 API 或批量进程），输出是「误报率 / 覆盖率 / SKIP 分类」
-这组指标，目标是在官方 TypeScript 测试语料上证明「近乎 100% 兼容」。
+本轮拟采用的 warning 兼容比较与 T0 默认回归门槛尚待实现，
+进度和现有代码的差别见 [实现状态](STATUS.md#53-新的诊断比较与回归策略待实现)。
 
-不绑定的东西：实现语言（Rust / Go / TS 等均可）、tsc 基线版本（5.9.x /
-6.0.3 / 7.1.0-beta，规划中）、语料来源（官方 `tests/cases`，后续可对接官方基线）。
+## 1. 我们想帮助你做什么决定
 
-v0 把协议、口径、指标固化下来并用小规模 smoke 集跑通全链路；当前版本加入
-用例分类、多 tsc 基线（5.9.3 / 6.0.3 / 7.1.0-beta）、错锚口径、官方基线期望源
-与 CI 门禁（`--gate`，§4.3）。门禁已接 `smoke.yml` 的 push/PR；每日 cron 是变化驱动的
-（先跑 `scripts/detect-changes.ts` 判断输入是否变化，未变则跳过套件），全量运行仍未做，见 §10。
+“兼容 tsc”可以指很多事。对一个已经使用 TypeScript 的项目，最先遇到的通常是：
 
-## 2. 流水线
+- **现有代码还能通过检查吗？** 多出来的报错可能直接挡住 CI；
+- **该发现的错误还能发现吗？** 少报错误意味着原本由 tsc 拦住的代码会继续通过；
+- **开发体验会变吗？** 报错换了位置，编辑器就会定位到不同的地方；文字变了，
+  按报错文本匹配的快照测试或脚本也可能需要修改；
+- **后续版本还可靠吗？** 一次跑通之后，还需要防止升级把旧问题带回来；
+- **它到底快在哪里？** 检查本身更快，还是启动方式、并行度不同造成的差别？
 
+所以我们没有把目标定成“跑完后给一个兼容率”。这个数字太容易把不同问题揉在一起。
+我们更想让你拿着报告回答：差在哪里，差异是否影响你的项目，以及是否值得继续试用。
+
+## 2. 用官方测试作为共同起点
+
+测试输入主要取自 TypeScript 官方的类型检查用例。选出一批后，
+将其中的代码、文件和选项分别交给参考 tsc 与候选检查器，报告保留有差异的具体用例。
+
+自己写几段常见代码，很容易得到“看起来能用”的结果。难的是那些平时不常写、
+却会藏在泛型库、声明文件和复杂类型推导里的组合。
+
+TypeScript 官方已经积累了大量小而具体的测试。用这些测试作共同的起点，有两个好处：
+一是能碰到日常项目之外的语言细节；二是发现差异时，可以拿出一个小用例讨论，
+比从整个工程里找原因容易得多。
+
+这也解释了为什么 tsc-compa 以**类型检查结果**为主，而没有把 IDE 功能、工程构建、
+生成 JavaScript 等任务一起算进来。它们需要的环境和判断方法不同，放在一个分数里，
+反而不容易看出一个检查器究竟做对了什么。
+
+官方小用例检查具体的语言行为；真实工程再验证模块解析、声明文件、配置和依赖的组合。
+在选检查器时，这两步可以接着做。
+
+## 3. 一次比较是怎么来的
+
+### 3.1 让两边拿到同一个问题
+
+一个官方用例除了源代码，还可能写着 `strict`、`target` 等选项，有时还包含多个文件。
+如果只复制代码而漏掉选项，双方回答的就可能是不同的问题。
+
+因此测试先读出代码、文件和编译选项，再交给两边检查：
+
+```text
+                  同一个用例
+                 /          \
+        指定版本的 tsc      候选检查器
+                |              |
+             参考结果        实际结果
+                 \          /
+                   比较差异
+                      |
+                     报告
 ```
-语料 tests/cases
-   │  发现（discover.ts：scanCorpus / manifest）
-   ▼
-用例（case.ts：指令解析 → 虚拟文件 + 有效编译选项；classify.ts：分类标签）
-   │
-   ├──► 期望（tsc.ts：固定版本 tsc CLI + 选项 → 诊断列表，按内容哈希缓存）
-   │
-   └──► 适配器（adapters/*：把实现包成 check(input) → diagnostics）
-   ▼
-匹配（compare.ts：文件+行+列+码）
-   ▼
-指标（metrics.json / details.json + stdout 摘要）
-```
 
-运行器是 `src/run.ts`。用例集由 manifest 给出（`config/smoke-cases.json`），
-manifest 用 `scripts/select-smoke.ts` 生成并可复现。
+不同检查器的命令和输出格式不完全一样。适配器负责将文件和选项交给检查器，
+把输出整理成统一的诊断格式，并报告执行异常或超时。
+接入另一个检查器时，需要处理这些调用和输出差别，后面的比较与统计可以继续使用。
 
-## 3. 用例语义
+### 3.2 两种参考结果：运行 tsc，或读取官方输出
 
-### 3.1 指令
+参考结果有两种来源，通过 `--expectation-source` 选择：
+`tsc` 表示运行参考 tsc，`official-baseline` 表示读取官方保存的结果。
 
-官方用例的编译选项由行内指令声明（`// @strict: true`、`// @target: es2015`、
-`// @filename: a.ts`……）。`@filename` 把文件切成多个虚拟文件；指令行不进入
-源文本。
+最直接的方法，是运行你选定版本的 tsc：看它在这段代码和这组选项下报什么，
+再与候选检查器比较。这很适合做新旧版本对照，也方便调整选项后重新试验。
+相同输入的结果会缓存起来，减少重复启动 tsc 的开销。
 
-v0 分四类处理：
+另一种方法，是读取官方测试已经保存的结果文件，也就是 `.errors.txt`。
+这条路径除了省去生成参考结果的工作，还能帮助检查**测试工具自己有没有理解错用例**。
+例如，错误地删掉一行注释会移动行号；忽略一个选项，也可能改变报错。
+对照官方保存的结果，就有机会发现这些问题。
 
-| 类别 | 处理 | 例子 |
+两条路径各有用处：运行 tsc 便于选择版本和试验选项，读取官方结果便于核对官方测试行为。
+具体用哪一条，可以按本次要回答的问题选择。
+
+### 3.3 先对齐版本和选项
+
+“与 tsc 一致”首先要问“与哪个版本的 tsc 一致”。你的项目使用哪个版本，
+通常就先选它作为参考。
+
+版本不同，默认选项也可能不同。同一段代码，开启 `strict` 后多出报错，
+不一定是候选检查器的类型推导出了问题。
+
+我们做过一组 5.9 与 6.0.3 的对照：默认选项不同时，多出了 43 条报错；
+显式对齐选项后，剩下 2 条。这个例子促使我们把两件事分开：
+
+- **比较默认设置**：双方使用各自的默认设置，找出版本或检查器默认值的差别；
+- **比较检查行为**：把支持的选项对齐，继续看同样条件下还有哪些差异。
+
+因此，参考 tsc 的默认参数由所选版本决定，候选检查器保留自己的默认参数；
+需要对齐时，再明确传入相同选项。这样可以沿着差异找原因，
+而不是一开始就把所有额外报错归咎于某一边。
+
+实际项目通常已经有 `tsconfig`。评估迁移时，就按项目的选项比较；
+默认设置对照则帮助解释为什么某些选项需要明确写出来。
+
+具体版本配置见 [实现状态](STATUS.md)，上述对照过程见 [实验结果](RESULTS.md)。
+
+## 4. 先看问题是否找到，再看它是 error 还是 warning
+
+编译器报告的错误和警告统称为“诊断”。比较时，我们先按文件、位置和诊断码找对应关系，
+再记录严重级别和文字怎样变化。这样，原来的 error 改成 warning，会记为降级，
+而不是“这条问题没有找到”。
+
+| 与 tsc 相比发生了什么 | 报告怎样记录 | 对使用者意味着什么 |
 | --- | --- | --- |
-| 支持的选项指令 | 翻译成 tsc 选项，进入期望生成与适配器输入 | `@strict`、`@target`、`@lib`、`@module`、`@moduleResolution`、`@skipLibCheck`、`@noImplicitAny`…… |
-| 跳过指令 | 整用例 SKIP，带原因 | `@allowJs`、`@checkJs`、`@jsx`、`@noTypesAndSymbols`、`@types`、`@paths`、`@symlink`…… |
-| 忽略指令 | 不影响「码 + 位置」的 emit/文案类指令 | `@declaration`、`@outDir`、`@sourceMap`、`@noEmit`、`@pretty`…… |
-| 未知指令 | 整用例 SKIP（保守：不拿不完整口径下结论） | 其它 |
+| 参考诊断在候选输出中完全找不到 | 漏报 | 原来提示的问题没有被指出 |
+| 同文件、同诊断码的报错出现在不同位置 | 位置差异 | 编辑器可能定位到不同地方，诊断快照需要核对 |
+| 同一条诊断从 error 变成 warning | 降级 | 问题仍有提示，检查器把它改作警告 |
+| 同一条诊断从 warning 变成 error | 升级 | 原来的提醒被检查器当作错误处理 |
+| 候选额外给出 warning | 附加警告 | 可以提供更多检查结果，又不改动原有诊断的匹配 |
+| 候选额外给出 error | 多报错误 | 出现了新的错误，迁移时要检查它的具体原因 |
+| 诊断和位置相同，文字不同 | 文本差异 | 人读起来可能差别不大，依赖文本的脚本却可能受影响 |
 
-完整表在 `src/case.ts` 的 `OPTION_DIRECTIVES` / `SKIP_DIRECTIVES` /
-`IGNORED_DIRECTIVES`，改表即改口径，需同时更新本节与测试。
+有的候选检查器会用 warning 提示 tsc 没有检查出来的问题；也可能在分析得更精确后，
+把原本的 error 改成 warning，保留一条用户熟悉的提示。
+对这类策略，报告要同时回答“原有问题还找得到吗”和“检查器决定怎样处理它”。
+新增或减少报错的原因，则结合具体用例分析。
 
-### 3.2 用例集范围与分类
+因此，默认的**兼容比较**允许附加 warning，并单独列出它们。
+原有诊断的严重级别升降也单独记录；没有参考诊断与之匹配的新增 error，仍算多报。
+需要完整复现 tsc 输出时，使用**严格对照**，连额外 warning 也计入诊断集合的差异。
 
-- 只取 `compiler/` 与 `conformance/`（类型检查口径）。`fourslash/` 是 IDE
-  语言服务用例，`project(s)/`、`transpile/`、`unittests/` 不在类型检查口径内，
-  默认排除；后续若要覆盖 IDE 面，单独立一套 runner，不混进兼容性指标。
-- 虚拟文件只允许 `.ts` / `.mts` / `.cts`（`.d.ts` 以 `.ts` 结尾自然包含）；
-  含 `.js` / `.jsx` / `.json` 的用例 SKIP。
-- 虚拟路径不得含 `..`（防越界），违者 SKIP。
+比如 tsc 有一条 error，候选在同一处给出同码的 warning，同时增加两条新的 warning，
+兼容报告应读作：
 
-用例按**正交标签**分类（`src/classify.ts` 的 `CASE_TAGS`）：
+```text
+参考诊断：找到 1/1，覆盖率 100%
+error → warning：1 条
+附加 warning：2 条
+多报 error：0 条
+```
 
-| 标签 | 含义 |
+这样既能看出候选保留了原有检查，也能看到它采取了不同的诊断策略。
+原始诊断全部保存，严格对照时仍可检查完整输出。
+
+位置差异也需要单独看。比如同一个赋值错误，tsc 指向左边，候选指向右边，两边都报 TS2322。
+如果简单逐条比位置，会同时算成一条漏报和一条多报。
+我们先记录位置差异，再查看用例，判断两条诊断是否指向同一个问题。
+只有文件、位置和诊断码都匹配，才计入精确命中。
+
+假设参考结果有 100 条诊断，候选精确匹配了 90 条，其中一些以 warning 输出；
+另外 8 条没有找到、2 条报在别处，那么覆盖率是 90%，漏报 8 条，位置差异 2 条。
+升降级数量另列，附加 warning 也另列，不把它们混成一个通过率。
+
+## 5. 从错误位置到完整输出：T0–T3
+
+我们把匹配结果分成四个等级。兼容比较先把附加 warning 单列，其余诊断进入对照；
+原有诊断的 error／warning 升降不影响 T0，没有匹配对象的新增 error 则会使 T0 不一致。
+严格对照包含全部诊断，因此结果还会标明使用的是哪种比较方式。
+
+T 是英文 tier（等级）的缩写；T0 是基础一级，T1–T3 逐级增加比较内容：
+
+| 等级 | 多检查了什么 | 主要帮助你看什么 |
+| --- | --- | --- |
+| T0 | 文件、位置和诊断码是否相同 | 是否在同一处报告了同一类问题 |
+| T1 | 是错误还是警告 | 是否改变了诊断的严重级别 |
+| T2 | 报错第一行的文字是否相同 | 首行诊断文本是否便于直接替换 |
+| T3 | 完整报错输出，包括补充说明和各条诊断的先后顺序 | 诊断输出是否与官方保存的结果一致 |
+
+我们保留原始诊断、完整比较结果和每个用例的最高匹配等级。
+附加 warning 会进入完整输出记录；即使兼容比较的 T0 通过，T3 仍能显示这些输出差异。
+
+这样分级，是为了回答“需要一致到什么程度”。
+只把检查器当作项目 CI 中的一道类型检查时，通常先看有没有新增或漏掉报错。
+接到编辑器后，还要看定位是否准确；用报错文字做快照断言时，还要看文本是否相同。
+
+例如，两个检查器都在同一处报 TS2322，第一句话也相同，但一个还列出了类型不匹配的
+具体原因。这时它们在前面的等级上相同，完整输出却有差别。把差别记在 T3，
+就可以单独改善诊断信息，而不必重新讨论它是否发现了这条错误。
+
+要看 T3，就选择官方保存的结果作为参考，这样有完整的报错文本可供对照。
+运行 tsc 生成参考结果时，主要比较错误、位置和首行文字。
+
+**记录和门禁是两件事。** 记录保留 T0–T3 和各项差异；
+本仓库兼容性回归任务拟默认以 T0 为最低要求，T1–T3 的变化通过报告查看。
+一个用例从 T2 回到 T0 时，报告说明严重级别或文字怎样变化，默认回归检查仍通过；
+原来达到 T0、后来丢掉参考诊断或改变其位置与码，则让回归检查失败。
+
+这与允许 error／warning 升降的策略一致：先守住已经找得到的问题，
+再让读者看清检查器怎样解释它。依赖首行文字或完整诊断快照的项目，
+可以另选更严格的比较要求。
+
+只看最高等级还不够。例如严重级别改变后，最高等级停在 T0，
+首行说明却可能完全相同。报告仍要比较和展示文字，而不是在 T1 不匹配时就停止记录。
+
+## 6. 工具自检和跳过记录
+
+测试工具也要先自检：让同一个版本的 tsc 检查同样的用例，确认两边结果能对上。
+无法完成比较的用例则进入“跳过”记录，附上不支持、环境依赖或超时等原因。
+
+发现差异后，有两种可能：候选检查器的行为不同，或者我们给两边准备的输入不同。
+版本默认值、文件编码、测试指令和基线路径，都可能成为后一种情况的原因。
+
+如果同一个版本两边对不上，先排查调用参数和结果解析；
+再与官方保存的结果比较，可以继续排查用例读取和测试环境。
+这一步能减少追着“检查器 bug”查半天，最后发现是测试工具设置错了的情况。
+
+跳过的用例则回答另一个实际问题：**你的项目需要的功能，这次测到了吗？**
+一个用例可能因为尚不支持 JSX、依赖特定工程环境，或者执行超时而没有完成。
+这些情况放在“跳过”中，并记录原因。
+
+阅读报告时，先看完成了多少用例，再看跳过了哪些功能。
+如果你要评估 React 项目，而相关 JSX 用例还没有测到，就应先查看
+[支持范围和待办](STATUS.md)，再用你的工程验证这一部分。
+这比只看一个漂亮的覆盖率更有用。
+
+## 7. 怎样把已经做到的兼容性保留下来
+
+我们记录已经纳入回归检查的用例，同时保存每次运行的完整匹配结果。
+后续运行默认检查这些用例是否仍满足 T0；严重级别和文字的变化保留在报告中。
+这套机制叫作 `ratchet`，中文是“棘轮”，这里用来表示已经取得的进展要保留下来。
+
+兼容性通常是一点点补齐的。如果只要求总体通过率上升，修好十个新用例的同时弄坏一个旧用例，
+总分仍然会变好，旧问题却又回来了。
+
+每个检查器与参考配置的组合分别保存记录。这样，一个实现可以从当前通过情况开始逐步改善，
+不必一接入就满足另一个实现的全部成绩。
+首次记录时，维护者先查看具体差异，确认哪些用例满足 T0、采用哪种比较方式，再提交回归记录。
+后续继续运行这些旧用例，检查已经覆盖的问题是否又丢失。
+换了参考 tsc 版本时，再审阅新的对照结果，确定接下来要保持哪些行为。
+
+报告会展示 T1–T3 的进步和退步，但默认不会因为等级从 T3 降到 T2，或从 T2 降到 T0，
+就阻断兼容性回归任务。历史记录仍然保留，便于看见这些变化和继续改善。
+
+此外，评估整体兼容程度时，也可以直接设置多报错误、漏报和位置差异的上限。这适合另一类要求：
+“这组用例现在就应当全部对齐”，而不是仅仅“比上一次没有退步”。
+
+因此，对 tsc 自比可以严格要求零差异；对候选实现，则明确选定比较方式，
+先守住已覆盖用例的 T0，再从报告中评估其他变化。
+现有清单格式、初始化和更新操作见 [技术参考](REFERENCE.md#7-回归检查与-ci-通过条件)，
+迁移到新记录与门禁设计的工作见 [实现状态](STATUS.md#53-新的诊断比较与回归策略待实现)。
+
+## 8. 在同一批输入上比较性能
+
+性能部分复用兼容性运行的样本，并在同一批输入上运行参考 tsc。
+它也单独给出错误诊断全部匹配的用例子集，便于先看已经对齐的部分。
+
+更快通常是尝试新检查器的主要原因之一。但检查得少、漏掉工作，也可能让时间缩短。
+先看清检查结果，再比较耗时，数字才更容易解释。
+
+测量时还要分清两种时间：
+
+- **Check 阶段耗时**：主要看类型检查本身；
+- **从开始到结束的实际耗时**：还包含进程启动、读写文件、解析、绑定和输出等工作。
+
+一个检查器每案启动一次，另一个用常驻进程批量处理，后者可能明显更快；
+这有助于评价运行方式，但还需要单独看检查阶段是否更快。
+所以比较时要一起看测量方法、样本组成和选用的适配器。
+测量也会交错运行双方，减轻先后顺序的影响。
+
+性能比值使用“候选检查器耗时 / 参考 tsc 耗时”。小于 1 时，候选检查器在这组测量中更快。
+具体计算和抽样参数放在 [技术参考](REFERENCE.md#9-性能指标)，不再混入兼容性分数。
+
+## 9. 拿到报告之后，怎样判断是否值得采用
+
+可以按下面的顺序读报告：
+
+1. **选对参考版本和测试范围。** 先对应项目使用的 tsc，再看模块解析、声明文件、
+   JSX 等项目依赖的功能是否测到了；
+2. **看多报和漏报的具体用例。** 多报错误关系到迁移时要改多少代码，漏报关系到会失去哪些提示；
+3. **看升降级、附加 warning、位置和文本差异。** 核对编辑器定位、诊断快照和报错解析脚本，
+   并在项目中确认实际退出码怎样变化；
+4. **看已经对齐部分的性能。** 区分类型检查本身更快，还是常驻进程减少了启动成本，
+   再按你计划采用的运行方式比较总耗时；
+5. **在自己的工程中并排运行。** 官方小用例帮助查语言问题，真实工程检验配置、依赖和使用方式；
+6. **决定采用后，把回归检查接进 CI。** 让后续版本继续守住已经验证过的行为。
+
+如果你还依赖 tsc 生成 JavaScript 或声明文件，也要另行比较这些输出。
+这套报告聚焦类型检查；迁移时把类型检查和构建任务分开验证，会更容易找到问题。
+
+从哪里开始：执行命令见 [README](../README.md)，当前能测哪些功能见 [实现状态](STATUS.md)，
+现有对照结果见 [实验结果](RESULTS.md)。需要编写适配器或读取字段时，再查
+[技术参考](REFERENCE.md)；重要演进和排错过程保留在 [演进记录](HISTORY.md)。
+
+## 10. 报告和代码中的几个术语
+
+正文尽量使用报错、位置差异、匹配等级这些说法。
+读命令、报告或实现代码时，还会遇到下面几个名称：
+
+| 名称 | 可以怎样理解 |
 | --- | --- |
-| `suite:compiler` / `suite:conformance` / `suite:other` | 语料大类（互斥，可覆盖全部用例） |
-| `files:single` / `files:multi` | 虚拟文件数 |
-| `lang:js` / `lang:jsx` | 含 JS/JSX 虚拟文件，或带 `@jsx` 指令 |
-| `shape:parser` | parser 目录/文件名（语法错误高发） |
-| `options:module` / `options:lib` / `options:emit` | 指令涉及模块解析 / lib / emit |
-| `env:skip` | 依赖 @types、工程布局的环境类用例 |
-| `expect:syntax` / `expect:no-errors`（运行期） | tsc 期望是语法错误 / 零诊断 |
-
-标签可重叠，`byClass` 里各标签的数字**不能相加**（`suite:*` 三类除外）。
-过滤用 `--exclude-class a,b`（命中任意即排除）与 `--only-class`（要求全部命中）；
-被排除的用例记 SKIP，原因写 `类排除:<tag>`，不进入兼容性分母。
-
-冒烟 manifest 生成（`scripts/select-smoke.ts`）时排除
-`shape:parser`、`lang:js`、`lang:jsx`、`options:*`、`env:skip`，并用目标基线的
-tsc 现场核对、剔除 `expect:syntax` 用例。
-
-### 3.3 版本默认值（已对齐官方 harness）
-
-指令没写到的选项使用**官方 harness 的默认值**，逐条核对源码后显式写进
-`config/baselines.json` 的 `baseArgs`（不再依赖各版本 CLI 的隐含默认，避免版本漂移）：
-
-| 项 | 5.9 | 6.0（strada） | 7.1（Go） |
-| --- | --- | --- | --- |
-| 默认 target | ES5 | ES2025（`ScriptTarget.LatestStandard`） | ES2026（`ScriptTarget.LatestStandard`） |
-| 默认 module | 由 target 推出 CommonJS | 由 target 推出 ES2022 | 由 target 推出 ES2022 |
-| 默认 moduleResolution | Node10 | Bundler | Bundler |
-| strict 系默认 | false | **true** | **true** |
-| harness 固定项 | `noResolve=false`、`newLine=CRLF`、`noErrorTruncation=true`、`skipDefaultLibCheck=true` | 同左 | 同左（Go harness：`NewLine=CRLF`、`SkipDefaultLibCheck=true`、`NoErrorTruncation=true`） |
-
-来源：
-- 5.9 / 6.0（JS 实现）：`src/compiler/utilities.ts` 的 `_computedOptions`（target /
-  module / moduleResolution 的计算与 `getStrictOptionValue`）、`src/compiler/types.ts`
-  的 `ScriptTarget.LatestStandard`、`src/harness/harnessIO.ts` 的 `compileFiles`（固定项）。
-  5.9 的 `getStrictOptionValue` 是 `!!compilerOptions.strict`（默认 false），6.0 改成
-  `compilerOptions.strict !== false`（默认 true）。
-- 7.1（Go 实现）：`reference/typescript/tsc/internal/core/compileroptions.go`
-  （`GetEmitScriptTarget`、`GetEmitModuleKind`、`GetModuleResolutionKind`、
-  `GetStrictOptionValue`）与 `tsc/internal/testutil/harnessutil/harnessutil.go` 的 `CompileFiles`。
-- case 指令经 `setCompilerOptionsFromHarnessSetting`（JS）/ `SetOptionsFromTestConfig`
-  （Go）覆盖上述默认值。
-
-**参数只作用于期望侧**：`baseline.baseArgs` 喂给期望生成；适配器只接用例指令与显式的
-`--base-arg` / `--adapter-arg`，用实现自己的默认值。跨版本对照时不能把期望版本的
-`--target es5` 强加给 6.0/7.1（会被直接判成配置错误 TS5107/TS5108）。
-
-注意 6.0 起默认 target 与 strict 同时翻转（5.9 → 6.0），官方基线因此**不能跨版本通用**：
-跨版本对照要么同版本自比，要么显式对齐选项后再比（见 docs/RESULTS.md）。
-
-## 4. 期望来源
-
-v0 用「固定版本的 tsc CLI 现场生成」：
-
-1. 把用例的虚拟文件写到临时目录，按用例选项拼 tsc 参数（`--noEmit
-   --ignoreConfig --pretty false` + 指令选项），跑指定 `tsc`。
-2. 解析 `file(line,col): error TSxxxx: msg` 输出，按「文件 + 行 + 列 + 码」记
-   诊断，行列转 0-based；语法错误（TS1xxx、以及 17006/17007 这两个语法级限制码）
-   整体归 `syntax`，因为此后没有可比的语义诊断。
-3. 结果按 `(文件内容, 参数, tsc 版本)` 的哈希缓存到 `.cache/expectations/`
-   （进程退出/超时不落缓存，避免临时故障被持久成 SKIP）。
-
-后续对接官方基线（`.errors.txt` 等）时，只需新增一个期望来源实现，
-`compare.ts` 与指标层不变。
-
-### 4.1 两种期望模式
-
-- `--mode official`：用**用例指令**推导选项（目标口径，兼容性结论只认这个模式）。
-- `--mode fixed`：忽略用例指令，统一用适配器声明的 `fixedOptions`；只用于
-  「实现还不接受外部选项」时的流水线冒烟。运行器会打印警告，指标里
-  `verdictEligible=false`。
-
-### 4.2 官方基线期望源
-
-`--expectation-source official-baseline` 直接消费官方 errors 基线的错误摘要块
-（`file(line,col): error TSxxxx: msg`，位置 1-based），指标层不变。支持两种布局：
-
-- **strada / 6.0 线**：基线在 `tests/baselines/reference/` 下按 basename 平铺；
-- **TS7 官方 Go 布局**（pin `microsoft/TypeScript@3e92363…`，即 npm
-  `typescript@7.1.0-beta` 的 gitHead）：cases 在
-  `tsc/testdata/tests/cases/`，基线在 `tsc/testdata/baselines/reference/` 下。注意 Go
-  布局内部并不统一：`compiler` 套件按用例相对目录分层（`compiler/Foo.errors.txt`），
-  而 `conformance` 等套件把子目录**拍平**（`conformance/es6/Symbols/Foo.ts` →
-  `conformance/Foo.errors.txt`）。因此查基线按三档候选：id 相对路径 → suite 目录压平
-  （首段目录 + basename）→ 根目录压平。漏掉「suite 压平」这一档会把 6 个 conformance
-  用例误判成「无基线 = 无期望错误」，进而在任何实现上产生同一批假阳性——2026-11-15
-  用 tsrs 复现并修复。
-
-
-官方 harness 只在用例有诊断时写 `.errors.txt`，因此**缺基线 = 期望零错误**（不是
-跳过）：无错用例也进入指标，参与假阳性检查。仍跳过的子集：
-
-- 多值指令（基线带 `(key=value)` 配置后缀）——需复刻官方 harness 的配置命名；
-- 绝对路径 `@filename` 与 `.d.ts` 用例；
-- 基线含配置错误（无位置）或语法错误（TS1xxx）。
-
-`bun scripts/select-smoke.ts --corpus <tests/cases> --errors 18 --clean 10` 可按
-「有 errors 基线 / 无错」分组生成官方基线冒烟集（TS7 版入库为
-`config/smoke-cases-ts71-official.json`；120 例错误用例扩展样本见
-`config/official-baseline-cases-ts71.json`）。
-
-已知偏差：官方基线来自仓库源码快照，与 npm 上发布的补丁版本不一定逐条一致
-（见 docs/RESULTS.md；同源编译器生成期望列为后续待办）。
-
-### 4.3 T0–T3 一致性分档与 ratchet
-
-对齐 reference/tsc-rs 的 Agreement 口径，每个用例在官方基线上的最深一致档位：
-
-| 档位 | 含义 |
-| --- | --- |
-| T0 `location` | file / line / col / code 多重集相同 |
-| T1 `category` | + severity（error/warning） |
-| T2 `text` | + 首行 message 完全相同 |
-| T3 `full` | 整份 `.errors.txt` 摘要块字节相等（含 elaboration、related 与顺序） |
-
-无基线文件（官方无错用例）时，两侧都空记 `full`，否则最多到 `text`。
-`totals.byTier` 给分布；`totals.messageMismatch` 给「位置命中但首行文案不同」的
-诊断条数（诊断级 T0−T2 差）；`samples.messageDiff` 给逐条文案差异样例。
-
-**T3 的整份渲染**：期望侧只取基线文件第一个 `====` 之前的摘要块（`====` 之后
-是用例源码标注，不属于诊断文本）；实现侧优先用适配器提供的 `CaseOutcome.fullText`
-（`tsc-cli` 适配器保留首行 + 缩进阐述/related 续行与顺序，`Diagnostic.fullText`
-同步携带），缺失时退回由诊断首行拼接（只可能到 `text`）。`totals.t3Failures` 给
-未达原因分布：`missing`（实现少报）/`extra`（多报）/`diagnostics`（集合不同）/
-`order`（次序不同）/`elaboration`（首行一致、缩进阐述不同）/`related`
-（related information 不同）/`other`；`samples.t3` 给样例。T3 是报告档不是门禁档。
-
-`--ratchet <file>` 维护 TSV 清单（`<case id>\t<tier>`，只登记 ≥T0 的用例）：
-改善自动写回、回落退出非零、先前登记的用例变成 SKIP 也视为回落。**清单只记门禁档
-T0–T2**：T3 full 是报告档，读入/写回时归一成 `text`（`gateTierOf`），所以 full → text
-不算回落，text → category 才算；旧清单里的 full 条目会被自动归一。
-
-**按实现分账**：`--ratchet-impl <impl> --baseline <id>` 推导 `config/ratchet/<impl>-<baseline>.tsv`；
-清单不存在时**自动初始化**（只登记当前档位，不产生回落判定），因此首次接入的实现（如目标版本更旧的
-`tsz`）不会被判红，后续轮次严格只升不降。`--ratchet-impl` 与显式 `--ratchet` 二选一；
-显式路径不存在时默认报错，需要首次创建时加 `--ratchet-init`。清单入库，CI 按实现分别传入。
-
-**CI 门禁（`--gate`）**：把一次运行折算成通过/失败，失败时退出码非零，逐项结论
-同时打印到 stdout 并写入 `metrics.meta.gate`（`smoke.yml` 的 push/PR，以及每日 cron
-在 detect 判「有变化」时才带它跑，见 docs/CI.md）。检查项：
-
-- 口径：本次运行必须是兼容性结论（`--mode official` 且适配器接受外部选项）；
-- 执行：至少跑完一个用例；
-- ratchet：配置了清单时不允许 T0–T2 门禁档位回落（T3 归一为 text、不参与）。门禁模式
-  要求清单已入库且非空（不自动初始化、拒绝空清单，避免 CI 里凭空生成「全绿」清单），
-  也不回写改善；
-- 阈值：`--gate-max-fp` / `--gate-max-miss` / `--gate-max-misanchor` /
-  `--gate-min-coverage`。没有 ratchet 时前三者默认 0（自比自检口径）；配了 ratchet
-  时默认不设条数上限（逐例严格性由清单承载），显式参数可叠加；阈值参数不带
-  `--gate` 时直接报错，不会静默忽略。
-
-**门禁档位**：T0 location / T1 category / T2 text 由 ratchet 清单按用例兜底；
-**T3 full 是报告档**——ratchet 清单不记 full（归一为 text），未达只记入
-`totals.byTier` / `totals.t3Failures` / `samples.t3`，不判红。
-
-### 4.4 第三方实现接入
-
-原则：**第三方实现只通过公开 CLI 驱动**（复用 `tsc-cli` 适配器），不为其写内部
-adapter、不改它的源码；获取方式与能力差异登记在 `config/implementations.json`：
-
-```jsonc
-{
-  "tsrs": {
-    "adapter": "tsc-cli",
-    "acquisition": { "npm": { "package": "tsrs", "version": "…", "bin": "node_modules/.bin/tsrs" },
-                     "cargo": { "repo": "reference/oxc-tsrs", "command": "…", "bin": "…" },
-                     "localEnv": "TSRS_BIN" },
-    "cliArgs": ["--singleThreaded"],          // 公平测量/确定性用的固定旗标
-    "baselines": ["7.1.0-beta", "7.1.0-beta-official"],
-    "phaseMetrics": { "flag": "--extendedDiagnostics", "checkField": "Check time" }
-  }
-}
-```
-
-`bun scripts/install-impl.ts --name tsrs --dest .tools` 按登记获取二进制并打印路径
-（npm 优先，其次 `localEnv`，再次已有 cargo 产物）；`.github/workflows/third-party.yml`
-用它跑某实现 × 某基线的冒烟（T0–T3 / ratchet）并上传 metrics。各实现的相位字段名、
-并行度开关、上游 pin 差异都写进 registry 与 RESULTS，不假装完全同口径。
-
-
-## 5. 适配器协议
-
-适配器把实现统一成 `Adapter.check(CaseInput) → CaseOutcome`。三种形态：
-
-- `per-case`：每案起一次实现进程（v0 的 CLI 适配器）；
-- `batch`：一个进程吃多案，NDJSON 双向流（推荐）；
-- `api`：实现本身是 JS/TS，进程内调用。
-
-### 5.1 批量协议（推荐形态）
-
-一行一个 JSON 对象，stdin/stdout。请求：
-
-```json
-{"protocol":1,"type":"check","id":"<唯一 id>","files":[{"path":"a.ts","text":"..."}],
- "options":[{"name":"strict","value":true}],"args":["--strict","true"]}
-{"protocol":1,"type":"shutdown"}
-```
-
-响应：
-
-```json
-{"protocol":1,"type":"result","id":"<同一 id>","status":"ok",
- "diagnostics":[{"file":"a.ts","line":0,"col":4,"code":2322,"severity":"error","message":"..."}]}
-{"protocol":1,"type":"result","id":"...","status":"skip","skipReason":"@jsx"}
-{"protocol":1,"type":"result","id":"...","status":"crash","message":"..."}
-{"protocol":1,"type":"hello","implementation":{"name":"checker","version":"..."}}
-```
-
-约定：行列 0-based；诊断文件路径用请求里的 `path`；`severity` 缺省 `error`；
-一行只对应一个用例；`shutdown` 后退出。参考实现：
-`src/adapters/mock-batch.ts`；客户端：`src/adapters/batch.ts`。
-
-### 5.2 选项协商
-
-`Adapter.supportsOptions` 表示实现是否接受外部编译选项。为 `false` 时，运行器
-在 `official` 模式会给出警告（结论降级），并可用 `fixed` 模式做管线冒烟。
-
-### 5.3 非 ok 状态
-
-实现返回 `skip` / `crash` / `timeout` 时，该用例记为 SKIP 并按原因分类，
-**不进入兼容性分母**（避免把实现不支持的能力伪装成兼容性数字）。
-
-## 6. 指标
-
-一次运行的 `metrics.json`：
-
-- `totals.fpCases` / `fpTotal`：期望之外多报的用例数 / 诊断条数；
-- `totals.expectTotal` / `hitTotal` / `coverage`：官方期望诊断数、命中数、
-  覆盖率（`hit / expect`，无期望时 `null`）；
-- `totals.passCases`：fp 与漏报都为 0 的用例数；`fpFreeCases`：只要求不误报；
-- `totals.misanchorCases` / `misanchorTotal`：**错锚**——同文件、同错误码、
-  位置不同。这类差异先成对抵消，**不计入 fp 也不计入 miss**，单独报告；
-- `totals.byTier`：官方基线 T0–T3 一致性分布（只统计跑完的用例，见 §4.3）；
-- `totals.t3Failures` / `samples.t3`：T3 未达用例的原因分布与样例（见 §4.3）；
-- `totals.messageMismatch` / `samples.messageDiff`：位置命中但首行文案不同的
-  诊断条数与逐条样例（诊断级 T0−T2 差）；
-- `samples.textDiff`：用例级「T0/T1 达成、T2 未达」的样例；
-- `byClass`：按 §3.2 标签聚合的同一组指标（含每类的覆盖率、fp、漏报、错锚）；
-- `totals.passCases`：fp、漏报、错锚都为 0 的用例数；
-- `byCode`：fp / miss 的码族 Top 15；
-- `skips`：跳过原因分类计数；
-- `meta.verdictEligible`：本次运行能否作为兼容性结论（`fixed` 模式、实现忽略
-  选项时为 false）。
-
-判定粒度：**错误码 + 文件 + 行 + 列**（L1）决定 fp/覆盖；官方基线另给 T0–T3
-分档（§4.3）承载 category 与文案/整份基线的比较。宽度只有部分实现给得出，
-缺省时跳过比较。
-
-错锚的正式口径：同一文件、同一错误码、位置不同的 expected × actual 各取一条
-成对抵消，计入 `misanchor`；剩余的 actual 才计 fp，剩余的 expected 才计 miss。
-覆盖率分母仍是全部期望诊断，分子只数「位置也一致」的命中，所以错锚会让覆盖率
-略低于 100%，差额由 misanchor 数字解释。自比时出现错锚即 harness 的 bug；
-跨版本时错锚是「判定一致、锚点口径不同」的信号，不能算成兼容性差异。
-
-`details.json` 保留逐用例的 fp/miss 点位，便于归因。
-
-## 7. 基线与多版本
-
-「tsc 版本 × 语料 tag」是两条独立配置轴，在 `config/baselines.json` 里成对定义
-（另有 `7.1.0-beta-official`：同一 tsc 版本，但期望源为 `ts71-official` 语料的
-官方 `.errors.txt`，用于 §4.2 的 TS7 官方基线路径）：
-
-```json
-{
-  "corpora": { "strada": {"repo": "microsoft/TypeScript", "ref": "050880ce…"},
-               "v5.9.3": {"repo": "microsoft/TypeScript", "ref": "v5.9.3"} },
-  "baselines": [
-    { "id": "5.9.3", "tsc": "node_modules/typescript-5-9/bin/tsc",
-      "baseArgs": ["--noEmit", "--pretty", "false"],
-      "corpus": "v5.9.3", "manifest": "config/smoke-cases-5.9.json" },
-    { "id": "6.0.3", … },
-    { "id": "7.1.0-beta", … }
-  ]
-}
-```
-
-- 三个 tsc 版本用 npm alias 并存安装（`typescript-5-9` / `typescript-6-0` /
-  `typescript-7-1`），互不覆盖；`bun src/run.ts --baseline <id>` 自动取该版本的
-  tsc、基础参数、语料来源（进 `metrics.meta.corpusRef`）与默认 manifest。
-- 每个基线有自己的冒烟集（语料 tag 不同，用例 id 也不同）：strada 用
-  `config/smoke-cases.json`，5.9 用 `config/smoke-cases-5.9.json`。
-- 锚点专用用例集 `config/anchor-cases.json`：已知跨版本锚点不同的用例，用来
-  验证 misanchor 口径。
-- CI 用 workflow matrix 跑三档自比（每档 checkout 自己的语料 tag）。
-
-**是否长期保留 5.9**：目前的差异分析（docs/RESULTS.md）显示 5.9 与 6.0/7.1 的
-差异主要是默认值漂移（strict、target）加少量模块上下文差异，保留成本主要在
-语料与期望维护。该决策留待接入官方基线、扩大样本后再定。
-
-**官方基线对接**：已接 v0 子集（§4.2），与「现场生成」并列、指标层不变；
-多值变体基线、语法/配置错误基线、`.d.ts` 用例仍待后续。
-
-## 8. 二进制分发（可选）
-
-被测实现的源码可以在本仓库之外，本仓库只接收构建出的二进制与测试输入：
-
-1. 实现侧 CI 构建平台二进制（linux-x64 起步），打 tag
-   `binary-<impl>-<srcSha>-<platform>`；
-2. 上传为本仓库的 Release Asset；
-3. 通过 `repository_dispatch` 触发本仓库 workflow，参数里带实现名与 tag；
-4. 本仓库下载 asset 后跑套件，指标作为 artifact 或 issue 评论回写。
-
-本仓库不读实现源码，只需要下载本仓 release asset 的权限；实现名与版本进入 metrics 的 `meta`。
-
-## 9. 目录
-
-```
-src/case.ts            指令解析 / 选项推导 / 虚拟文件
-src/discover.ts        manifest 与语料扫描
-src/tsc.ts             期望生成（tsc CLI + 缓存）
-src/officialBaseline.ts 官方基线期望源（.errors.txt 子集）
-src/compare.ts         匹配与指标（含错锚配对、按类聚合）
-src/classify.ts        用例分类标签与过滤
-src/baselines.ts       多基线配置（tsc × 语料 tag）
-src/gate.ts            CI 门禁（--gate 的检查项与结论渲染）
-src/report.ts          人类可读报告（Markdown + 自包含 HTML，含 delta/门禁结论/失败 callout）
-src/run.ts             运行器入口
-src/adapters/          tsc-cli / checker-cli / cli / batch / mock-batch / 工厂
-scripts/select-smoke.ts  生成冒烟 manifest
-scripts/select-official-baseline-cases.ts  生成官方基线可消费清单
-scripts/detect-changes.ts  CI 每日 cron 的变化检测（本地输入哈希 / HEAD / 外部 pin）
-scripts/merge-reports.ts   合并各档 CI 报告为 step summary 与 HTML 索引
-config/baselines.json    基线配置（三个 tsc × 两套语料）
-config/smoke-cases.json  strada 冒烟用例集（入库、可复现）
-config/smoke-cases-5.9.json  5.9 语料冒烟集
-config/anchor-cases.json     锚点专用用例集
-config/official-baseline-cases.json  官方基线子集用例（示例清单）
-config/smoke-cases-ts71-official.json  TS7 官方基线冒烟集（18 有错 + 10 无错）
-config/official-baseline-cases-ts71.json  错误用例扩展样本（120 例，本地口径）
-config/ratchet-ts71-official.tsv      TS7 官方基线 T0–T2 门禁 ratchet 清单（T3 归一 text）
-test/                  单测（bun test）
-```
-
-## 10. v0 限制与 TODO
-
-- [x] 批量适配器接真实实现：被测实现提供 `--batch`（NDJSON，协议见 §5.1），tsc-compa 注册 `checker-batch`（固定口径，与 `checker-cli` 逐案结果逐字段一致）；
-- [ ] 期望生成本身进程内化（用各基线 typescript API 取代每案 CLI spawn，冷跑大头在这里）；
-- [x] 官方 harness 默认值对齐（§3.3：三档 baseArgs 显式化，期望/适配器参数分离）；
-- [x] 官方基线作为期望来源（§4.2；strada 平铺 + TS7 Go 分层两种布局，缺基线=无错）；
-- [x] TS7 官方基线 T0–T3 分档与 T0–T2 门禁 ratchet（§4.3；T3 只报告）；
-- [x] T3 整份基线渲染：adapter `fullText` 保留 elaboration/related 续行，期望只比摘要块，失败按 missing/extra/diagnostics/order/elaboration/related 归因（§4.3，RESULTS 结论 10）；
-- [ ] 同源编译器生成期望（消除 npm 补丁版本与仓库基线的偏差）；
-- [ ] 官方基线多值指令变体与配置命名复刻；
-- [x] 多 tsc 基线与语料 tag 组合（§7，三档冒烟自比与跨版本预览已跑）；
-- [x] 基线守门 `--gate`（§4.3：ratchet + 条数/覆盖率阈值，已接 `smoke.yml` 的 push/PR；每日 cron 先经 `scripts/detect-changes.ts` 判变化，未变跳过）；`--update-baseline` 未做，更新由 ratchet 改善写回承担；
-- [ ] 更大规模的用例选择策略（按码族/目录分层抽样，避免只覆盖编译器用例）；
-- [x] 人类可读报告（`--report-md` / `--report-html` / `--report-out`，markdown 摘要 + 自包含 HTML + 与上次的 delta；CI 每档 artifact 与合并后的 step summary，见 README「Reports」）；
-- [ ] 并行执行与结果合并（shard / merge）；
-- [ ] L2/L3 判定粒度（宽度、消息文案）；
-- [ ] 实现声明「已知不支持的错误码/能力」，用于 SKIP 而非算漏报；
-- [x] CI workflow（实现侧 build → release asset → dispatch，见 §8；官方基线冒烟见 `.github/workflows/ts7-official.yml`）。
-
-
-## 11. 性能附录（`--perf-ratio`，v0）
-
-兼容性跑的主目标是正确性；性能只是附录：不参与退出码、不设门禁、不改变判定。打开 `--perf-ratio` 后：
-
-- **实现侧计时免费**：正常兼容跑里在 `adapter.check` 前后计时，不额外跑实现；适配器若在
-  `CaseOutcome.checkMs` 里自报每案检查耗时（`tsc-cli` 适配器解析 `--extendedDiagnostics` 的
-  `Check time:` 得到），优先用 Check 相位口径。
-- **固定分层样本**：跑之前预扫描（读主文件行数；官方基线模式下用 `baselineFileOf` 判断是否存在
-  `.errors.txt`），按 suite × 行数档（≤50 / 51–200 / 201–1000 / >1000）× 有无期望错误分层，
-  固定 seed/hash 排序抽样（默认 300 例，`--perf-sample` 可调）；每案每侧只跑一次，不做多轮重复。
-- **顺序对半对冲**：样本按 hash 排序后前一半「参考先跑、实现后跑」，后一半「实现先跑、参考后跑」；
-  同案两侧紧邻执行，且都用每案新进程 CLI、同参数（`--noEmit --pretty false --extendedDiagnostics`；
-  实现支持时可另加 `--singleThreaded`/`--checkers 1`）。
-- **空程序基线**：参考侧测 5 次、实现侧测 3 次空项目，各取最小作为固定成本估计。
-- **口径**：两侧都有 Check 相位 → 累加 Check 比 + 逐案 Check 比值（中位数/几何均值/P25/P75）；
-  实现没有相位 → wall − 空程序基线，且当参考每案固定成本占主导时守卫为 null 并告警，不给假精确值。
-  另给「判定完全一致（fp/miss/错锚均为 0）」子集的比值。
-- **样本组成**：`perf.sample.composition` 记录 suite/行数档/错误有无/对冲顺序，用于检查分层是否合理。
-- **公平性说明**：`perf.warnings` 汇总 fixed 模式、实现无相位、参考失败、基线不稳等不对称项；
-  跨实现比较只在同口径、同执行模式、同版本 tsc 下成立。
-- **成本**：300 例参考 tsc（7.1 native 约 60–200ms/案）约 20–60 秒；默认关闭，CI 手动开启。
-- 输出：`metrics.json` 的 `perf` 段（sample/metric/impl/reference/ratio/warnings）。
+| diagnostic，诊断 | 编译器报告的错误或警告 |
+| baseline，参考配置 | 通过 `--baseline` 选定要对照的 tsc、对应测试和默认参数 |
+| corpus，测试集 | 收集在一起的测试用例；其他文档也称“语料” |
+| adapter，适配器 | 把不同检查器的调用和输出接到这套测试上的组件 |
+| misanchor | 同文件、同诊断码的报错出现在不同位置；现有报告将这个字段标作“错锚” |
+| tier，匹配等级 | T0–T3 中 T 的来源，依次比较错误位置与码、严重级别、首行文字、完整文本 |
+| ratchet，棘轮 | 保留已经纳入回归检查的用例；完整结果供报告查看，默认回归要求保持 T0 |

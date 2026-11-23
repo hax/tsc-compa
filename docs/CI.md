@@ -1,5 +1,12 @@
 # 接收检查器二进制并跑兼容性套件（native-suite）
 
+本文说明 CI 操作。设计与术语见 [DESIGN.md](DESIGN.md)，
+参数和比较规则见 [REFERENCE.md](REFERENCE.md)，
+当前能力和限制见 [STATUS.md](STATUS.md)，历史变化见 [HISTORY.md](HISTORY.md)。
+
+本页命令对应现有 CI 实现；设计提出的 warning 兼容比较与 T0 默认回归门槛尚待落地，
+迁移工作见 [实现状态](STATUS.md#53-新的诊断比较与回归策略待实现)。
+
 实现侧 CI 构建二进制后，会把它作为本仓的 Release Asset 上传，并发送 `repository_dispatch`（`event_type = checker-binary`）触发本 workflow。本仓用自带的 `GITHUB_TOKEN` 下载自己的 release asset，不需要额外凭据。
 
 ## 触发
@@ -37,7 +44,7 @@
 | --- | --- | --- | --- | --- |
 | 自比 | 5.9.3 / 6.0.3 / 7.1.0-beta | 各自语料 tag | 现场 tsc | `--gate` 零差异自检：假阳性、漏报、错锚都为 0 |
 | TS7 官方基线 | 7.1.0-beta-official（28 例） | TS7 Go 布局（pin 取自 `config/baselines.json`） | 官方 `.errors.txt` | ratchet 清单 `config/ratchet-ts71-official.tsv`，按用例 T0–T2 只升不降 |
-| 6.0 官方基线子集 | 6.0.3（191 例） | strada（pin 取自 `config/baselines.json`） | 官方 `.errors.txt` | `--gate-max-fp 12 --gate-max-miss 4 --gate-min-coverage 0.99`，容忍 npm 补丁与仓库快照的已知偏差（2 例假阳性共 12 条、4 条漏报，见 docs/RESULTS.md 结论 6） |
+| 6.0 官方基线子集 | 6.0.3（191 例） | strada（pin 取自 `config/baselines.json`） | 官方 `.errors.txt` | `--gate-max-fp 12 --gate-max-miss 4 --gate-min-coverage 0.99`，容忍已知测试框架保真度缺口（2 例假阳性共 12 条、4 条漏报；语料提交对齐后指标未变，见 docs/RESULTS.md 结论 11） |
 
 `--gate` 的检查项（任一失败即非零退出，逐项结论同时写进 stdout 与
 `metrics.meta.gate`）：
@@ -54,9 +61,9 @@
    条数上限（逐例严格性由清单承载），显式参数仍可叠加。阈值参数必须配合 `--gate`
    使用，单独给出会直接报错。
 
-**门禁档位**：只有 T0 location / T1 category / T2 text 进门禁，经 ratchet 清单按用例兜底；
-ratchet 文件里只记这三档（旧的 full 条目读入时归一为 text）。**T3 full（整份
-`.errors.txt` 摘要块字节相等）仍是报告档**——未达只进 `totals.byTier` /
+**门禁档位**：只有 T0 位置与码 / T1 严重级别 / T2 首行文本进门禁，经 ratchet 清单按用例约束；
+ratchet 文件里只记这三档（旧的 full 条目读入时归一为 text）。**T3 full（换行归一后的
+`.errors.txt` 诊断摘要文本一致）仍是报告档**——未达只进 `totals.byTier` /
 `totals.t3Failures` / `samples.t3`，不判红。
 
 ### 人类可读报告（P0）

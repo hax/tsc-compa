@@ -1,5 +1,10 @@
 # 多基线冒烟结果与默认口径差异
 
+本文保留带日期的实验记录，不作为实时实现状态。
+设计思路见 [DESIGN.md](DESIGN.md)，参数和规则见 [REFERENCE.md](REFERENCE.md)，
+能力与待办见 [STATUS.md](STATUS.md)，
+重要演进及历史修正见 [HISTORY.md](HISTORY.md)。
+
 日期：2026-11-15
 环境：macOS arm64 本机；Bun 1.4.4；语料为 `microsoft/TypeScript` 的 `tests/cases`
 （6.0 strada 语料与 5.9 发布 tag `v5.9.3` 两套；6.0 语料自 2026-11-16 起 pin 到
