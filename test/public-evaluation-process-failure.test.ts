@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { baseline, buildPlanForIds, verifyShard } from "../scripts/full-compatibility.ts";
-import { verifyPublicShardCases } from "../scripts/public-evaluation-failures.ts";
+import { validPublicExecutionFailure, verifyPublicShardCases } from "../scripts/public-evaluation-failures.ts";
 import { BunCheckAdapter } from "../src/adapters/bun-check.ts";
 import { TscCliAdapter } from "../src/adapters/tsc-cli.ts";
 import { processFailure } from "../src/adapters/process-failure.ts";
@@ -19,10 +19,15 @@ test("process evidence requires an actual timeout code, fatal signal or abnormal
   const error = (code: string) => Object.assign(new Error("timed out"), { code });
   expect(processFailure({ ...base, error: error("ETIMEDOUT"), signal: "SIGTERM" }, 2))
     .toEqual({ kind: "deadline", errorCode: "ETIMEDOUT", signal: "SIGTERM" });
+  const timedOutExit = processFailure({ ...base, error: error("ETIMEDOUT"), status: 0 }, 2);
+  expect(timedOutExit).toEqual({ kind: "deadline", errorCode: "ETIMEDOUT", signal: null, exitCode: 0 });
+  expect(validPublicExecutionFailure({ id: input.id, status: "timeout", process: timedOutExit }, "tsc-cli")).toBe(true);
+  expect(validPublicExecutionFailure({ id: input.id, status: "timeout", process: { ...timedOutExit, exitCode: -1 } }, "tsc-cli")).toBe(false);
   expect(processFailure({ ...base, signal: "SIGABRT" }, 2)).toEqual({ kind: "signal", signal: "SIGABRT" });
   expect(processFailure({ ...base, status: 42 }, 2)).toEqual({ kind: "exit", exitCode: 42 });
   for (const result of [base, { ...base, status: 2 }, { ...base, status: 127 }, { ...base, signal: "SIGKILL" as const },
-    { ...base, error: error("ENOENT") }, { ...base, error: error("EACCES") }, { ...base, error: error("ENOBUFS") }]) {
+    { ...base, error: error("ETIMEDOUT") }, { ...base, error: error("ENOENT") }, { ...base, error: error("EACCES") },
+    { ...base, signal: "SIGKILL" as const, error: error("ENOBUFS") }]) {
     expect(processFailure(result, 2)).toBeUndefined();
   }
 });
@@ -41,6 +46,36 @@ test("both public adapters classify controlled abnormal exits before output text
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("both public adapters enforce a hard deadline when the child handles or ignores SIGTERM", async () => {
+  const root = mkdtempSync(join(tmpdir(), "tsc-public-deadline-fixture-"));
+  try {
+    const timeoutMs = 800;
+    const bin = join(root, "synthetic");
+    for (const handler of ["exit 0", ""]) {
+      // Built-ins only: no orphan subprocesses. The loop is bounded so a
+      // timeout regression fails the test without leaving a stuck child.
+      writeFileSync(bin, `#!/bin/bash
+trap '${handler}' TERM
+printf 'ready\\n'
+SECONDS=0
+while [ "$SECONDS" -lt 4 ]; do :; done
+exit 17
+`, { mode: 0o755 });
+      if (handler !== "") {
+        const soft = spawnSync(bin, [], { encoding: "utf8", timeout: timeoutMs, killSignal: "SIGTERM" });
+        expect(soft.stdout).toBe("ready\n");
+        expect(soft.status).toBe(0);
+        expect(processFailure(soft, 2)).toEqual({ kind: "deadline", errorCode: "ETIMEDOUT", signal: null, exitCode: 0 });
+      }
+      for (const Adapter of [TscCliAdapter, BunCheckAdapter]) {
+        const outcome = await new Adapter({ bin, timeoutMs }).check(input);
+        expect(outcome).toMatchObject({ status: "timeout", exitCode: null, rawOutput: { stdout: "ready\n" },
+          processFailure: { kind: "deadline", errorCode: "ETIMEDOUT", signal: "SIGKILL" } });
+      }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}, 15_000);
 
 test("runner continues to the next synthetic case and emits verified per-case subprocess evidence", () => {
   const root = mkdtempSync(join(tmpdir(), "tsc-public-runner-fixture-"));

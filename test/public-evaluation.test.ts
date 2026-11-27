@@ -565,3 +565,20 @@ test("strictly rejects missing, contradictory, misplaced, or non-process failure
   f.metrics.skips[0]![1] = 2;
   reject("case plan");
 }));
+
+
+test("a deadline racing with child exit 0 counts as a timeout, not as a pass or incomplete report", () => fixture((f) => {
+  const { records } = failureFixture(f);
+  const timeout = records[2]!;
+  if (!("executionFailure" in timeout)) throw new Error("Expected timeout fixture");
+  const process = { kind: "deadline", errorCode: "ETIMEDOUT", signal: null, exitCode: 0 } as const;
+  const raced = { ...timeout, actualExitCode: 0, executionFailure: { ...timeout.executionFailure, process } };
+  write(f.detailsFile, records.map((record) => record === timeout ? raced : record));
+  const report = makeReport(f.request, f.plan, f.root, run);
+  expect(report.candidateFailures).toContainEqual({ id: timeout.id, status: "timeout", process });
+  expect(report.summary).toMatchObject({ ran: 2, skipped: 1, compatibility: { pass: 1, fail: 3, unknown: 0 },
+    executionFailures: { crash: 1, timeout: 1 } });
+  verifyReport(report, report.id);
+  write(f.detailsFile, records.map((record) => record === timeout ? { ...raced, actualExitCode: 3 } : record));
+  expect(() => makeReport(f.request, f.plan, f.root, run)).toThrow("Unverified execution failures");
+}));

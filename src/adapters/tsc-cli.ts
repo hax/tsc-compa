@@ -102,6 +102,8 @@ export class TscCliAdapter implements Adapter {
         encoding: "utf8",
         maxBuffer: 1 << 28,
         timeout: this.timeoutMs,
+        // spawnSync waits for the child to exit; a candidate can ignore SIGTERM.
+        killSignal: "SIGKILL",
       });
       if (r.error !== undefined) {
         const failure = processFailure(r, 2);

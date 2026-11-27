@@ -95,6 +95,7 @@ export interface CaseInput {
 
 export type CandidateProcessFailure =
   | { kind: "deadline"; errorCode: "ETIMEDOUT"; signal: "SIGTERM" | "SIGKILL" }
+  | { kind: "deadline"; errorCode: "ETIMEDOUT"; signal: null; exitCode: number }
   | { kind: "signal"; signal: string }
   | { kind: "exit"; exitCode: number };
 

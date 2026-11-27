@@ -30,8 +30,10 @@ export function validPublicExecutionFailure(value: unknown, adapter: string): va
   if (!object(value) || !exactKeys(value, "id status process") || !nonempty(value.id) || !isValidCaseId(value.id) ||
       !object(value.process)) return false;
   const p = value.process;
-  if (value.status === "timeout") return exactKeys(p, "kind errorCode signal") && p.kind === "deadline" &&
-    p.errorCode === "ETIMEDOUT" && (p.signal === "SIGTERM" || p.signal === "SIGKILL");
+  if (value.status === "timeout") return p.kind === "deadline" && p.errorCode === "ETIMEDOUT" && (
+    exactKeys(p, "kind errorCode signal") && (p.signal === "SIGTERM" || p.signal === "SIGKILL") ||
+    exactKeys(p, "kind errorCode signal exitCode") && p.signal === null && count(p.exitCode) && p.exitCode <= 255
+  );
   if (value.status !== "crash") return false;
   if (p.kind === "signal") return exactKeys(p, "kind signal") && isCrashSignal(p.signal);
   const lastNormalExit = adapter.startsWith("bun-check") ? 1 : 2;
@@ -72,7 +74,7 @@ export function verifyPublicShardCases(metrics: Metrics, dir: string): PublicCas
           !Array.isArray(r.actual) || r.actual.length !== 0 ||
           !object(r.actualRawOutput) || typeof r.actualRawOutput.stdout !== "string" || typeof r.actualRawOutput.stderr !== "string" ||
           !validPublicExecutionFailure(caseFailure, metrics.meta.adapter) ||
-          r.actualExitCode !== (caseFailure.process.kind === "exit" ? caseFailure.process.exitCode : null)) return invalidFailure();
+          r.actualExitCode !== ("exitCode" in caseFailure.process ? caseFailure.process.exitCode : null)) return invalidFailure();
       failures.push(caseFailure);
       failuresById.delete(r.id);
     }

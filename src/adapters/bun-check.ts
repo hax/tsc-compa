@@ -239,12 +239,13 @@ export class BunCheckAdapter implements Adapter {
       const r = spawnSync(
         this.bin,
         ["check", "--no-script", "--no-pretty", "--all", "--timing", "-p", "tsconfig.json", ...plan.filePaths],
-        { cwd: tmp, encoding: "utf8", maxBuffer: 1 << 28, timeout: this.timeoutMs, env },
+        { cwd: tmp, encoding: "utf8", maxBuffer: 1 << 28, timeout: this.timeoutMs, killSignal: "SIGKILL", env },
       );
       const stdout = r.stdout ?? "";
       const stderr = r.stderr ?? "";
       const rawOutput = { stdout, stderr };
-      const exitCode = r.error === undefined ? r.status : null;
+      const failure = processFailure(r, 1);
+      const exitCode = r.error === undefined || failure?.kind === "deadline" ? r.status : null;
       const fail = (status: "skip" | "crash" | "timeout", skipReason: string, message?: string,
         failure?: CaseOutcome["processFailure"]): CaseOutcome => ({
         id: input.id,
@@ -257,7 +258,6 @@ export class BunCheckAdapter implements Adapter {
         rawOutput,
       });
       if (r.error !== undefined) {
-        const failure = processFailure(r, 1);
         const timeout = failure?.kind === "deadline";
         return fail(timeout ? "timeout" : "crash", timeout ? `Bun check 超时（${this.timeoutMs}ms）` : "Bun check 进程未能完成（启动或采集异常）", String(r.error), failure);
       }
@@ -265,10 +265,10 @@ export class BunCheckAdapter implements Adapter {
       const text = `${stdout}\n${stderr}`;
       // 进程异常优先于诊断文本：崩溃前输出的选项错误不能把失败降为跳过。
       if (r.status === null) {
-        return fail("crash", "Bun check 未正常退出", text.slice(0, 300), processFailure(r, 1));
+        return fail("crash", "Bun check 未正常退出", text.slice(0, 300), failure);
       }
       if (r.status > 1) {
-        return fail("crash", `Bun check 异常退出（status=${r.status}）`, text.slice(0, 300), processFailure(r, 1));
+        return fail("crash", `Bun check 异常退出（status=${r.status}）`, text.slice(0, 300), failure);
       }
       // 同一个流内的重复诊断是真实重复，保留；只有跨流重复按多重集抵消。
       const merged = mergeDiagnostics(tmp, stdout, stderr);
