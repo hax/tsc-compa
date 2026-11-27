@@ -6,7 +6,7 @@
 
 第三方实现的机器可读登记是 [`config/implementations.json`](../config/implementations.json)：获取方式、完整提交、适配器、固定参数和可配对的参考配置以它为准。安装用 [`scripts/install-impl.ts`](../scripts/install-impl.ts)，本地运行参数见[技术参考](REFERENCE.md)。下表只摘录用于辨识和复查报告的版本，不另设一份运行配置。
 
-登记有 **6 个第三方条目、5 个实现家族**（Bun 有两个版本）；将官方 TypeScript 对照也计入，共 **6 个家族**。公开评测有 **7 个候选配置、6 个家族**。官方 TypeScript 7.1.0-beta、Bun 1.4.4、Bun 1.4.5 和 tsrs CLI 可选固定样本或全量；`ts-rust`、`tsc-rs` 和 `tsz` 只开放全量。是否已有发布结果，以 [Pages 报告索引](https://johnhax.net/tsc-compa/reports/index.json)为准；公开评测及发布顺序见 [CI 指南](CI.md#公开评测与报告目录public-evaluationyml)。
+登记有 **6 个第三方条目、5 个实现家族**（Bun 有两个版本）；将官方 TypeScript 对照也计入，共 **6 个家族**。公开评测有 **7 个候选配置、6 个家族**。官方 TypeScript 7.1.0-beta、Bun 1.4.4、Bun 1.4.5 和 tsrs CLI 可选固定样本或全量；`ts-rust`（npm `0.8.0`）、`tsc-rs`（发行 `v0.1.0`）和 `tsz`（发行 `v0.1.75`）只开放全量。公开发行版本与下表的冒烟版本分开固定。是否已有发布结果，以 [Pages 报告索引](https://johnhax.net/tsc-compa/reports/index.json)为准；公开评测及发布顺序见 [CI 指南](CI.md#公开评测与报告目录public-evaluationyml)。
 
 | 候选或登记名 | 固定版本、来源和适配器 | 已有证据 |
 | --- | --- | --- |
@@ -15,8 +15,8 @@
 | `bun-check-1.4.5` | `oven-sh/bun` Release `bun-v1.4.5`，`bun-check`；内置 TypeScript 自报 `7.0.2` | Linux 冒烟；公开固定样本和全量报告 |
 | `tsrs`（oxc-tsrs） | npm `tsrs@0.25.0-ts7.1.0-beta`，`tsc-cli`；自报跟踪 TypeScript 提交 `3e9236361fa9` | Linux 冒烟、回归记录；公开固定样本和全量报告 |
 | `ts-rust`（pingdotgg） | npm **`tsc-rs@0.8.0`**，`tsc-cli`；登记的对齐目标为 `7.1.0-beta`／`3e9236361fa9`，本次 Linux CLI 自报 `Version 7.1.0-dev` | Linux 冒烟、回归记录；公开评测仅全量 |
-| `tsc-rs`（kazhiramatsu） | Cargo 构建，固定源码提交 **`2b006e0`**，`tsc-cli`；本次自报 `Version 7.1.0-dev` | Linux 冒烟、回归记录；公开评测仅全量 |
-| `tsz` | Cargo 构建，固定源码提交 **`0b4641a`**，`tsc-cli`；本次自报 `Version 7.0.2` | Linux 冒烟；公开评测仅全量，无入库回归记录 |
+| `tsc-rs`（kazhiramatsu） | Cargo 构建，固定源码提交 **`2b006e0`**，`tsc-cli`；本次自报 `Version 7.1.0-dev` | Linux 冒烟、回归记录；公开评测改用 `v0.1.0`，对 TS7 作跨版本比较 |
+| `tsz` | Cargo 构建，固定源码提交 **`0b4641a`**，`tsc-cli`；本次自报 `Version 7.0.2` | Linux 冒烟；公开评测改用 `v0.1.75`，无入库回归记录 |
 
 官方参考二进制由 [`package.json`](../package.json) 和 [`bun.lock`](../bun.lock) 固定为 TypeScript `5.9.3`、`6.0.3`、`7.1.0-beta`。[`config/baselines.json`](../config/baselines.json) 另固定测试集提交与默认选项：`7.1.0-beta` 用 6.0.3 的 strada 测试集和现场参考诊断；`7.1.0-beta-official` 用同一个 7.1 CLI 版本对应的 Go 布局测试集及官方 `.errors.txt`，提交为 `3e9236361fa97a9e6c685f4833ac457ae2d8c50a`。公开评测只用后一种参考配置；5.9.3 和 6.0.3 虽也用作本仓的自比对照，但不是公开候选选项。
 

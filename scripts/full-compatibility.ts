@@ -88,7 +88,7 @@ export function verifyVersion(candidate: Candidate, bin: string): void {
   if (result.status !== 0 || result.stdout?.trim() !== expected) throw new Error(`${candidate}: expected ${expected}, got ${result.stdout || result.stderr || result.error}`);
 }
 
-export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus: string, dir: string, binArg?: string, candidateArgs: readonly string[] = [], candidateEnv: Readonly<Record<string, string>> = {}): void {
+export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus: string, dir: string, binArg?: string, candidateArgs: readonly string[] = [], candidateEnv: Readonly<Record<string, string>> = {}, invocation?: "project"): void {
   const config = loadBaselines();
   const referenceWrapper = resolveBaselineTsc(findBaseline(config, baseline));
   // Bypass the npm JavaScript launcher for each case, not the pinned native compiler.
@@ -105,7 +105,7 @@ export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus:
   const result = spawnSync(process.execPath, ["src/run.ts", "--baseline", baseline, "--tsc", reference,
     "--corpus", corpus, "--cases", manifest, "--expectation-source", plan.source, "--option-strategy", "aligned",
     "--adapter", `${isBun ? "bun-check" : "tsc-cli"}:${candidateBin}`, "--out", dir], {
-    cwd: REPO_ROOT, env: { ...process.env, ...candidateEnv, TSC_COMPA_ADAPTER_ARGS: candidateArgs.join(" "), TSC_BIN: "" }, stdio: "inherit",
+    cwd: REPO_ROOT, env: { ...process.env, ...candidateEnv, TSC_COMPA_ADAPTER_ARGS: candidateArgs.join(" "), TSC_COMPA_TSC_CLI_PROJECT: invocation === "project" ? "1" : "", TSC_BIN: "" }, stdio: "inherit",
   });
   if (result.status !== 0) throw new Error(`${slug(candidate, shard)} exited: ${result.error ?? result.status}`);
 }

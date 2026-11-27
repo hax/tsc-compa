@@ -66,7 +66,7 @@ test("adds three full-only combinations in rollout order without implying they h
   expect(catalog.schemaVersion).toBe(1);
   expect(catalog.combinations).toHaveLength(11);
   expect(catalog.combinations.slice(8).map((row) => [row.candidate.id, row.candidate.name, row.candidate.version, row.suite.id])).toEqual([
-    ["ts-rust", "ts-rust (pingdotgg)", "0.8.0", "full"], ["tsc-rs", "tsc-rs (kazhiramatsu)", "2b006e0", "full"], ["tsz", "tsz", "0b4641a", "full"],
+    ["ts-rust", "ts-rust (pingdotgg)", "0.8.0", "full"], ["tsc-rs", "tsc-rs (kazhiramatsu)", "v0.1.0", "full"], ["tsz", "tsz", "v0.1.75", "full"],
   ]);
   expect(new Set(catalog.combinations.map((row) => `${row.candidate.id}:${row.candidate.version}:${row.suite.id}`)).size).toBe(11);
   expect(catalog.combinations.every((row) => row.reference.id === "7.1.0-beta-official")).toBe(true);
@@ -338,13 +338,14 @@ test("source Markdown does not affect request identity, but harness code does", 
 test("validates prepared compiler provenance and exact shard options without promoting local paths", () => fixture(({ root, data, bundle, request, plan, metrics }) => {
   plan.candidates = ["tsc-rs"];
   const { version: _version, ...old } = request;
-  const q: Request = { ...old, version: 3, candidate: "tsc-rs", candidateVersion: "2b006e0", planSha256: hash(plan),
-    options: { ...old.options, candidateEnvArgs: ["--checkers", "1"] },
-    candidateTool: { ...old.candidateTool, version: "Version 7.1.0-dev" },
-    prepared: { source: { kind: "cargo", repository: "kazhiramatsu/tsc-rs", commit: "2b006e078d5b535185f5aeea04406eab7b8aee3c",
-      lockSha256: "6e75654c5a4bef972e5ab10aff7cb2e65a6935a105817c357815a67b297c0be3", rustc: "rustc 1.99.1 (58cf8f9c3 2026-10-13)", cargo: "cargo 1.99.1 (012345678 2026-10-13)",
-      linker: "13.3.0", buildImage: "20261127.1.1" }, runtimeLibrariesSha256: sha256("runtime"), environment: {} },
-  };
+  const policyAtRun = activePolicies["tsc-rs"];
+  if (policyAtRun.source.kind !== "cargo" || !("cargoVersion" in policyAtRun)) throw new Error("Missing fixture policy");
+  const q = { ...old, version: 3 as const, candidate: "tsc-rs" as const, candidateVersion: policyAtRun.candidate.version, planSha256: hash(plan),
+    options: { ...old.options, invocation: "project" as const, candidateEnvArgs: [] },
+    candidateTool: { ...old.candidateTool, version: policyAtRun.selfReport },
+    prepared: { source: { ...policyAtRun.source, cargo: policyAtRun.cargoVersion, linker: "13.3.0", buildImage: "20261127.1.1" },
+      runtimeLibrariesSha256: sha256("runtime"), environment: policyAtRun.environment },
+  } satisfies Request;
   const oldDir = join(root, "full-typescript-01");
   const dir = join(root, "full-tsc-rs-01");
   cpSync(oldDir, dir, { recursive: true });
@@ -352,14 +353,15 @@ test("validates prepared compiler provenance and exact shard options without pro
   write(receipt, shardReceipt(q, hash(q), "01"));
   metrics.meta.tools.candidate.version = q.candidateTool.version;
   const metricsFile = join(dir, "metrics.json");
+  metrics.meta.options.candidateEnvArgs = ["--checkers", "1"];
   write(metricsFile, metrics);
   expect(() => makeReport(q, plan, root, run)).toThrow("identity does not match");
-  metrics.meta.options.candidateEnvArgs = ["--checkers", "1"];
+  metrics.meta.options.candidateEnvArgs = [];
   write(metricsFile, metrics);
   const report = makeReport(q, plan, root, run);
   expect(() => verifyReport(report, report.id)).not.toThrow();
-  expect(reportHtml(report)).toContain("kazhiramatsu/tsc-rs@2b006e0");
-  expect(reportHtml(report)).toContain("CLI 自报版本：<code>Version 7.1.0-dev");
+  expect(reportHtml(report)).toContain("kazhiramatsu/tsc-rs v0.1.0@ed173ea");
+  expect(reportHtml(report)).toContain("CLI 自报版本：<code>Version 6.0.3");
   expect(JSON.stringify(report)).not.toContain("/tmp/private");
   for (const prepared of [
     { ...q.prepared, environment: { TSZ_LIB_DIR: "/tmp/private" } },
@@ -413,8 +415,8 @@ test("prepared distributions reject extra files, symlinks and changed compiler b
   writeFileSync(bin, "expected executable");
   const exact = distributionContents("tsz", dist);
   writeFileSync(bin, "changed executable");
-  const source = { kind: "cargo" as const, repository: "tsz-org/tsz", commit: "0b4641ac285f5991a3e805e395e7e4f9ef71f90e", lockSha256: sha256("lock"),
-    rustc: "fixture", cargo: "fixture", linker: "fixture", buildImage: "fixture" };
+  const source = activePolicies.tsz.source;
+  if (source.kind !== "release") throw new Error("Missing fixture policy");
   expect(() => inspectDistribution("tsz", dist, source, { ...exact, runtimeLibrariesSha256: sha256("runtime") })).toThrow("bytes changed after planning");
   const extra = join(dist, "lib.es5.d.ts");
   writeFileSync(extra, "extra library");

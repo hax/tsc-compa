@@ -1,25 +1,26 @@
 // Append-only evidence policies. Never edit a published generation in place:
 // the persisted catalog and compact reports must still validate before Pages
-// can stage them. Runtime pins and args must match an active policy as well as
-// the implementation registry; the policy alone cannot acquire a checker.
+// can stage them. Public release recipes deliberately do not replace the
+// separate smoke registry pins.
 export const addedCandidates = ["ts-rust", "tsc-rs", "tsz"] as const;
 export type AddedCandidate = typeof addedCandidates[number];
 export const isAddedCandidate = (id: string): id is AddedCandidate => addedCandidates.some((candidate) => candidate === id);
-export const rustToolchain = "1.99.1-x86_64-unknown-linux-gnu";
+export const rustToolchain = "1.93.0-x86_64-unknown-linux-gnu";
 
 type CatalogueCandidate = { id: AddedCandidate; name: string; version: string };
 type NpmSource = { kind: "npm"; package: string; version: string; sourceCommit: string; platformPackage: string; launcherSha256: string; platformSha256: string };
-type CargoPin = { kind: "cargo"; repository: string; commit: string; lockSha256: string; rustc: string };
+type CargoPin = { kind: "cargo"; repository: string; tag: string; commit: string; lockSha256: string; rustc: string };
+type ReleaseSource = { kind: "release"; repository: string; tag: string; commit: string; asset: string; archiveSha256: string; checksumsSha256: string };
 type CargoSource = CargoPin & { cargo: string; linker: string; buildImage: string };
-export type PreparedSource = NpmSource | CargoSource;
+export type PreparedSource = NpmSource | CargoSource | ReleaseSource;
 export type PreparedEvidence = { source: PreparedSource; runtimeLibrariesSha256: string; environment: Record<string, string> };
 type Policy = {
   candidate: CatalogueCandidate; cliArgs: readonly string[]; environment: Readonly<Record<string, string>>;
-  selfReport: string;
-} & ({ source: NpmSource; npmIntegrity: { launcher: string; platform: string }; nativeSha256: string } | { source: CargoPin });
+  selfReport: string; invocation?: "project";
+} & ({ source: NpmSource; npmIntegrity: { launcher: string; platform: string }; nativeSha256: string } | { source: CargoPin; cargoVersion: string } | { source: ReleaseSource });
 
 type Generation = { policies: Record<AddedCandidate, Policy> };
-const rustc = "rustc 1.99.1 (58cf8f9c3 2026-10-13)";
+const rustc = "rustc 1.93.0 (254b59607 2026-01-19)";
 export const policyGenerations: readonly Generation[] = [
   { policies: {
     "ts-rust": {
@@ -35,16 +36,18 @@ export const policyGenerations: readonly Generation[] = [
       },
     },
     "tsc-rs": {
-      candidate: { id: "tsc-rs", name: "tsc-rs (kazhiramatsu)", version: "2b006e0" },
-      cliArgs: ["--checkers", "1"], environment: {}, selfReport: "Version 7.1.0-dev",
-      source: { kind: "cargo", repository: "kazhiramatsu/tsc-rs", commit: "2b006e078d5b535185f5aeea04406eab7b8aee3c",
-        lockSha256: "6e75654c5a4bef972e5ab10aff7cb2e65a6935a105817c357815a67b297c0be3", rustc },
+      candidate: { id: "tsc-rs", name: "tsc-rs (kazhiramatsu)", version: "v0.1.0" },
+      cliArgs: [], environment: { TSRS_CHECKERS: "1" }, selfReport: "Version 6.0.3", invocation: "project",
+      cargoVersion: "cargo 1.93.0 (083ac5135 2025-12-15)",
+      source: { kind: "cargo", repository: "kazhiramatsu/tsc-rs", tag: "v0.1.0", commit: "ed173ea362dcd2a6e3d34d508506573ce736d88b",
+        lockSha256: "87c76d4e279d777cf6a4cbdae389462e77c0fa3b0089392e4f8746984b16528f", rustc },
     },
     tsz: {
-      candidate: { id: "tsz", name: "tsz", version: "0b4641a" },
+      candidate: { id: "tsz", name: "tsz", version: "v0.1.75" },
       cliArgs: [], environment: { TSZ_USE_EMBEDDED_LIBS: "1" }, selfReport: "Version 7.0.2",
-      source: { kind: "cargo", repository: "tsz-org/tsz", commit: "0b4641ac285f5991a3e805e395e7e4f9ef71f90e",
-        lockSha256: "bd7e1194e3ff757bea063f8b7198966af8337a4f22ccf80d110992d657a8349f", rustc },
+      source: { kind: "release", repository: "tsz-org/tsz", tag: "v0.1.75", commit: "0c0e53f96bfd64be253cdd8c53e2853fd5cfdadb",
+        asset: "tsz-v0.1.75-x86_64-unknown-linux-gnu.tar.gz", archiveSha256: "2feb40f7a2371e397988d6250b3680bc903c88063c6384f72f902122d8d2f7e6",
+        checksumsSha256: "faaae84be17efa9baa4742a1ff686348b34d7003441d0d1df5ee3267619e07c2" },
     },
   } },
 ];
@@ -53,21 +56,23 @@ const validString = (v: unknown, re: RegExp) => typeof v === "string" && re.test
 const isObject = (v: unknown, keys: string) => typeof v === "object" && v !== null && !Array.isArray(v) &&
   Object.keys(v).sort().join(" ") === keys.split(" ").sort().join(" ");
 
-function matches(policy: Policy, prepared: PreparedEvidence, cliArgs: readonly string[], tool: { version: string; sha256: string; nativeSha256: string | null; embeddedTypeScript: string | null }) {
+function matches(policy: Policy, prepared: PreparedEvidence, cliArgs: readonly string[], tool: { version: string; sha256: string; nativeSha256: string | null; embeddedTypeScript: string | null }, invocation: string | undefined) {
   if (!isObject(prepared, "source runtimeLibrariesSha256 environment") || !validString(prepared.runtimeLibrariesSha256, /^[a-f0-9]{64}$/) ||
       JSON.stringify(prepared.environment) !== JSON.stringify(policy.environment) || JSON.stringify(cliArgs) !== JSON.stringify(policy.cliArgs) ||
-      tool.version !== policy.selfReport || tool.nativeSha256 !== null || tool.embeddedTypeScript !== null) return false;
+      invocation !== policy.invocation || tool.version !== policy.selfReport || tool.nativeSha256 !== null || tool.embeddedTypeScript !== null) return false;
   const source = prepared.source;
   const pin = policy.source;
   if (pin.kind === "npm") return "nativeSha256" in policy && tool.sha256 === policy.nativeSha256 &&
     isObject(source, Object.keys(pin).join(" ")) && Object.entries(pin).every(([key, expected]) => source[key as keyof typeof source] === expected);
-  return isObject(source, "kind repository commit lockSha256 rustc cargo linker buildImage") && source.kind === "cargo" &&
-    source.repository === pin.repository && source.commit === pin.commit && source.lockSha256 === pin.lockSha256 && source.rustc === pin.rustc &&
-    validString(source.cargo, /^cargo 1\.99\.1 \([a-f0-9]+ \d{4}-\d\d-\d\d\)$/) && validString(source.linker, /^\d+(?:\.\d+){1,2}$/) &&
+  if (pin.kind === "release") return isObject(source, Object.keys(pin).join(" ")) &&
+    Object.entries(pin).every(([key, expected]) => source[key as keyof typeof source] === expected);
+  return isObject(source, "kind repository tag commit lockSha256 rustc cargo linker buildImage") && source.kind === "cargo" &&
+    source.repository === pin.repository && source.tag === pin.tag && source.commit === pin.commit && source.lockSha256 === pin.lockSha256 && source.rustc === pin.rustc &&
+    "cargoVersion" in policy && source.cargo === policy.cargoVersion && validString(source.linker, /^\d+(?:\.\d+){1,2}$/) &&
     validString(source.buildImage, /^\d[\w.-]{1,63}$/);
 }
 
-export function validPrepared(id: AddedCandidate, version: string, prepared: PreparedEvidence, cliArgs: readonly string[], tool: Parameters<typeof matches>[3], historical = false) {
+export function validPrepared(id: AddedCandidate, version: string, prepared: PreparedEvidence, cliArgs: readonly string[], tool: Parameters<typeof matches>[3], invocation?: string, historical = false) {
   const policies = historical ? policyGenerations.map((generation) => generation.policies[id]) : [activePolicies[id]];
-  return policies.some((policy) => version === policy.candidate.version && matches(policy, prepared, cliArgs, tool));
+  return policies.some((policy) => version === policy.candidate.version && matches(policy, prepared, cliArgs, tool, invocation));
 }

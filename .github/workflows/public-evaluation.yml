@@ -90,9 +90,9 @@ jobs:
             git fetch --no-tags --depth=1 origin refs/heads/public-report-data
             if git cat-file -e FETCH_HEAD:reports; then git archive FETCH_HEAD reports/ | tar -x -C public-data; fi
           fi
-      - name: Install smoke-tested Rust toolchain
-        if: inputs.candidate == 'tsc-rs' || inputs.candidate == 'tsz'
-        run: rustup toolchain install 1.99.1-x86_64-unknown-linux-gnu --profile minimal --no-self-update
+      - name: Install the v0.1.0 source release Rust toolchain
+        if: inputs.candidate == 'tsc-rs'
+        run: rustup toolchain install 1.93.0-x86_64-unknown-linux-gnu --profile minimal --no-self-update
       - name: Plan shards and look for exact completed evidence
         id: plan
         env:
