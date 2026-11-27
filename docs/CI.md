@@ -315,3 +315,59 @@ bun run probes:versions --candidate tsrs --bin "$BIN"
 `unsupported` 是配置或诊断不可比较，`execution-error` 是执行或采集失败，均保留原因和已有的原始输出，
 不当作空诊断。没有校准成功的探针不会给候选贴版本标签。只有官方断言失败会令命令非零退出；
 候选结果供诊断，不进入兼容性门禁，也不拿几例探针推断候选的整体版本或兼容性。
+
+## 公开评测与报告目录（`public-evaluation.yml`）
+
+公开评测只接受已登记的公开候选：`typescript`（7.1.0-beta）、`bun-1.4.4`、
+`bun-1.4.5`、`tsrs`（0.25.0-ts7.1.0-beta）。不用填写二进制地址或 adapter：
+官方 TypeScript 和 tsrs 走 `tsc-cli`，Bun 走 `bun-check`。所有组合都对照固定提交的
+TS 7.1.0-beta 官方 `.errors.txt`。`fixed-120` 是 120 个固定诊断样本；`full` 是
+`compiler/` 与 `conformance/` 下的 TS 源用例，按配置展开后分 8 片。两者不是同一覆盖口径。
+
+有仓库写权限的维护者在 **Actions → public-evaluation → Run workflow** 选默认分支、候选和测试集；
+也可以用 CLI（下面以本仓 `main` 为例）：
+
+```sh
+gh workflow run public-evaluation.yml -R hax/tsc-compa --ref main \
+  -f candidate=typescript -f suite=fixed-120
+```
+
+选非默认分支时，只有勾选 `preview` 才允许运行；预演产物留在本次 Actions，永远不写公开报告分支。
+公开评测 workflow 须先存在于默认分支，才能从 GitHub 手动派发。合并前可在本地验证，或用独立的
+测试仓库默认分支做端到端预演，不在本仓进行测试写入。
+
+`plan` 用固定版本与可执行文件指纹、语料提交、用例清单／分片计划、参考来源、执行器代码、
+平台与关键选项计算请求 ID。只有同一 ID 的索引、HTML 和精简 JSON 都在且一致，才会跳过评测；
+历史报告仍可浏览，但不能代替条件已变化的运行。重复运行时即使命中，仍会核对输入与二进制身份，
+不会重跑测试用例。没有缓存时，只有分片和配置记录全部核对、且无执行异常，才保存新的公开报告。
+不兼容和明确跳过会计入结果：分片齐全不表示所有用例都能比较，更不表示全部通过。
+分片缺失、编译进程崩溃或超时不会生成公开索引项。排查用的逐案明细留在本次 Actions 产物，
+不进入 Git 数据分支或网站，并按产物保留期限过期。
+
+### 首次发布与更新
+
+1. 在默认分支非预演运行一次 `typescript` / `fixed-120`。评测通过后，`persist` job
+   用仓库 `GITHUB_TOKEN` 初始化或快进更新 `public-report-data`。不用手工创建空分支，
+   也不用把仓库的默认 token 权限调为可写；组织策略若阻止该 job 推送，先检查策略。
+   写入冲突时会以最新分支为基础重试，不使用强推。数据分支只保存 `reports/` 下的公开目录、
+   结果索引、HTML 和精简 JSON；目录列出已支持的组合，索引只列出完成的结果。
+2. 管理员在 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
+   发布 workflow 不会替维护者启用 Pages；不把 `public-report-data` 设为「Deploy from a branch」。
+3. 在默认分支手动运行 **Publish public reports to Pages**（`publish-public-reports.yml`）。
+   它将默认分支的站点与数据分支的 `reports/` 一起部署，站点地址见部署结果。
+   之后保存新报告后再运行该发布任务，评测不会自动部署。
+
+### 验收
+
+- 在独立测试仓库，选择包含 workflow 的非默认分支：不勾 `preview` 应在规划前退出；
+  勾选后用 `typescript` / `fixed-120` 应只生成 Actions 产物，不改变 `public-report-data`。
+- 默认分支首次运行同一组合：检查只有 1 个执行任务，`persist` 写入 1 条索引，
+  `catalog.json` 有 8 个组合；再次派发相同请求，检查 `plan` 命中且不启动执行分片，分支不变。
+- 再用 `full`：检查只跑所选候选、总共 8 片。缺片或有执行异常时，检查无新增索引；
+  齐全时检查报告分别列出计划、完成、跳过和诊断命中数。
+- 部署后，在 Pages 选择已运行与未运行的组合，分别看到报告入口和「未运行」。
+
+自有检查器建议在本地或自己的仓库用 `bun src/run.ts` 生成报告，不需要运行公开评测 workflow。
+检查器按协议选择 adapter：兼容 `tsc` 命令行的二进制可以用 `tsc-cli:<bin>`，
+实现批量协议的可以用 `checker-batch`。自行托管结果时，只发布你确定可公开的文件。
+本仓受控的 `native-suite` Release 入口仍独立运行，不接入公开评测、报告索引或 Pages。
