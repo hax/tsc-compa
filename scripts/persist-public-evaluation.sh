@@ -32,11 +32,14 @@ for attempt in 1 2 3 4; do
   fi
   bun scripts/public-evaluation.ts save "$data" "$bundle" "$id"
   git -C "$data" add -- reports/
-  if git -C "$data" diff --cached --quiet; then
+  if ! git -C "$data" diff --cached --quiet; then
+    git -C "$data" commit --quiet -m "Store public evaluation $id"
+  elif [[ -n "$tip" ]]; then
     echo "Report $id is already stored."
     exit 0
   fi
-  git -C "$data" commit --quiet -m "Store public evaluation $id"
+  # If the branch is still missing after a rejected initial push, retry the
+  # unchanged local commit instead of mistaking it for persisted evidence.
   if remote_git push "$remote" "HEAD:$ref"; then
     echo "Stored $id on $branch; deploy the reports via publish-public-reports."
     exit 0
