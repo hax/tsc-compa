@@ -7,14 +7,16 @@ import { corpusRefOf, findBaseline, loadBaselines, REPO_ROOT, resolveBaselineTsc
 import type { CaseRecord, Metrics, ToolIdentity } from "../src/compare.ts";
 import { isValidCaseId, loadManifest } from "../src/discover.ts";
 import { identifyTool, sha256 } from "../src/provenance.ts";
+import { addedCandidate, addedCandidates, inspectDistribution, isAddedCandidate, prepareDistribution, probeDistribution, validPrepared, type PreparedEvidence } from "./public-evaluation-tools.ts";
 import { distributionSha256, shardInputEvidence, verifyCorpus, type ShardInputEvidence } from "./public-evaluation-inputs.ts";
 
-const candidates = {
+const legacyCandidates = {
   typescript: { id: "typescript", name: "TypeScript", version: "7.1.0-beta" },
   "bun-1.4.4": { id: "bun", name: "Bun", version: "1.4.4" },
   "bun-1.4.5": { id: "bun", name: "Bun", version: "1.4.5" },
   tsrs: { id: "tsrs", name: "tsrs", version: "0.25.0-ts7.1.0-beta" },
-} satisfies Record<Candidate, { id: string; name: string; version: string }>;
+} as const;
+const candidates = { ...legacyCandidates, "ts-rust": addedCandidate("ts-rust"), "tsc-rs": addedCandidate("tsc-rs"), tsz: addedCandidate("tsz") } satisfies Record<Candidate, { id: string; name: string; version: string }>;
 const suites = {
   "fixed-120": { id: "fixed-120", label: "固定诊断样本（120 例）" },
   full: { id: "full", label: "全量类型检查测试集（compiler / conformance）" },
@@ -56,23 +58,26 @@ const command = (program: string, args: string[]): string => {
   return child.stdout.trim();
 };
 
-function semanticFingerprint(): string {
+export function semanticFingerprint(root = REPO_ROOT): string {
   const files = [manifest, "config/baselines.json", "config/implementations.json", "package.json", "bun.lock",
-    "scripts/full-compatibility.ts", "scripts/public-evaluation.ts", "scripts/public-evaluation-inputs.ts", "scripts/install-impl.ts", ".npmrc", ".github/workflows/public-evaluation.yml"];
+    "scripts/full-compatibility.ts", "scripts/public-evaluation.ts", "scripts/public-evaluation-inputs.ts", "scripts/public-evaluation-tools.ts", "scripts/install-impl.ts", ".npmrc", ".github/workflows/public-evaluation.yml"];
   const list = (dir: string) => {
-    for (const item of readdirSync(join(REPO_ROOT, dir), { withFileTypes: true })) {
+    for (const item of readdirSync(join(root, dir), { withFileTypes: true })) {
       const path = `${dir}/${item.name}`;
       if (item.isDirectory()) list(path);
-      else if (item.isFile()) files.push(path);
+      else if (item.isFile() && !/\.(?:md|markdown)$/i.test(item.name) && !/^readme(?:\.|$)/i.test(item.name)) files.push(path);
     }
   };
   list("src");
-  return hash(files.sort().map((path) => [path, sha256(readFileSync(join(REPO_ROOT, path)))]));
+  return hash(files.sort().map((path) => [path, sha256(readFileSync(join(root, path)))]));
 }
 
+const supportsSuite = (candidate: Candidate, suite: keyof typeof suites) => !isAddedCandidate(candidate) || suite === "full";
+const legacyCatalog = () => ({ schemaVersion: 1, combinations: Object.values(legacyCandidates).flatMap((candidate) =>
+  Object.values(suites).map((suite) => ({ candidate, reference, suite }))) });
 export function publicCatalog() {
-  return { schemaVersion: 1, combinations: Object.values(candidates).flatMap((candidate) =>
-    Object.values(suites).map((suite) => ({ candidate, reference, suite }))) };
+  return { schemaVersion: 1, combinations: [...legacyCatalog().combinations,
+    ...addedCandidates.map((id) => ({ candidate: candidates[id], reference, suite: suites.full }))] };
 }
 
 // Store no local paths in public provenance. A wrapper-only fingerprint is not
@@ -82,20 +87,41 @@ function toolEvidence(tool: ToolIdentity | null | undefined) {
   return { version: tool.version, sha256: tool.sha256!, nativeSha256: tool.native?.sha256 ?? null, embeddedTypeScript: tool.embeddedTypeScript ?? null };
 }
 
-function installTools(candidate: Candidate, dest: string) {
+type Tools = {
+  bin: string; reference: ReturnType<typeof toolEvidence>; candidate: ReturnType<typeof toolEvidence>;
+  distributions: { reference: string; candidate: string | null };
+} & ({ prepared: PreparedEvidence; cliArgs: string[] } | { prepared?: undefined; cliArgs?: undefined });
+
+function installTools(candidate: Candidate, dest: string, requestDir: string, request?: Request): Tools {
   // Never use local or environment-selected binaries in the public workflow.
   for (const key of Object.keys(process.env)) {
-    if (/^(?:TSRS_|TSGO_|TYPESCRIPT_|TSC_COMPA_)/.test(key) || ["TSC_BIN", "BUN_CHECK_BIN", "NODE_OPTIONS", "NODE_PATH"].includes(key)) delete process.env[key];
+    if (/^(?:TSRS_|TSGO_|TSZ_|TS_RUST_|TSC_RS_|TYPESCRIPT_|TSC_COMPA_|LD_|DYLD_)/.test(key) || ["TSC_BIN", "BUN_CHECK_BIN", "NODE_OPTIONS", "NODE_PATH", "RUST_MIN_STACK", "RAYON_NUM_THREADS"].includes(key)) delete process.env[key];
   }
   const wrapper = resolveBaselineTsc(configuration().definition);
   const tsc = identifyTool(wrapper, "7.1.0-beta")?.native?.path;
   if (!tsc) throw new Error("Official TS7 native executable was not resolved");
+  verifyVersion("typescript", tsc);
+  const officialDist = distributionSha256([dirname(dirname(tsc))]);
+  const referenceTool = toolEvidence(identifyTool(tsc, "7.1.0-beta"));
+  if (isAddedCandidate(candidate)) {
+    const dir = resolve(requestDir, "compiler");
+    if (request && (request.version !== 3 || !validPrepared(candidate, request.prepared, request.options.candidateEnvArgs) || !request.distributions.candidate)) {
+      throw new Error("Invalid prepared compiler request");
+    }
+    const preparedRequest = request?.version === 3 ? request : undefined;
+    const origin = preparedRequest ? preparedRequest.prepared.source : prepareDistribution(candidate, dir);
+    const compiler = inspectDistribution(candidate, dir, origin, preparedRequest && {
+      executable: preparedRequest.candidateTool.sha256, distribution: preparedRequest.distributions.candidate!,
+      runtimeLibrariesSha256: preparedRequest.prepared.runtimeLibrariesSha256,
+    });
+    probeDistribution(candidate, compiler);
+    return { bin: compiler.bin, reference: referenceTool, candidate: toolEvidence(identifyTool(compiler.bin)),
+      distributions: { reference: officialDist, candidate: compiler.distribution }, prepared: compiler.prepared, cliArgs: compiler.cliArgs };
+  }
   const isBun = candidate.startsWith("bun-");
   const bin = candidate === "typescript" ? tsc : command(process.execPath, ["scripts/install-impl.ts", "--name",
     isBun ? `bun-check-${candidates[candidate].version}` : "tsrs", "--source", isBun ? "release" : "npm", "--dest", dest]).split(/\r?\n/).at(-1)!;
-  verifyVersion("typescript", tsc);
   if (candidate !== "typescript") verifyVersion(candidate, bin);
-  const officialDist = distributionSha256([dirname(dirname(tsc))]);
   const tsrs = candidate === "tsrs" ? identifyTool(bin) : null;
   if (candidate === "tsrs" && !tsrs?.native?.path) throw new Error("tsrs native executable was not resolved");
   const effectiveBin = tsrs?.native?.path ?? bin;
@@ -109,7 +135,7 @@ function installTools(candidate: Candidate, dest: string) {
     candidateTool.version = `Bun ${exact[0]} (${exact[1]})`;
     candidateTool.embeddedTypeScript = exact[2];
   }
-  return { bin: effectiveBin, reference: toolEvidence(identifyTool(tsc, "7.1.0-beta")), candidate: toolEvidence(candidateTool),
+  return { bin: effectiveBin, reference: referenceTool, candidate: toolEvidence(candidateTool),
     distributions: { reference: officialDist, candidate: candidateDist } };
 }
 
@@ -119,11 +145,11 @@ const planCounts = (plan: Plan) => ({
   records: plan.shards.reduce((n, shard) => n + shard.units.reduce((m, unit) => m + unit.records.length, 0), 0),
 });
 
-function makeRequest(plan: Plan, suiteId: keyof typeof suites, tools: ReturnType<typeof installTools>, inputs: ShardInputEvidence[]) {
+function makeRequest(plan: Plan, suiteId: keyof typeof suites, tools: Tools, inputs: ShardInputEvidence[]) {
   const candidate = plan.candidates[0]!;
   const { definition } = configuration();
-  return {
-    version: 2, candidate, candidateVersion: candidates[candidate].version, reference: baseline, source,
+  const common = {
+    candidate, candidateVersion: candidates[candidate].version, reference: baseline, source,
     suite: suiteId, corpus: plan.corpusRef, planSha256: hash(plan), planCounts: planCounts(plan),
     manifestSha256: suiteId === "fixed-120" ? sha256(readFileSync(join(REPO_ROOT, manifest))) : null,
     harnessSha256: semanticFingerprint(), runner: `Bun ${Bun.version} (${Bun.revision})`,
@@ -133,6 +159,9 @@ function makeRequest(plan: Plan, suiteId: keyof typeof suites, tools: ReturnType
     options: { mode: "official", strategy: "aligned", referenceBaseArgs: definition.baseArgs },
     referenceTool: tools.reference, candidateTool: tools.candidate, distributions: tools.distributions, inputs,
   } as const;
+  return tools.prepared
+    ? { ...common, version: 3 as const, options: { ...common.options, candidateEnvArgs: tools.cliArgs }, prepared: tools.prepared }
+    : { version: 2 as const, ...common };
 }
 export type Request = ReturnType<typeof makeRequest>;
 
@@ -143,7 +172,8 @@ export function verifyRunIdentity(request: Request, tools: Metrics["meta"]["tool
       options?.strategy !== request.options.strategy || mode !== request.options.mode ||
       hash(options.referenceBaseArgs) !== hash(request.options.referenceBaseArgs) ||
       hash(options.candidateArgs) !== hash(request.options.referenceBaseArgs) ||
-      [options.sharedArgs, options.candidateEnvArgs, options.onlyClasses, options.excludeClasses].some((list) => !Array.isArray(list) || list.length !== 0)) {
+      hash(options.candidateEnvArgs) !== hash(request.version === 3 ? request.options.candidateEnvArgs : []) ||
+      [options.sharedArgs, options.onlyClasses, options.excludeClasses].some((list) => !Array.isArray(list) || list.length !== 0)) {
     throw new Error("Shard execution identity does not match the public request");
   }
 }
@@ -154,6 +184,13 @@ export function verifyShardInputs(request: Request, shard: string, manifest: { p
     throw new Error(`Shard ${shard} input evidence does not match the public request`);
   }
   return expected;
+}
+
+export function shardReceipt(request: Request, id: string, shard: string) {
+  return { id, shard, ...(request.version === 3 && {
+    candidateDistributionSha256: request.distributions.candidate, runtimeLibrariesSha256: request.prepared.runtimeLibrariesSha256,
+    candidateEnvironment: request.prepared.environment,
+  }) };
 }
 
 const noDifferences = (r: CaseRecord) => r.fp.length === 0 && r.missed.length === 0 && r.misanchor === 0;
@@ -172,7 +209,7 @@ export function makeReport(request: Request, plan: Plan, root: string, runUrl: s
   for (const shard of plan.shards) {
     const dir = join(root, `full-${request.candidate}-${shard.id}`);
     const receipt = readJson<unknown>(join(dir, "public-request.json"));
-    if (hash(receipt) !== hash({ id, shard: shard.id })) throw new Error(`Shard ${shard.id} execution is not bound to this public request`);
+    if (hash(receipt) !== hash(shardReceipt(request, id, shard.id))) throw new Error(`Shard ${shard.id} execution is not bound to this public request`);
     const metrics = verifyShard(plan, shard, dir, request.candidate);
     verifyRunIdentity(request, metrics.meta.tools, metrics.meta.options, metrics.meta.mode);
     evidence.push(verifyShardInputs(request, shard.id, metrics.meta.manifest));
@@ -193,6 +230,15 @@ const indexEntry = ({ id, candidate, reference, suite, generatedAt, reportPath, 
   ({ id, candidate, reference, suite, generatedAt, reportPath, runUrl, summary });
 
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+function preparedHtml(tool: PreparedEvidence, request: Extract<Request, { version: 3 }>): string {
+  const origin = tool.source;
+  const recorded = origin.kind === "npm" ? `npm ${origin.package}@${origin.version} (${origin.platformPackage}, npm gitHead ${origin.sourceCommit})`
+    : `Cargo · ${origin.repository}@${origin.commit} · ${origin.rustc}`;
+  return `
+<li>候选来源：<code>${escapeHtml(recorded)}</code></li><li>CLI 自报版本：<code>${escapeHtml(request.candidateTool.version)}</code></li>
+<li>发行目录 SHA-256：<code>${request.distributions.candidate}</code></li><li>动态库 SHA-256 清单摘要：<code>${tool.runtimeLibrariesSha256}</code></li>`;
+}
+
 export function reportHtml(r: Report): string {
   const { candidate, reference, suite, summary: s, request } = r;
   const verdict = (v: typeof s.compatibility) => `${v.pass} / ${v.fail} / ${v.unknown}`;
@@ -209,7 +255,7 @@ export function reportHtml(r: Report): string {
 <p>${suite.id === "fixed-120" ? "本测试集是固定诊断样本，不代表全量覆盖。" : "分片齐全不代表每条配置都能比较；诊断命中率只按实际比较的记录计算。"}</p>
 ${r.differences.length ? `<h2>差异示例（最多 8 条）</h2><ul>${r.differences.map((d) => `<li><code>${escapeHtml(d.id)}</code>：多报 ${d.extra}，漏报 ${d.missed}，错锚 ${d.misanchor}</li>`).join("")}</ul>` : ""}
 <h2>运行条件与证据</h2><ul><li>语料：<code>${escapeHtml(request.corpus)}</code></li><li>适配器：<code>${escapeHtml(request.adapter)}</code></li>
-<li>候选可执行文件 SHA-256：<code>${escapeHtml(request.candidateTool.nativeSha256 ?? request.candidateTool.sha256)}</code></li>
+<li>候选可执行文件 SHA-256：<code>${escapeHtml(request.candidateTool.nativeSha256 ?? request.candidateTool.sha256)}</code></li>${request.version === 3 ? preparedHtml(request.prepared, request) : ""}
 <li>测试集计划 SHA-256：<code>${escapeHtml(request.planSha256)}</code></li><li>执行器 SHA-256：<code>${escapeHtml(request.harnessSha256)}</code></li></ul>
 <p><a href="${r.id}.json">精简 JSON</a> · <a href="${escapeHtml(r.runUrl)}">GitHub Actions 运行（原始产物有保留期限）</a>${r.workflowRun ? ` · 运行编号 ${r.workflowRun.number}，第 ${r.workflowRun.attempt} 次尝试` : ""}</p>
 </main></body></html>\n`;
@@ -266,21 +312,26 @@ export function readIndex(data: string): { schemaVersion: 1; reports: IndexEntry
 export function verifyReport(value: unknown, id: string): asserts value is Report {
   const r = value as Report;
   const q = r?.request;
+  const prepared = q?.version === 3;
   const hasWorkflowRun = r != null && Object.hasOwn(r, "workflowRun");
   if (!exactKeys(r, `schemaVersion id request candidate reference suite generatedAt reportPath runUrl summary evidence differences${hasWorkflowRun ? " workflowRun" : ""}`) ||
       (hasWorkflowRun && !validWorkflowRun(r.workflowRun!)) ||
       r.schemaVersion !== 1 || r.id !== id || !validEntry(indexEntry(r)) ||
-      !exactKeys(q, "version candidate candidateVersion reference source suite corpus planSha256 planCounts manifestSha256 harnessSha256 runner platform runnerImage node locale timezone adapter options referenceTool candidateTool distributions inputs") ||
-      q.version !== 2 || !isString(q.candidate) || !Object.hasOwn(candidates, q.candidate) || q.candidateVersion !== r.candidate.version ||
+      !exactKeys(q, `version candidate candidateVersion reference source suite corpus planSha256 planCounts manifestSha256 harnessSha256 runner platform runnerImage node locale timezone adapter options referenceTool candidateTool distributions inputs${prepared ? " prepared" : ""}`) ||
+      (q.version !== 2 && q.version !== 3) || !isString(q.candidate) || !Object.hasOwn(candidates, q.candidate) ||
+      prepared !== isAddedCandidate(q.candidate) || q.candidateVersion !== r.candidate.version ||
       q.source !== source || q.reference !== baseline || q.suite !== r.suite.id || !sameCombination(indexEntry(r), candidates[q.candidate], reference, suites[q.suite]) ||
       !isString(q.corpus) || !/^microsoft\/TypeScript@[a-f0-9]{40}$/.test(q.corpus) || !isHash(q.planSha256) || !isHash(q.harnessSha256) ||
       !(q.suite === "fixed-120" ? isHash(q.manifestSha256) : q.manifestSha256 === null) ||
       q.adapter !== (q.candidate.startsWith("bun-") ? "bun-check" : "tsc-cli") ||
       ![q.runner, q.platform, q.runnerImage, q.node].every((v) => isString(v) && /^[\w ()./+-]{1,120}$/.test(v)) ||
       ![q.locale, q.timezone].every((v) => v === null || (isString(v) && /^[\w.+-]{1,64}$/.test(v))) ||
-      !exactKeys(q.options, "mode strategy referenceBaseArgs") || q.options.mode !== "official" || q.options.strategy !== "aligned" ||
+      !exactKeys(q.options, `mode strategy referenceBaseArgs${prepared ? " candidateEnvArgs" : ""}`) || q.options.mode !== "official" || q.options.strategy !== "aligned" ||
       !Array.isArray(q.options.referenceBaseArgs) || !q.options.referenceBaseArgs.every((v) => isString(v) && /^[\w.+-]{1,80}$/.test(v)) ||
       !validTool(q.candidateTool) || !validTool(q.referenceTool) ||
+      (q.version === 3 && (!isAddedCandidate(q.candidate) || q.platform !== "linux/x64" || q.runnerImage !== "ubuntu24" ||
+        q.candidateTool.version !== (q.candidate === "tsz" ? "Version 7.0.2" : "Version 7.1.0-dev") ||
+        !validPrepared(q.candidate, q.prepared, q.options.candidateEnvArgs))) ||
       !exactKeys(q.distributions, "reference candidate") || !isHash(q.distributions.reference) ||
       !(q.candidate.startsWith("bun-") ? q.distributions.candidate === null : isHash(q.distributions.candidate)) ||
       !validCounts(q.planCounts) || q.planCounts.shards !== r.summary.shards ||
@@ -296,7 +347,13 @@ export function verifyReport(value: unknown, id: string): asserts value is Repor
 
 function validCatalog(data: string): boolean {
   const path = join(data, "reports/catalog.json");
-  try { return !!lstatSync(path, { throwIfNoEntry: false })?.isFile() && hash(readJson<unknown>(path)) === hash(publicCatalog()); }
+  try {
+    if (!lstatSync(path, { throwIfNoEntry: false })?.isFile()) return false;
+    const digest = hash(readJson<unknown>(path));
+    // Older deployments have exactly the original eight entries. Accept
+    // that known catalog without accepting arbitrary subsets or new fields.
+    return digest === hash(publicCatalog()) || digest === hash(legacyCatalog());
+  }
   catch { return false; }
 }
 
@@ -387,6 +444,7 @@ function main() {
     const [candidateArg, suiteArg, checkout, dest, dir, data, force] = args as [string, string, string, string, string, string, "--force"?];
     const candidate = asCandidate(candidateArg);
     const suite = asSuite(suiteArg);
+    if (!supportsSuite(candidate, suite)) throw new Error(`${candidate} is only selectable with the full suite`);
     const { config, definition, ref } = configuration();
     const corpus = verifyCorpus(checkout, ref);
     const corpusRef = corpusRefOf(config, definition)!;
@@ -394,7 +452,7 @@ function main() {
     if (ids && ids.length !== 120) throw new Error("The fixed 120 sample must have exactly 120 source files");
     const plan = ids === null ? buildPlan(corpus, corpusRef, 8, source, [candidate]) : buildPlanForIds(corpus, corpusRef, 1, source, [candidate], ids);
     const inputs = plan.shards.map((shard) => shardInputEvidence(corpus, shard.id, shard.units.map((unit) => unit.id)));
-    const request = makeRequest(plan, suite, installTools(candidate, resolve(dest)), inputs);
+    const request = makeRequest(plan, suite, installTools(candidate, resolve(dest), dir), inputs);
     const id = hash(request);
     mkdirSync(dir, { recursive: true });
     writeJson(join(dir, "request.json"), request);
@@ -407,16 +465,21 @@ function main() {
     const request = readJson<Request>(join(dir, "request.json"));
     const shard = plan.shards.find((item) => item.id === shardId);
     if (!shard || hash(request) !== id || plan.candidates.length !== 1 || request.planSha256 !== hash(plan)) throw new Error("Invalid evaluation shard request");
-    const tools = installTools(asCandidate(request.candidate), resolve(dest));
+    const tools = installTools(asCandidate(request.candidate), resolve(dest), dir, request);
     const corpus = verifyCorpus(checkout, configuration().ref);
     if (hash(makeRequest(plan, asSuite(request.suite), tools, request.inputs)) !== id) throw new Error("Evaluation inputs changed after planning");
     verifyShardInputs(request, shard.id, shardInputEvidence(corpus, shard.id, shard.units.map((unit) => unit.id)));
-    runShard(plan, shard, request.candidate, corpus, resolve(out), tools.bin);
+    runShard(plan, shard, request.candidate, corpus, resolve(out), tools.bin, tools.cliArgs, tools.prepared?.environment);
+    if (request.version === 3 && isAddedCandidate(request.candidate)) {
+      inspectDistribution(request.candidate, join(dir, "compiler"), request.prepared.source, {
+        executable: request.candidateTool.sha256, distribution: request.distributions.candidate!, runtimeLibrariesSha256: request.prepared.runtimeLibrariesSha256,
+      });
+    }
     const metrics = verifyShard(plan, shard, out, request.candidate);
     verifyRunIdentity(request, metrics.meta.tools, metrics.meta.options, metrics.meta.mode);
     verifyShardInputs(request, shard.id, metrics.meta.manifest);
     if (metrics.meta.executionFailures!.length) throw new Error(`${metrics.meta.executionFailures!.length} execution failures; see shard artifact`);
-    writeJson(join(out, "public-request.json"), { id, shard: shard.id });
+    writeJson(join(out, "public-request.json"), shardReceipt(request, id, shard.id));
   } else if (cmd === "report" && (args.length === 5 || args.length === 7)) {
     const [dir, id, root, bundle, runUrl, runNumber, runAttempt] = args as [string, string, string, string, string, string?, string?];
     const request = readJson<Request>(join(dir, "request.json"));
