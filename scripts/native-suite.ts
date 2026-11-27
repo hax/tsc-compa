@@ -1,8 +1,8 @@
 // Trusted public Release input only. The resolving job never executes the asset;
-// the suite job re-fetches the same public path and verifies the resolved bytes.
+// the suite job re-fetches by the same asset ID and verifies the resolved bytes.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, chmodSync, createWriteStream, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, createWriteStream, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -70,6 +70,13 @@ export function parseNativeRequest(eventName: string, event: unknown) {
   return { implementation, sourceSha: sourceSha || null, tag, asset, baseline, mode, limit, sha256 };
 }
 
+function assetId(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new NativeInputError("Invalid Release asset ID");
+  }
+  return value;
+}
+
 function assetSize(value: unknown): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value >= 2 ** 31) {
     throw new NativeInputError("Invalid Release asset size");
@@ -89,7 +96,7 @@ export function selectReleaseAsset(releaseResponse: unknown, request: Request) {
   if (digest && !digest.startsWith("sha256:")) throw new NativeInputError("Unsupported Release digest");
   const releaseSha256 = digest ? checksum(digest.slice(7), "Release digest") : null;
   if (releaseSha256 && request.sha256 && releaseSha256 !== request.sha256) throw new NativeInputError("Provided SHA-256 does not match the Release digest");
-  return { size: assetSize(asset.size), releaseSha256 };
+  return { assetId: assetId(asset.id), size: assetSize(asset.size), releaseSha256 };
 }
 
 function repoPath(repo: string): string {
@@ -98,14 +105,22 @@ function repoPath(repo: string): string {
   return parts.map((part) => identifier(part, "workflow repository")).join("/");
 }
 
-async function fetchReleaseAsset(fetcher: typeof fetch, repo: string, request: Request): Promise<ReadableStream<Uint8Array<ArrayBuffer>>> {
-  // Never use URLs from event payloads or Release metadata. Follow only the
-  // GitHub Release CDN redirects, with no Authorization header on any hop.
-  let url = new URL(`https://github.com/${repoPath(repo)}/releases/download/${request.tag}/${request.asset}`);
+async function fetchReleaseAsset(fetcher: typeof fetch, repo: string, id: number): Promise<ReadableStream<Uint8Array<ArrayBuffer>>> {
+  // The name only selects the asset at resolution time. Bind both downloads
+  // to its ID and never send authorization or use URLs supplied by the caller.
+  let url = new URL(`https://api.github.com/repos/${repoPath(repo)}/releases/assets/${assetId(id)}`);
   const signal = AbortSignal.timeout(TIMEOUT_MS);
   for (let hop = 0; hop < 4; hop++) {
-    const response = await fetcher(url, { redirect: "manual", signal });
-    if (response.status === 200 && response.body) return response.body;
+    const headers = hop === 0 ? { Accept: "application/octet-stream", "X-GitHub-Api-Version": "2022-11-28" } : undefined;
+    const response = await fetcher(url, { redirect: "manual", signal, headers });
+    if (response.status === 200 && response.body) {
+      const type = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+      if (hop === 0 && (type === "application/json" || type?.endsWith("+json"))) {
+        await response.body.cancel();
+        throw new NativeInputError("Release asset API returned JSON instead of bytes; refusing a name-based download");
+      }
+      return response.body;
+    }
     await response.body?.cancel();
     if (![301, 302, 303, 307, 308].includes(response.status)) throw new NativeInputError(`Release asset download failed (HTTP ${response.status})`);
     const location = response.headers.get("location");
@@ -119,9 +134,9 @@ async function fetchReleaseAsset(fetcher: typeof fetch, repo: string, request: R
 }
 
 export async function verifyReleaseAsset(
-  repo: string, request: Request, size: number, expected: string | null, destination?: string, fetcher = fetch,
+  repo: string, id: number, size: number, expected: string | null, destination?: string, fetcher = fetch,
 ): Promise<string> {
-  const body = await fetchReleaseAsset(fetcher, repo, request);
+  const body = await fetchReleaseAsset(fetcher, repo, id);
   const hash = createHash("sha256");
   let received = 0;
   async function* checkedBytes() {
@@ -151,26 +166,31 @@ export async function resolveRelease(repo: string, request: Request, token: stri
     headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}` },
   });
   if (!response.ok) throw new NativeInputError(`Release lookup failed (HTTP ${response.status})`);
-  const { size, releaseSha256 } = selectReleaseAsset(await response.json(), request);
-  const binarySha256 = await verifyReleaseAsset(repo, request, size, request.sha256 ?? releaseSha256, undefined, fetcher);
-  return { request, size, binarySha256, releaseDigestVerified: releaseSha256 !== null };
+  const { assetId, size, releaseSha256 } = selectReleaseAsset(await response.json(), request);
+  const binarySha256 = await verifyReleaseAsset(repo, assetId, size, request.sha256 ?? releaseSha256, undefined, fetcher);
+  return { request, assetId, size, binarySha256, releaseDigestVerified: releaseSha256 !== null };
 }
 
 type Plan = Awaited<ReturnType<typeof resolveRelease>>;
 
-function runBun(args: string[], env: Env): Promise<boolean> {
+type ProcessStatus = { status: "ok" } | { status: "spawn-error" | "terminated" } | { status: "exit"; exitCode: number };
+type RunStatus = { harness: ProcessStatus | { status: "missing-corpus" }; fallbackReport?: ProcessStatus };
+
+function runBun(args: string[], env: Env): Promise<ProcessStatus> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, { cwd: REPO_ROOT, env, stdio: "ignore" });
-    child.once("error", () => resolve(false));
-    child.once("close", (code) => resolve(code === 0));
+    child.once("error", () => resolve({ status: "spawn-error" }));
+    child.once("close", (code) => resolve(code === 0 ? { status: "ok" }
+      : code === null ? { status: "terminated" } : { status: "exit", exitCode: code }));
   });
 }
 
-async function runNativeHarness(plan: Plan, bin: string, corpus: string, out: string, env: Env): Promise<boolean> {
-  const { request, binarySha256, releaseDigestVerified } = plan;
+async function runNativeHarness(plan: Plan, bin: string, corpus: string, out: string, env: Env): Promise<RunStatus> {
+  const { request, assetId, binarySha256, releaseDigestVerified } = plan;
   mkdirSync(out, { recursive: true });
   writeFileSync(join(out, "provenance.json"), `${JSON.stringify({
     sourceSha: request.sourceSha,
+    assetId,
     binarySha256,
     providedDigestVerified: request.sha256 !== null,
     releaseDigestVerified,
@@ -187,19 +207,22 @@ async function runNativeHarness(plan: Plan, bin: string, corpus: string, out: st
   ];
   // Report artifacts can contain raw checker output; do not echo it to the job
   // log (where it could also be interpreted as Actions workflow commands).
-  if (await runBun(["src/run.ts", ...args], childEnv)) return true;
-  const fallback = await runBun(["src/report.ts", "--from", out, "--out", out, "--impl-name", request.implementation], childEnv);
-  if (!fallback) throw new NativeInputError("Native harness and fallback report generation failed");
-  return false;
+  const harness = statSync(corpus, { throwIfNoEntry: false })?.isDirectory()
+    ? await runBun(["src/run.ts", ...args], childEnv) : { status: "missing-corpus" } as const;
+  if (harness.status === "ok") return { harness };
+  const fallbackReport = await runBun(["src/report.ts", "--from", out, "--out", out, "--impl-name", request.implementation], childEnv);
+  return { harness, fallbackReport };
 }
 
-export async function executeNativePlan(repo: string, plan: Plan, corpus: string, out: string, env = process.env, fetcher = fetch): Promise<boolean> {
+export async function executeNativePlan(repo: string, plan: Plan, corpus: string, out: string, env = process.env, fetcher = fetch): Promise<RunStatus> {
   const staging = mkdtempSync(join(env.RUNNER_TEMP ?? tmpdir(), "tsc-compa-native-"));
   try {
     const bin = join(staging, "checker");
-    await verifyReleaseAsset(repo, plan.request, assetSize(plan.size), checksum(plan.binarySha256, "resolved SHA-256"), bin, fetcher);
+    await verifyReleaseAsset(repo, plan.assetId, assetSize(plan.size), checksum(plan.binarySha256, "resolved SHA-256"), bin, fetcher);
     chmodSync(bin, 0o700);
-    return await runNativeHarness(plan, bin, corpus, out, env);
+    const result = await runNativeHarness(plan, bin, corpus, out, env);
+    writeFileSync(join(out, "run-status.json"), `${JSON.stringify(result, null, 2)}\n`);
+    return result;
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }
@@ -224,8 +247,15 @@ async function main(command: string | undefined) {
     // The plan is a single-line JSON output of the successful retrieval job,
     // not a dispatch input. Never pass its fields through shell interpolation.
     const plan = JSON.parse(required("NATIVE_PLAN")) as Plan;
-    const ok = await executeNativePlan(repo, plan, resolve(REPO_ROOT, "reference/corpus/tests/cases"), resolve(REPO_ROOT, "out/native-suite"));
-    if (!ok) throw new NativeInputError("Native harness failed; see the report artifact");
+    const result = await executeNativePlan(repo, plan, resolve(REPO_ROOT, "reference/corpus/tests/cases"), resolve(REPO_ROOT, "out/native-suite"));
+    if (result.harness.status !== "ok") {
+      // Only allowlisted status codes and numeric process exit codes reach logs.
+      console.error(`Native harness failed: ${JSON.stringify(result.harness)}`);
+      if (result.fallbackReport && result.fallbackReport.status !== "ok") {
+        console.error(`Native fallback report failed: ${JSON.stringify(result.fallbackReport)}`);
+      }
+      process.exitCode = 1;
+    }
   } else {
     throw new NativeInputError("Usage: bun scripts/native-suite.ts resolve|run");
   }

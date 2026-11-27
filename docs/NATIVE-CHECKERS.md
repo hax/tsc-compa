@@ -45,10 +45,12 @@ Release asset 可公开下载；Actions 日志、步骤摘要和报告 artifact 
 
 ## 下载、执行与结果
 
-下载任务只用本仓自带的只读 `GITHUB_TOKEN` 查公开 Release 元数据，按名称精确选择已上传
-的 asset，并对公开下载内容计算摘要；不执行下载内容，不把二进制写入 Actions cache 或上传为
-artifact。执行任务在另一台 runner 上，不授予仓库权限，重新下载同一公开地址并验证长度和
-SHA-256，通过后才赋予执行权限。检查器不继承下载凭据或 runner 命令文件的环境变量。
+下载任务只用本仓自带的只读 `GITHUB_TOKEN` 查公开 Release 元数据，按名称精确选择已上传的
+asset，再通过 GitHub API 按该 asset 的 ID 无凭据下载并计算摘要；不执行下载内容，也不会将
+二进制写入 Actions cache 或上传为 artifact。执行任务在另一台 runner 上，不授予仓库权限，
+按同一 ID 重新下载并验证长度和 SHA-256，通过后才赋予执行权限。同名替换不会改用新 asset；
+原 ID 无法下载时任务失败。如果 API 返回 JSON 而不是文件内容，也不会回退到按名称下载。
+检查器不继承下载凭据或 runner 命令文件的环境变量。
 这不是沙箱，也不验证供应链可信度；只能使用维护者信任并允许公开发布的二进制。
 这里的无凭据下载仅用于读取已选定的公开 asset，不会新增可供匿名用户发起执行的入口。
 
@@ -59,9 +61,12 @@ SHA-256，通过后才赋予执行权限。检查器不继承下载凭据或 run
 | --- | --- |
 | `metrics.json` / `details.json` | 汇总指标与逐案结果；`meta.selectedCases` 是所选源用例数 |
 | `report.md` / `report.html` | `src/run.ts` 从同一次运行生成的报告，HTML 可离线打开 |
-| `provenance.json` | 调用方声明的 `sourceSha`、实际 `binarySha256` 及独立摘要校验标记 |
+| `provenance.json` | 调用方声明的 `sourceSha`、Release 的 `assetId`、实际 `binarySha256` 及摘要校验标记 |
+| `run-status.json` | 运行器状态，以及需要时的补生成报告状态 |
 
-如果运行器启动后异常退出，尝试补生成 Markdown 和 HTML 报告，不用报告代替失败状态。
+测试集目录缺失或运行器异常退出时，尝试补生成 Markdown 和 HTML 报告，任务仍失败。
+日志和 `run-status.json` 分开记录运行器与补生成的状态，只包含固定状态和退出码；
+不会将原始子进程输出转写到日志。
 逐案崩溃或超时计入 `metrics.meta.executionFailures`，不作为门禁；请同时检查该字段和完成用例数。
 如果输入校验或下载失败，检查器不会启动，也不会生成测试结果。
 

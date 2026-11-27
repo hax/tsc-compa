@@ -25,7 +25,7 @@ const manual = (fields = {}) => parseNativeRequest("workflow_dispatch", { inputs
 const bytes = "synthetic checker bytes\n";
 const hash = (bytes: string) => createHash("sha256").update(bytes).digest("hex");
 const sha = hash(bytes);
-const asset = { name: payload.asset_name, state: "uploaded", size: bytes.length, digest: `sha256:${sha}` };
+const asset = { id: 12345678, name: payload.asset_name, state: "uploaded", size: bytes.length, digest: `sha256:${sha}` };
 const release = { tag_name: payload.release_tag, draft: false, assets: [asset] };
 
 function mockFetch(callback: (url: string, options: RequestInit) => Response): typeof fetch {
@@ -66,12 +66,15 @@ test("only expected event, literal release inputs, and legacy baseline scope are
 test("Release lookup requires the exact published tag and one exact uploaded asset", () => {
   const request = dispatch();
   expect(selectReleaseAsset({ ...release, assets: [{ ...asset, name: `${asset.name}.bak` }, asset] }, request))
-    .toEqual({ size: bytes.length, releaseSha256: sha });
+    .toEqual({ assetId: asset.id, size: bytes.length, releaseSha256: sha });
   expect(selectReleaseAsset({ ...release, assets: [{ ...asset, digest: null }] }, request).releaseSha256).toBeNull();
   expect(() => selectReleaseAsset({ ...release, tag_name: "v0" }, request)).toThrow("tag");
   expect(() => selectReleaseAsset({ ...release, draft: true }, request)).toThrow("published");
   for (const assets of [[{ ...asset, name: asset.name.toUpperCase() }], [asset, asset], [{ ...asset, state: "open" }]]) {
     expect(() => selectReleaseAsset({ ...release, assets }, request)).toThrow("exactly one");
+  }
+  for (const id of [undefined, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "1", "../../secret"]) {
+    expect(() => selectReleaseAsset({ ...release, assets: [{ ...asset, id }] }, request)).toThrow("asset ID");
   }
   expect(() => selectReleaseAsset({ ...release, assets: [{ ...asset, digest: "sha256:invalid" }] }, request)).toThrow("digest");
   expect(() => selectReleaseAsset(release, dispatch({ sha256: "a".repeat(64) }))).toThrow("does not match");
@@ -81,40 +84,69 @@ test("retrieval hashes legacy assets; only metadata request carries authorizatio
   const urls: string[] = [];
   const fetcher = mockFetch((url, opts) => {
     urls.push(url);
-    if (url.startsWith("https://api.github.com/")) {
+    if (url.includes("/releases/tags/")) {
       expect(new Headers(opts.headers).get("Authorization")).toBe("Bearer test-token");
       expect(opts.redirect).toBe("error");
       return Response.json({ ...release, assets: [{ ...asset, digest: undefined, browser_download_url: "https://bad.example/ignored" }] });
     }
     expect(new Headers(opts.headers).has("Authorization")).toBe(false);
     expect(opts.redirect).toBe("manual");
-    if (url.startsWith("https://github.com/")) return Response.redirect("https://release-assets.githubusercontent.com/test?opaque=token");
+    if (url === `https://api.github.com/repos/${repo}/releases/assets/${asset.id}`) {
+      expect(new Headers(opts.headers).get("Accept")).toBe("application/octet-stream");
+      return Response.redirect("https://release-assets.githubusercontent.com/test?opaque=token");
+    }
+    expect(new Headers(opts.headers).has("Accept")).toBe(false);
     return new Response(bytes);
   });
   const plan = await resolveRelease(repo, dispatch(), "test-token", fetcher);
-  expect(plan).toMatchObject({ binarySha256: sha, releaseDigestVerified: false });
+  expect(plan).toMatchObject({ assetId: asset.id, binarySha256: sha, releaseDigestVerified: false });
   expect(urls).toEqual([
     `https://api.github.com/repos/${repo}/releases/tags/${payload.release_tag}`,
-    `https://github.com/${repo}/releases/download/${payload.release_tag}/${payload.asset_name}`,
+    `https://api.github.com/repos/${repo}/releases/assets/${asset.id}`,
     "https://release-assets.githubusercontent.com/test?opaque=token",
   ]);
   expect(await resolveRelease(repo, dispatch({ sha256: sha }), "test-token", fetcher)).toMatchObject({ binarySha256: sha });
   await expect(resolveRelease(repo, dispatch({ sha256: "b".repeat(64) }), "test-token", fetcher)).rejects.toThrow("SHA-256");
-  const changed = mockFetch((url) => url.startsWith("https://api.github.com/") ? Response.json(release) : new Response("x".repeat(bytes.length)));
+  const changed = mockFetch((url) => url.includes("/releases/tags/") ? Response.json(release) : new Response("x".repeat(bytes.length)));
   await expect(resolveRelease(repo, dispatch(), "test-token", changed)).rejects.toThrow("SHA-256");
 });
 
 test("execution download rejects off-host, plaintext, URL credentials and changed or oversized bytes", async () => {
-  const request = dispatch();
   for (const url of ["https://bad.example/", "http://release-assets.githubusercontent.com/", "https://user@release-assets.githubusercontent.com/", "https://release-assets.githubusercontent.com:1234/"]) {
-    await expect(verifyReleaseAsset(repo, request, bytes.length, sha, undefined,
+    await expect(verifyReleaseAsset(repo, asset.id, bytes.length, sha, undefined,
       mockFetch(() => new Response(null, { status: 302, headers: { Location: url } }))),
     ).rejects.toThrow("Unexpected Release asset redirect");
   }
   for (const [body, error] of [[`${bytes}x`, "size"], ["x", "size"], ["x".repeat(bytes.length), "SHA-256"]] as const) {
-    await expect(verifyReleaseAsset(repo, request, bytes.length, sha, undefined, mockFetch(() => new Response(body))))
+    await expect(verifyReleaseAsset(repo, asset.id, bytes.length, sha, undefined, mockFetch(() => new Response(body))))
       .rejects.toThrow(error);
   }
+});
+
+test("asset bytes are bound to the resolved ID even if a replacement takes the name", async () => {
+  const idUrl = `https://api.github.com/repos/${repo}/releases/assets/${asset.id}`;
+  const replacement = { ...asset, id: asset.id + 1 };
+  const urls: string[] = [];
+  let currentAsset = asset;
+  const fetcher = mockFetch((url, opts) => {
+    urls.push(url);
+    if (url.includes("/releases/tags/")) return Response.json({ ...release, assets: [currentAsset] });
+    expect(url).toBe(idUrl);
+    expect(new Headers(opts.headers).has("Authorization")).toBe(false);
+    return new Response(bytes);
+  });
+  const plan = await resolveRelease(repo, dispatch(), "test-token", fetcher);
+  currentAsset = replacement;
+  expect(await verifyReleaseAsset(repo, plan.assetId, plan.size, plan.binarySha256, undefined, fetcher)).toBe(sha);
+  expect(urls.slice(1)).toEqual([idUrl, idUrl]);
+  await expect(verifyReleaseAsset(repo, plan.assetId, plan.size, plan.binarySha256, undefined,
+    mockFetch(() => new Response(null, { status: 404 })),
+  )).rejects.toThrow("HTTP 404");
+  // A caching proxy may ignore the Accept header. Never hash API metadata as
+  // a legacy asset or follow its mutable browser_download_url.
+  await expect(verifyReleaseAsset(repo, plan.assetId, plan.size, null, undefined,
+    mockFetch(() => Response.json({ ...asset, browser_download_url: "https://bad.example/" })),
+  )).rejects.toThrow("returned JSON instead of bytes");
 });
 
 test("verified synthetic batch executable produces the four standard reports and provenance", async () => {
@@ -140,10 +172,15 @@ test("verified synthetic batch executable produces the four standard reports and
     `}`;
     const digest = hash(checker);
     const request = manual({ baseline: "7.1.0-beta", limit: "1", sha256: digest });
-    const plan = { request, size: Buffer.byteLength(checker), binarySha256: digest, releaseDigestVerified: true };
+    const plan = { request, assetId: asset.id, size: Buffer.byteLength(checker), binarySha256: digest, releaseDigestVerified: true };
     expect(await executeNativePlan(repo, plan, corpus, out, {
       ...process.env, GH_TOKEN: "synthetic-token", GITHUB_ENV: "synthetic-env", NATIVE_PLAN: "synthetic-plan",
-    }, mockFetch(() => new Response(checker)))).toBe(true);
+    }, mockFetch((url, opts) => {
+      expect(url).toBe(`https://api.github.com/repos/${repo}/releases/assets/${asset.id}`);
+      expect(new Headers(opts.headers).get("Accept")).toBe("application/octet-stream");
+      expect(new Headers(opts.headers).has("Authorization")).toBe(false);
+      return new Response(checker);
+    }))).toEqual({ harness: { status: "ok" } });
     const read = (name: string) => readFileSync(join(out, name), "utf8");
     const metrics = JSON.parse(read("metrics.json"));
     expect(metrics.meta).toMatchObject({ baseline: "7.1.0-beta", adapter: "checker-batch", mode: "fixed", verdictEligible: false, selectedCases: 1 });
@@ -153,7 +190,8 @@ test("verified synthetic batch executable produces the four standard reports and
     expect(JSON.parse(read("details.json"))).toHaveLength(1);
     expect(read("report.md")).toContain("checker");
     expect(read("report.html")).toContain("<!doctype html>");
-    expect(JSON.parse(read("provenance.json"))).toEqual({ sourceSha: payload.source_sha, binarySha256: digest, providedDigestVerified: true, releaseDigestVerified: true });
+    expect(JSON.parse(read("provenance.json"))).toEqual({ sourceSha: payload.source_sha, assetId: asset.id, binarySha256: digest, providedDigestVerified: true, releaseDigestVerified: true });
+    expect(JSON.parse(read("run-status.json"))).toEqual({ harness: { status: "ok" } });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -162,10 +200,14 @@ test("verified synthetic batch executable produces the four standard reports and
 test("native harness failure produces a fallback report but not false success", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tsc-compa-native-failure-"));
   try {
-    const checker = "#!/bin/sh\nexit 2\n";
+    const marker = join(dir, "started");
+    const checker = `#!/bin/sh\ntouch '${marker}'\nexit 2\n`;
     const out = join(dir, "reports");
-    const plan = { request: manual({ limit: "1" }), size: checker.length, binarySha256: hash(checker), releaseDigestVerified: false };
-    expect(await executeNativePlan(repo, plan, join(dir, "missing-corpus"), out, process.env, mockFetch(() => new Response(checker)))).toBe(false);
+    const plan = { request: manual({ limit: "1" }), assetId: asset.id, size: checker.length, binarySha256: hash(checker), releaseDigestVerified: false };
+    const result = await executeNativePlan(repo, plan, join(dir, "missing-corpus"), out, process.env, mockFetch(() => new Response(checker)));
+    expect(result).toEqual({ harness: { status: "missing-corpus" }, fallbackReport: { status: "ok" } });
+    expect(JSON.parse(readFileSync(join(out, "run-status.json"), "utf8"))).toEqual(result);
+    expect(existsSync(marker)).toBe(false);
     expect(existsSync(join(out, "metrics.json"))).toBe(false);
     expect(readFileSync(join(out, "report.md"), "utf8")).toContain("metrics.json");
     expect(readFileSync(join(out, "report.html"), "utf8")).toContain("metrics.json");
@@ -180,7 +222,7 @@ test("a mismatched download never starts the checker and is removed from staging
     const marker = join(dir, "started");
     const checker = `#!/bin/sh\ntouch '${marker}'\n`;
     const out = join(dir, "reports");
-    const plan = { request: dispatch(), size: checker.length, binarySha256: "c".repeat(64), releaseDigestVerified: false };
+    const plan = { request: dispatch(), assetId: asset.id, size: checker.length, binarySha256: "c".repeat(64), releaseDigestVerified: false };
     await expect(executeNativePlan(repo, plan, join(dir, "missing-corpus"), out,
       { ...process.env, RUNNER_TEMP: dir }, mockFetch(() => new Response(checker)),
     )).rejects.toThrow("SHA-256");
@@ -200,11 +242,35 @@ test("a per-case checker crash stays visible in the standard non-gating reports"
     writeFileSync(join(corpus, "compiler/2dArrays.ts"), "var x = 1;\n");
     const checker = "#!/bin/sh\nexit 2\n";
     const out = join(dir, "reports");
-    const plan = { request: manual({ limit: "1" }), size: checker.length, binarySha256: hash(checker), releaseDigestVerified: false };
-    expect(await executeNativePlan(repo, plan, corpus, out, process.env, mockFetch(() => new Response(checker)))).toBe(true);
+    const plan = { request: manual({ limit: "1" }), assetId: asset.id, size: checker.length, binarySha256: hash(checker), releaseDigestVerified: false };
+    expect(await executeNativePlan(repo, plan, corpus, out, process.env, mockFetch(() => new Response(checker))))
+      .toEqual({ harness: { status: "ok" } });
     const metrics = JSON.parse(readFileSync(join(out, "metrics.json"), "utf8"));
     expect(metrics.meta.executionFailures).toMatchObject([{ side: "candidate", status: "crash" }]);
     expect(existsSync(join(out, "report.html"))).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, HARNESS_TEST_TIMEOUT_MS);
+
+
+test("nonzero harness and failed fallback are recorded separately without raw errors", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tsc-compa-native-status-"));
+  try {
+    // The missing case makes run.ts exit; the directory at report.html makes
+    // the fallback renderer exit. Its error includes this path but status must not.
+    const corpus = join(dir, "empty-corpus");
+    const out = join(dir, "::error::synthetic-injection");
+    mkdirSync(corpus);
+    mkdirSync(join(out, "report.html"), { recursive: true });
+    const checker = "#!/bin/sh\nexit 2\n";
+    const plan = { request: manual({ limit: "1" }), assetId: asset.id, size: checker.length, binarySha256: hash(checker), releaseDigestVerified: false };
+    const result = await executeNativePlan(repo, plan, corpus, out, process.env, mockFetch(() => new Response(checker)));
+    expect(result).toEqual({ harness: { status: "exit", exitCode: 1 }, fallbackReport: { status: "exit", exitCode: 1 } });
+    const safeStatus = readFileSync(join(out, "run-status.json"), "utf8");
+    expect(JSON.parse(safeStatus)).toEqual(result);
+    expect(safeStatus).not.toContain("::error::");
+    expect(safeStatus).not.toContain(corpus);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -120,7 +120,7 @@ jobs:
             echo
             jq -r '.request | "- Implementation: `\(.implementation)`\n- Source SHA (caller-supplied): `\(.sourceSha // "unknown")`\n- Baseline: `\(.baseline)`\n- Mode: `\(.mode)`; limit: `\(.limit)`"' <<< "$NATIVE_PLAN"
             if [ -f out/native-suite/provenance.json ]; then
-              jq -r '"- Verified binary SHA-256: `\(.binarySha256)`"' <<< "$NATIVE_PLAN"
+              jq -r '"- Release asset ID: `\(.assetId)`\n- Verified binary SHA-256: `\(.binarySha256)`"' <<< "$NATIVE_PLAN"
             fi
             if [ -f out/native-suite/metrics.json ]; then
               echo
@@ -146,5 +146,6 @@ jobs:
             out/native-suite/report.md
             out/native-suite/report.html
             out/native-suite/provenance.json
+            out/native-suite/run-status.json
           if-no-files-found: ignore
           retention-days: 30
