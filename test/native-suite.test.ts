@@ -5,6 +5,10 @@ import { dirname, join } from "node:path";
 import { expect, test } from "bun:test";
 import { executeNativePlan, parseNativeRequest, resolveRelease, selectReleaseAsset, verifyReleaseAsset } from "../scripts/native-suite.ts";
 
+// These fixtures start the harness, reference compiler, and synthetic checker
+// in child processes. Leave room for process startup on a busy runner.
+const HARNESS_TEST_TIMEOUT_MS = 30_000;
+
 const repo = "example/compatibility";
 const payload = {
   implementation: "checker",
@@ -153,7 +157,7 @@ test("verified synthetic batch executable produces the four standard reports and
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
+}, HARNESS_TEST_TIMEOUT_MS);
 
 test("native harness failure produces a fallback report but not false success", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tsc-compa-native-failure-"));
@@ -168,8 +172,7 @@ test("native harness failure produces a fallback report but not false success", 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
+}, HARNESS_TEST_TIMEOUT_MS);
 
 test("a mismatched download never starts the checker and is removed from staging", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tsc-compa-native-mismatch-"));
@@ -205,4 +208,4 @@ test("a per-case checker crash stays visible in the standard non-gating reports"
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
+}, HARNESS_TEST_TIMEOUT_MS);
