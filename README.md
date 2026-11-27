@@ -32,7 +32,7 @@
 
 ## 查阅公开报告
 
-[公开报告目录](https://johnhax.net/tsc-compa/)可以按「候选检查器和版本 → 参考 TypeScript → 测试集」筛选，也可以分享当前选择。公开评测只开放固定版本的官方 TypeScript（对照组）、两版 Bun 和 tsrs CLI，参考为 TS 7.1.0-beta 的官方结果文件。固定的 120 例诊断样本与全量报告分开列出；28 例冒烟用于校准运行器和候选适配器，不是公开评估选项。
+[公开报告目录](https://johnhax.net/tsc-compa/)可以按「候选检查器和版本 → 参考 TypeScript → 测试集」筛选，也可以分享当前选择。固定的 120 例诊断样本与全量报告分开列出；28 例冒烟用于校准运行器和候选适配器，不是公开评估选项。
 
 目录只展示已发布的报告，未见结果不表示检查器不兼容，也不会自动启动 CI。有仓库写权限的维护者可在 [GitHub Actions 评测工作流](https://github.com/hax/tsc-compa/actions/workflows/public-evaluation.yml)点 **Run workflow**。评测和发布是两个操作，参见 [CI 使用说明](docs/CI.md#公开评测与报告目录public-evaluationyml)。
 
