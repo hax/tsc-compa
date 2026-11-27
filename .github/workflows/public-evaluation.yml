@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/public-evaluation.yml
+      - config/implementations.json
       - scripts/public-evaluation*.ts
       - scripts/persist-public-evaluation.sh
       - test/public-evaluation*.test.ts
@@ -12,10 +13,10 @@ on:
       candidate:
         description: Pinned public candidate
         type: choice
-        options: [typescript, bun-1.4.4, bun-1.4.5, tsrs]
+        options: [typescript, bun-1.4.4, bun-1.4.5, tsrs, ts-rust, tsz]
         default: typescript
       suite:
-        description: TS7 official baseline test suite
+        description: TS7 test suite (select full for ts-rust or tsz)
         type: choice
         options: [fixed-120, full]
         default: fixed-120
@@ -32,6 +33,8 @@ permissions:
   contents: read
 
 env:
+  EVAL_CANDIDATE: ${{ inputs.candidate || 'typescript' }}
+  EVAL_SUITE: ${{ inputs.suite || 'fixed-120' }}
   TZ: UTC
   LC_ALL: C.UTF-8
 
@@ -90,13 +93,11 @@ jobs:
       - name: Plan shards and look for exact completed evidence
         id: plan
         env:
-          CANDIDATE: ${{ inputs.candidate || 'typescript' }}
-          SUITE: ${{ inputs.suite || 'fixed-120' }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
         run: |
           flags=()
           if [[ "$FORCE" == true ]]; then flags+=(--force); fi
-          bun scripts/public-evaluation.ts plan "$CANDIDATE" "$SUITE" reference/corpus .cache/public-tools request public-data "${flags[@]}"
+          bun scripts/public-evaluation.ts plan "$EVAL_CANDIDATE" "$EVAL_SUITE" reference/corpus .cache/public-tools request public-data "${flags[@]}"
       - name: Summarize execution decision
         env:
           ID: ${{ steps.plan.outputs.id }}
@@ -125,7 +126,18 @@ jobs:
         if: steps.plan.outputs.should-run == 'true'
         with:
           name: public-evaluation-request
-          path: request/
+          path: |
+            request/request.json
+            request/plan.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: steps.plan.outputs.should-run == 'true' && (env.EVAL_CANDIDATE == 'ts-rust' || env.EVAL_CANDIDATE == 'tsz')
+        with:
+          name: public-evaluation-compiler
+          path: request/compiler/
           overwrite: true
           if-no-files-found: error
           retention-days: 14
@@ -143,7 +155,6 @@ jobs:
     env:
       SHARD: ${{ matrix.shard }}
       REQUEST_ID: ${{ needs.plan.outputs.id }}
-      CANDIDATE: ${{ inputs.candidate || 'typescript' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -167,6 +178,11 @@ jobs:
         with:
           name: public-evaluation-request
           path: request
+      - uses: actions/download-artifact@v4
+        if: env.EVAL_CANDIDATE == 'ts-rust' || env.EVAL_CANDIDATE == 'tsz'
+        with:
+          name: public-evaluation-compiler
+          path: request/compiler
       - run: bun install --frozen-lockfile
       - name: Evaluate shard
         run: bun scripts/public-evaluation.ts run request "$REQUEST_ID" "$SHARD" reference/corpus .cache/public-tools out

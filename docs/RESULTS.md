@@ -474,6 +474,18 @@ bun src/run.ts --baseline 6.0.3 --corpus "$TSC60_CORPUS/tests/cases" \
 
 结果写 `.cache/run/{metrics,details}.json`。
 
+## tsc-rs v0.1.0 全量预演未完成
+
+kazhiramatsu 的正式发行 `v0.1.0`（`ed173ea`）用上游固定的 Rust 1.93.0 构建，CLI 实测自报
+`Version 6.0.3`。预演将它与 TypeScript 7.1.0-beta 的官方结果文件作跨版本比较，使用 `TSRS_CHECKERS=1`，
+由生成的 `tsconfig` 传递用例的有效选项，不替换 `es2026`。候选的获取、构建与独立标准库探测均成功。
+
+[Linux 全量复验](https://github.com/hax/tsc-compa/actions/runs/45982683785)设置了 32 MiB 栈软上限，
+但 [第 05 分片](https://github.com/hax/tsc-compa/actions/runs/45982683785/job/140452346862)中的
+`conformance/controlFlow/dependentDestructuredVariablesReferenceInDeclaration1.ts` 仍使候选的 Rust 主线程栈溢出并中止。
+这是执行异常，不是选项不支持，也不计为兼容通过。完整性检查拒绝生成报告，因此不把 `v0.1.0` 加入公开评测。
+源码快照 `2b006e0` 仍在原登记和冒烟流程中；它的结果既不替代正式发行的全量结果，也不作为发布依据。
+
 ## 后续
 
 - [x] 对齐官方测试框架默认值（结论 2/5）；

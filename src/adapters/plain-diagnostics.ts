@@ -68,6 +68,7 @@ const KNOWN_AUXILIARY_LINES: RegExp[] = [
   /^\s*(?:Errors|Total diagnostics):\s*0\s*$/,
   /^\s*(?:I\/O Read|Parse & Bind|Check):\s*\d+(?:\.\d+)?s\s*$/,
   /^\s*(?:Emitted files|Request cache hits|Request cache misses|Contextual cache bypasses|clear_type_cache_recursive|Interned types|Eval cache|Property cache|Variance cache|Module files|Dependency edges|Import cycles):\s*\d+\s*$/,
+  /^\s*Largest cycle:\s*[1-9]\d* files?\s*$/,
   /^\s*Request cache hit rate:\s*\d+(?:\.\d+)?%\s*$/,
   /^\s*Access request-cache hit rate:\s*\d+(?:\.\d+)?% \(\d+\/\d+\)\s*$/,
   /^\s*(?:Subtype|Assignability|Application eval|Instantiation) cache:\s*\d+ entries \(\d+ hits, \d+ misses, \d+(?:\.\d+)?%\)\s*$/,
@@ -99,6 +100,10 @@ export function containsOnlyKnownAuxiliaryLines(text: string): boolean {
 /** Out-of-scope diagnostics are not proof of zero diagnostics, nor a process crash. */
 export function unsupportedCliDiagnostics(exitCode: number | null, parsed: ParsedPlainDiagnostics, text: string): string | null {
   if (exitCode !== 0 && exitCode !== 1 && exitCode !== 2) return null;
+  // TSZ's CLI reports the rejected embedded-lib name without a TS code.
+  // Accept only this exact, standalone configuration error on failure.
+  const embeddedLib = /^Error: unsupported compilerOptions\.lib '([a-z][a-z0-9.]*)' \(not found in embedded libs\)$/.exec(text.trim());
+  if ((exitCode === 1 || exitCode === 2) && embeddedLib) return `候选内置声明库不支持 ${embeddedLib[1]}`;
   if (/^.+?\(\d+,\d+\):\s+(?:message|suggestion)\s+TS\d+:/m.test(text)) return "输出包含暂不支持的 message / suggestion 诊断";
   if (parsed.outsideHeaders > 0 && parsed.diagnostics.length === 0 && parsed.unpositioned.length === 0) {
     return "诊断仅出现在用例目录外（如内置库）";

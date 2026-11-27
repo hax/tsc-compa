@@ -1,12 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Plan } from "../scripts/full-compatibility.ts";
-import { cached, makeReport, planExecution, publicCatalog, reportHtml, saveReport, verifyPublic, verifyReport, type Request } from "../scripts/public-evaluation.ts";
+import { cached, makeReport, planExecution, publicCatalog, reportHtml, saveReport, semanticFingerprint, shardReceipt, verifyPublic, verifyReport, type Request } from "../scripts/public-evaluation.ts";
+import { activePolicies } from "../scripts/public-evaluation-policy.ts";
 import { sha256 } from "../src/provenance.ts";
+import { createHash } from "node:crypto";
 import { distributionSha256, shardInputEvidence, verifyCorpus } from "../scripts/public-evaluation-inputs.ts";
+
+import { distributionContents, inspectDistribution, verifyNpmArchive } from "../scripts/public-evaluation-tools.ts";
 
 const hash = (value: unknown) => sha256(JSON.stringify(value));
 const write = (path: string, data: unknown) => writeFileSync(path, JSON.stringify(data));
@@ -57,12 +61,22 @@ function createFixture(root: string) {
   return { root, data, bundle, metrics, metricsFile, plan, request, receipt };
 }
 
-test("catalog lists the eight explicit public combinations without implying they have run", () => {
+test("adds two full-only combinations in rollout order without implying they have run", () => {
   const catalog = publicCatalog();
   expect(catalog.schemaVersion).toBe(1);
-  expect(catalog.combinations).toHaveLength(8);
-  expect(new Set(catalog.combinations.map((row) => `${row.candidate.id}:${row.candidate.version}:${row.suite.id}`)).size).toBe(8);
+  expect(catalog.combinations).toHaveLength(10);
+  expect(catalog.combinations.slice(8).map((row) => [row.candidate.id, row.candidate.name, row.candidate.version, row.suite.id])).toEqual([
+    ["ts-rust", "ts-rust (pingdotgg)", "0.8.0", "full"], ["tsz", "tsz", "v0.1.75", "full"],
+  ]);
+  expect(new Set(catalog.combinations.map((row) => `${row.candidate.id}:${row.candidate.version}:${row.suite.id}`)).size).toBe(10);
   expect(catalog.combinations.every((row) => row.reference.id === "7.1.0-beta-official")).toBe(true);
+});
+
+test("rejects the blocked tsc-rs release and fixed samples for the new full-only candidates before reading the corpus", () => {
+  const plan = (candidate: string, suite: string) => execFileSync(process.execPath,
+    ["scripts/public-evaluation.ts", "plan", candidate, suite, "missing-corpus", "tools", "request", "public-data"], { stdio: "pipe" });
+  expect(() => plan("tsc-rs", "full")).toThrow("Not a public candidate: tsc-rs");
+  for (const candidate of ["ts-rust", "tsz"]) expect(() => plan(candidate, "fixed-120")).toThrow("only selectable with the full suite");
 });
 
 test("verified compact evidence is reusable, and distinct request fingerprints preserve history", () => fixture(({ data, bundle, root, request, plan, receipt }) => {
@@ -297,3 +311,127 @@ test("cache and deploy reject invalid catalogs, nested unknown fields, or unexpe
   writeFileSync(join(data, "reports", "unlisted.txt"), "not in the public contract");
   expect(() => verifyPublic(data)).toThrow("Unexpected file");
 }));
+
+
+test("retains historical HTML and IDs while accepting the exact legacy catalog", () => fixture(({ root, data, bundle, request, plan }) => {
+  const report = makeReport(request, plan, root, run);
+  write(join(bundle, `${report.id}.json`), report);
+  saveReport(data, bundle, report.id);
+  const html = readFileSync(join(data, report.reportPath), "utf8");
+  const path = join(data, "reports/catalog.json");
+  const priorCatalog = { ...publicCatalog(), combinations: publicCatalog().combinations.slice(0, 8) };
+  write(path, priorCatalog);
+  expect(cached(data, report.id)).toBe(true);
+  expect(() => verifyPublic(data)).not.toThrow();
+  expect(readFileSync(join(data, report.reportPath), "utf8")).toBe(html);
+  write(path, { ...priorCatalog, combinations: priorCatalog.combinations.slice(0, 7) });
+  expect(() => verifyPublic(data)).toThrow("catalog or index");
+}));
+
+test("source Markdown does not affect request identity, but harness code does", () => fixture(({ root }) => {
+  for (const path of ["scripts", "config", ".github", "src"]) cpSync(path, join(root, path), { recursive: true });
+  for (const path of ["package.json", "bun.lock", ".npmrc"]) cpSync(path, join(root, path));
+  const original = semanticFingerprint(root);
+  for (const path of ["src/README.md", "src/adapters/README.md", "src/adapters/design.MARKDOWN"]) {
+    writeFileSync(join(root, path), "one");
+    expect(semanticFingerprint(root)).toBe(original);
+    writeFileSync(join(root, path), "two");
+  }
+  expect(semanticFingerprint(root)).toBe(original);
+  writeFileSync(join(root, "src/adapters/index.ts"), "export {};\n");
+  expect(semanticFingerprint(root)).not.toBe(original);
+}));
+
+test("validates prepared compiler provenance and exact shard options without promoting local paths", () => fixture(({ root, data, bundle, request, plan, metrics }) => {
+  plan.candidates = ["tsz"];
+  const { version: _version, ...old } = request;
+  const policyAtRun = activePolicies.tsz;
+  if (policyAtRun.source.kind !== "release") throw new Error("Missing fixture policy");
+  const q = { ...old, version: 3 as const, candidate: "tsz" as const, candidateVersion: policyAtRun.candidate.version, planSha256: hash(plan),
+    options: { ...old.options, candidateEnvArgs: [...policyAtRun.cliArgs] },
+    candidateTool: { ...old.candidateTool, version: policyAtRun.selfReport, sha256: policyAtRun.nativeSha256 },
+    prepared: { source: policyAtRun.source, runtimeLibrariesSha256: sha256("runtime"), environment: policyAtRun.environment },
+  } satisfies Request;
+  const oldDir = join(root, "full-typescript-01");
+  const dir = join(root, "full-tsz-01");
+  cpSync(oldDir, dir, { recursive: true });
+  const receipt = join(dir, "public-request.json");
+  write(receipt, shardReceipt(q, hash(q), "01"));
+  metrics.meta.tools.candidate.version = q.candidateTool.version;
+  metrics.meta.tools.candidate.sha256 = q.candidateTool.sha256;
+  const metricsFile = join(dir, "metrics.json");
+  metrics.meta.options.candidateEnvArgs = ["--checkers", "1"];
+  write(metricsFile, metrics);
+  expect(() => makeReport(q, plan, root, run)).toThrow("identity does not match");
+  metrics.meta.options.candidateEnvArgs = [];
+  write(metricsFile, metrics);
+  const report = makeReport(q, plan, root, run);
+  expect(() => verifyReport(report, report.id)).not.toThrow();
+  expect(reportHtml(report)).toContain("tsz-org/tsz v0.1.75@0c0e53f");
+  expect(reportHtml(report)).toContain("CLI 自报版本：<code>Version 7.0.2");
+  expect(JSON.stringify(report)).not.toContain("/tmp/private");
+  for (const prepared of [
+    { ...q.prepared, environment: { TSZ_LIB_DIR: "/tmp/private" } },
+    { ...q.prepared, source: { ...q.prepared.source, commit: "a".repeat(40) } },
+    { ...q.prepared, source: { ...q.prepared.source, path: "/tmp/private" } },
+    { ...q.prepared, runtimeLibrariesSha256: [sha256("runtime")] },
+  ]) {
+    const request = { ...q, prepared };
+    const id = hash(request);
+    expect(() => verifyReport({ ...report, id, request, reportPath: `reports/${id}.html` }, id)).toThrow("Invalid or incomplete");
+  }
+  write(join(bundle, `${report.id}.json`), report);
+  expect(saveReport(data, bundle, report.id)).toBe("stored");
+  // Run a fresh copy of the actual Pages staging CLI with a new active pin
+  // and arguments appended. Do not mutate the running validator or registry.
+  const checkout = join(root, "next-generation");
+  for (const path of ["scripts", "config", "src"]) cpSync(path, join(checkout, path), { recursive: true });
+  const policyPath = join(checkout, "scripts/public-evaluation-policy.ts");
+  const policy = readFileSync(policyPath, "utf8");
+  const next = { ...policyAtRun, candidate: { ...policyAtRun.candidate, version: "v0.1.76" }, cliArgs: ["--example"],
+    source: { ...policyAtRun.source, tag: "v0.1.76", commit: "a".repeat(40) } };
+  writeFileSync(policyPath, policy.replace('];\nexport const activePolicies', `];\n(policyGenerations as Generation[]).push({ policies: { ...policyGenerations[0]!.policies, tsz: ${JSON.stringify(next)} } });\nexport const activePolicies`));
+  const stage = join(root, "staged");
+  const stageCommand = join(checkout, "scripts/stage-public-reports.ts");
+  execFileSync(process.execPath, [stageCommand, data, stage]);
+  expect(readFileSync(join(stage, `${report.id}.html`), "utf8")).toBe(reportHtml(report));
+  expect(JSON.parse(readFileSync(join(stage, "catalog.json"), "utf8")).combinations.at(-1).candidate.version).toBe("v0.1.76");
+  // A report relabeled to the new tuple but holding the old source/args is
+  // still rejected even when its own ID is recomputed.
+  const relabeledRequest = { ...q, candidateVersion: next.candidate.version };
+  const relabeledId = hash(relabeledRequest);
+  write(join(bundle, `${relabeledId}.json`), { ...report, id: relabeledId, candidate: next.candidate,
+    request: relabeledRequest, reportPath: `reports/${relabeledId}.html` });
+  expect(() => execFileSync(process.execPath, [join(checkout, "scripts/public-evaluation.ts"), "save", data, bundle, relabeledId],
+    { stdio: "pipe" })).toThrow("Invalid or incomplete public report");
+  write(receipt, { ...shardReceipt(q, hash(q), "01"), candidateDistributionSha256: sha256("wrong distribution") });
+  expect(() => makeReport(q, plan, root, run)).toThrow("not bound to this public request");
+}));
+
+test("prepared distributions reject extra files, symlinks and changed compiler bytes before execution", () => fixture(({ root }) => {
+  const dist = join(root, "prepared");
+  mkdirSync(dist);
+  const bin = join(dist, "tsz");
+  writeFileSync(bin, "expected executable");
+  const exact = distributionContents("tsz", dist);
+  writeFileSync(bin, "changed executable");
+  const source = activePolicies.tsz.source;
+  if (source.kind !== "release") throw new Error("Missing fixture policy");
+  expect(() => inspectDistribution("tsz", dist, source, { ...exact, runtimeLibrariesSha256: sha256("runtime") })).toThrow("bytes changed after planning");
+  const extra = join(dist, "lib.es5.d.ts");
+  writeFileSync(extra, "extra library");
+  expect(() => distributionContents("tsz", dist)).toThrow("Unexpected files");
+  rmSync(extra);
+  symlinkSync("tsz", extra);
+  expect(() => distributionContents("tsz", dist)).toThrow("Non-regular public input");
+}));
+
+
+test("npm acquisition requires both SHA-256 and npm SHA-512 integrity", () => {
+  const bytes = Buffer.from("pinned archive fixture");
+  const digest = sha256(bytes);
+  const integrity = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+  expect(() => verifyNpmArchive(bytes, digest, integrity)).not.toThrow();
+  expect(() => verifyNpmArchive(bytes, digest, `${integrity}bad`)).toThrow("integrity mismatch");
+  expect(() => verifyNpmArchive(bytes, sha256("other"), integrity)).toThrow("integrity mismatch");
+});

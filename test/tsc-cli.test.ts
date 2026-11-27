@@ -5,7 +5,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseTscOutput, parseTscOutputDetailed, TscCliAdapter } from "../src/adapters/tsc-cli.ts";
-import { containsOnlyKnownAuxiliaryLines, parsePlainDiagnostics } from "../src/adapters/plain-diagnostics.ts";
+import { containsOnlyKnownAuxiliaryLines, parsePlainDiagnostics, unsupportedCliDiagnostics } from "../src/adapters/plain-diagnostics.ts";
 
 describe("parseTscOutput", () => {
   test("parses error/warning lines, strips temp dir, ignores outside files", () => {
@@ -248,4 +248,14 @@ describe("TscCliAdapter 输出分类", () => {
       "  detail first",
     ].join("\n"));
   });
+});
+
+test("tsz release auxiliary cycle summary and explicit missing embedded lib are distinguished from failures", () => {
+  expect(containsOnlyKnownAuxiliaryLines("Import cycles: 1\nLargest cycle: 2 files\n")).toBe(true);
+  expect(containsOnlyKnownAuxiliaryLines("Largest cycle: unexpected output\n")).toBe(false);
+  const output = "Error: unsupported compilerOptions.lib 'es2026.json' (not found in embedded libs)\n";
+  const parsed = parsePlainDiagnostics("/tmp", output);
+  expect(unsupportedCliDiagnostics(1, parsed, output)).toBe("候选内置声明库不支持 es2026.json");
+  expect(unsupportedCliDiagnostics(0, parsed, output)).toBeNull();
+  expect(unsupportedCliDiagnostics(1, parsed, `${output}internal crash`)).toBeNull();
 });

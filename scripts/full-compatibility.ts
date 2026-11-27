@@ -5,12 +5,14 @@ import { join, resolve } from "node:path";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "../src/baselines.ts";
 import { expandCaseVariants } from "../src/case.ts";
 import { isValidCaseId, readCase } from "../src/discover.ts";
+import { activePolicies, isAddedCandidate, type AddedCandidate } from "./public-evaluation-policy.ts";
 import { identifyTool, sha256 } from "../src/provenance.ts";
 import type { Metrics, ToolIdentity } from "../src/compare.ts";
 
 export const baseline = "7.1.0-beta-official";
 const candidates = ["typescript", "bun-1.4.4", "bun-1.4.5", "tsrs"] as const;
-export type Candidate = typeof candidates[number];
+export type LegacyCandidate = typeof candidates[number];
+export type Candidate = LegacyCandidate | AddedCandidate;
 type Source = "official-baseline" | "tsc";
 type Unit = { id: string; records: string[] };
 type Shard = { id: string; units: Unit[]; estimatedCost: number };
@@ -45,7 +47,7 @@ export function compilerCaseIds(corpus: string): string[] {
   return ids.sort();
 }
 
-export function buildPlan(corpus: string, corpusRef: string, n: number, source: Source, selected = [...candidates]): Plan {
+export function buildPlan(corpus: string, corpusRef: string, n: number, source: Source, selected: Candidate[] = [...candidates]): Plan {
   return buildPlanForIds(corpus, corpusRef, n, source, selected, compilerCaseIds(corpus));
 }
 
@@ -82,11 +84,11 @@ export function verifyVersion(candidate: Candidate, bin: string): void {
   const result = spawnSync(bin, ["--version"], { encoding: "utf8", timeout: 10_000 });
   const expected = candidate === "typescript" ? "Version 7.1.0-beta"
     : candidate === "tsrs" ? "Version 7.1.0-beta (tsrs 0.25.0-ts7.1.0-beta, microsoft/TypeScript@3e9236361fa9)"
-    : candidate.slice(4);
+    : isAddedCandidate(candidate) ? activePolicies[candidate].selfReport : candidate.slice(4);
   if (result.status !== 0 || result.stdout?.trim() !== expected) throw new Error(`${candidate}: expected ${expected}, got ${result.stdout || result.stderr || result.error}`);
 }
 
-export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus: string, dir: string, binArg?: string): void {
+export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus: string, dir: string, binArg?: string, candidateArgs: readonly string[] = [], candidateEnv: Readonly<Record<string, string>> = {}): void {
   const config = loadBaselines();
   const referenceWrapper = resolveBaselineTsc(findBaseline(config, baseline));
   // Bypass the npm JavaScript launcher for each case, not the pinned native compiler.
@@ -103,7 +105,7 @@ export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus:
   const result = spawnSync(process.execPath, ["src/run.ts", "--baseline", baseline, "--tsc", reference,
     "--corpus", corpus, "--cases", manifest, "--expectation-source", plan.source, "--option-strategy", "aligned",
     "--adapter", `${isBun ? "bun-check" : "tsc-cli"}:${candidateBin}`, "--out", dir], {
-    cwd: REPO_ROOT, env: { ...process.env, TSC_COMPA_ADAPTER_ARGS: "", TSC_BIN: "" }, stdio: "inherit",
+    cwd: REPO_ROOT, env: { ...process.env, ...candidateEnv, TSC_COMPA_ADAPTER_ARGS: candidateArgs.join(" "), TSC_BIN: "" }, stdio: "inherit",
   });
   if (result.status !== 0) throw new Error(`${slug(candidate, shard)} exited: ${result.error ?? result.status}`);
 }
@@ -208,7 +210,7 @@ function main(): void {
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
     console.log(`${plan.candidates.length} candidates × ${plan.shards.length} shards: ${plan.shards.flatMap((shard) => shard.units).length} source files, ${plan.shards.reduce((n, shard) => n + countOf(shard), 0)} records per candidate`);
   } else if (command === "run" && (a.length === 5 || a.length === 6)) {
-    const [planPath, shardId, candidate, corpus, dir, bin] = a as [string, string, Candidate, string, string, string?];
+    const [planPath, shardId, candidate, corpus, dir, bin] = a as [string, string, LegacyCandidate, string, string, string?];
     const plan = readJson<Plan>(planPath);
     const shard = plan.shards.find((s) => s.id === shardId);
     if (!shard || !candidates.includes(candidate) || !plan.candidates.includes(candidate)) throw new Error("Unknown shard/candidate");

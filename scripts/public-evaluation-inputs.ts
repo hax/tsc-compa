@@ -95,13 +95,16 @@ export type ShardInputEvidence = ReturnType<typeof shardInputEvidence>;
 
 // Packages keep their default libraries beside their native binaries. Include
 // the entire effective platform directory.
+export function fileTree(root: string): [string, string][] {
+  if (!lstatSync(root, { throwIfNoEntry: false })?.isDirectory()) throw new Error("Missing compiler distribution");
+  const files: [string, string][] = [];
+  visitFiles(root, "", (relative, path) => files.push([relative, sha256(readFileSync(path))]));
+  return files.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+}
+
 export function distributionSha256(directories: string[]): string {
-  const distributions = directories.map((root) => {
+  return sha256(JSON.stringify(directories.map((root) => {
     if (!existsSync(join(root, "package.json"))) throw new Error("Compiler distribution is missing its package metadata");
-    const files: [string, string][] = [];
-    visitFiles(root, "", (relative, path) => files.push([relative, sha256(readFileSync(path))]));
-    files.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-    return files;
-  });
-  return sha256(JSON.stringify(distributions));
+    return fileTree(root);
+  })));
 }
