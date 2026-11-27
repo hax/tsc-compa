@@ -1,13 +1,13 @@
 // Draft selection from immutable Actions evidence, not a workflow dispatcher.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { REPO_ROOT } from "../src/baselines.ts";
 import { isValidCaseId } from "../src/discover.ts";
 import { sha256 } from "../src/provenance.ts";
 import { isKnownAuxiliaryLine } from "../src/adapters/plain-diagnostics.ts";
-import type { CaseRecord } from "../src/compare.ts";
+import type { CaseRecord, Metrics } from "../src/compare.ts";
 import type { Diagnostic } from "../src/types.ts";
-import { verifyShard, type Plan } from "./full-compatibility.ts";
+import type { Plan } from "./full-compatibility.ts";
 
 const repo = "hax/tsc-compa";
 const suiteDir = join(REPO_ROOT, "config/curated-difference-v1");
@@ -20,6 +20,29 @@ const write = (path: string, value: unknown) => writeFileSync(path, `${JSON.stri
 function check(test: unknown, message: string): asserts test {
   if (!test) throw new Error(message);
 }
+
+type ArtifactLock = { schemaVersion: number; sha256: Record<string, string> };
+
+/** Preflight all locked bytes before parsing any downloaded artifact. Recheck on read so the parsed buffer is the verified buffer. */
+export function lockedArtifacts(root: string, lock: ArtifactLock) {
+  check(lock.schemaVersion === 1 && lock.sha256 && Object.keys(lock.sha256).length > 0, "Invalid Actions artifact lock");
+  const bytes = (name: string) => {
+    const expected = Object.hasOwn(lock.sha256, name) ? lock.sha256[name] : undefined;
+    check(expected && /^[a-f0-9]{64}$/.test(expected), `Missing or invalid artifact hash: ${name}`);
+    const data = readFileSync(join(root, name));
+    check(sha256(data) === expected, `Actions artifact SHA-256 mismatch: ${name}`);
+    return data;
+  };
+  for (const name of Object.keys(lock.sha256).sort(order)) {
+    check(/^\d+\/[a-zA-Z0-9-][a-zA-Z0-9.-]*\/[a-zA-Z0-9-]+\.json$/.test(name), `Invalid locked artifact path: ${name}`);
+    bytes(name);
+  }
+  return {
+    read<T>(path: string): T { return JSON.parse(bytes(relative(root, path).split(sep).join("/")).toString("utf8")) as T; },
+    hash(path: string) { return lock.sha256[relative(root, path).split(sep).join("/")]!; },
+  };
+}
+type Artifacts = ReturnType<typeof lockedArtifacts>;
 
 export type CaseKey = { source: string; configuration: string | null };
 type Point = [file: string, line: number, column: number, severity: string, code: number];
@@ -42,11 +65,12 @@ type Run = Origin & RunPin & { reportId: string };
 type Inputs = { suite: string; corpus: string; baseline: string; budgets: Budgets; runs: Run[]; probes: RunPin & { artifact: string } };
 type Detail = Pick<CaseRecord, "id" | "status" | "skipReason" | "expected" | "actual" | "hits" | "comparison" | "misanchor" | "actualExitCode" | "actualArgs" | "actualRawOutput"> &
   { caseId?: string; configuration?: string; fp: string[]; missed: string[] };
+type Prepared = { source: { kind: string; repository?: string; tag?: string; commit?: string }; runtimeLibrariesSha256: string; environment: Record<string, string> };
 type Tool = { version: string; sha256: string; nativeSha256: string | null; embeddedTypeScript: string | null };
 type Request = { candidate: string; candidateVersion: string; suite: string; source: string; reference: string; corpus: string;
   planSha256: string; planCounts: { shards: number; sourceFiles: number; records: number };
   adapter: string; platform: string; harnessSha256: string; referenceTool: Tool; candidateTool: Tool; distributions: { reference: string; candidate: string | null };
-  prepared?: { source: unknown; runtimeLibrariesSha256: string; environment: Record<string, string> };
+  prepared?: Prepared;
   options: { mode: string; strategy: string; referenceBaseArgs: string[]; candidateEnvArgs?: string[] };
   inputs: { shard: string; parsedInputsSha256: string; officialInputsSha256: string }[] };
 type Totals = { ran: number; skipped: number; hits: number; expected: number; fp: number; missed: number; misanchor: number;
@@ -65,15 +89,36 @@ export function caseKey(detail: Pick<Detail, "id" | "caseId" | "configuration">,
   return { source, configuration: detail.configuration ?? null };
 }
 
+function effectiveArgs(args: string[]) {
+  const last = new Map<string, string>();
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i]!;
+    const value = args[i + 1];
+    if (flag.startsWith("--") && value && !value.startsWith("--")) last.set(flag.slice(2).toLowerCase(), value.toLowerCase());
+  }
+  return last;
+}
+
+function tszEmbeddedLibEvidence(detail: Detail, lib: string) {
+  if ((detail.actualExitCode !== 1 && detail.actualExitCode !== 2) || detail.actual.length || !detail.actualArgs || !detail.actualRawOutput) return;
+  const line = `Error: unsupported compilerOptions.lib '${lib}' (not found in embedded libs)`;
+  const output = `${detail.actualRawOutput.stdout}\n${detail.actualRawOutput.stderr}`.trim();
+  const requested = effectiveArgs(detail.actualArgs).get("lib")?.split(",").map((name) => name.trim());
+  if (output === line && requested?.includes(lib)) return { args: [`--lib=${lib}`], diagnostics: [line] };
+}
+
+function pinnedTszEmbedded(origin: Origin, request: Request) {
+  const prepared = request.prepared;
+  return origin.candidate === "tsz" && origin.role === "release-preview" && request.adapter === "tsc-cli" &&
+    request.platform === "linux/x64" && request.candidateVersion === "v0.1.75" && prepared?.source.kind === "release" &&
+    prepared.source.repository === "tsz-org/tsz" && prepared.source.tag === "v0.1.75" &&
+    prepared.source.commit === "0c0e53f96bfd64be253cdd8c53e2853fd5cfdadb" && prepared.environment.TSZ_USE_EMBEDDED_LIBS === "1";
+}
+
 /** Recover narrowly evidenced option rejections from the pinned embedded-lib tsz preview. */
 export function tszOptionEvidence(detail: Pick<Detail, "actual" | "actualArgs" | "actualExitCode" | "actualRawOutput">) {
   if (detail.actualExitCode !== 1 || detail.actual.length || !detail.actualArgs || !detail.actualRawOutput) return undefined;
-  const last = new Map<string, string>();
-  for (let i = 0; i < detail.actualArgs.length; i++) {
-    const flag = detail.actualArgs[i]!;
-    const value = detail.actualArgs[i + 1];
-    if (flag.startsWith("--") && value && !value.startsWith("--")) last.set(flag.slice(2).toLowerCase(), value.toLowerCase());
-  }
+  const last = effectiveArgs(detail.actualArgs);
   const diagnostics = `${detail.actualRawOutput.stdout}\n${detail.actualRawOutput.stderr}`.split(/\r?\n/)
     .map((line) => line.trim()).filter((line) => !isKnownAuxiliaryLine(line) && !/^(?:Errors|Total diagnostics):\s*\d+$/.test(line));
   const args = new Set<string>();
@@ -98,8 +143,10 @@ export function observe(detail: Detail, tszEmbedded = false): Observation {
   if (detail.status === "skip") {
     check(typeof detail.skipReason === "string" && detail.skipReason.length, `Missing skip reason: ${detail.id}`);
     const reason = detail.skipReason;
-    const optionEvidence = tszEmbedded && reason === "实现输出含无文件位置的诊断" ? tszOptionEvidence(detail) : undefined;
-    // These are explicitly unsupported by the Bun adapter, not unclassified output or crashes.
+    const lib = /^候选内置声明库不支持 ([a-z][a-z0-9.]*)$/.exec(reason)?.[1];
+    const optionEvidence = !tszEmbedded ? undefined : lib ? tszEmbeddedLibEvidence(detail, lib)
+      : reason === "实现输出含无文件位置的诊断" ? tszOptionEvidence(detail) : undefined;
+    // Only explicitly evidenced unsupported options, not unclassified output or crashes.
     const kind = optionEvidence || /^Bun (?:check 不生成声明文件|1\.4\.x 不支持 )/.test(reason) ? "unsupported-option"
       : reason.startsWith("官方基线:") ? "reference-unavailable" : "other";
     return { status: "skip", kind, reason, ...(optionEvidence ? { optionEvidence } : {}) };
@@ -235,13 +282,13 @@ function coverage(rows: Observation[]) {
   return { ...out, recordCoverage: rows.length ? out.ran / rows.length : null, diagnosticCoverage: out.expected ? out.hits / out.expected : null };
 }
 
-function loadRun(root: string, spec: Inputs, origin: Run) {
+function loadRun(root: string, spec: Inputs, origin: Run, artifacts: Artifacts) {
   const dir = join(root, String(origin.run));
   checkRun(dir, origin, "public-evaluation", "workflow_dispatch");
   const requestDir = join(dir, "public-evaluation-request");
-  const request = read<Request>(join(requestDir, "request.json"));
-  const plan = read<Plan>(join(requestDir, "plan.json"));
-  const report = read<{ id: string; request: Request; runUrl: string; summary: Totals & { complete: boolean; records: number; shards: number; sourceFiles: number } }>(
+  const request = artifacts.read<Request>(join(requestDir, "request.json"));
+  const plan = artifacts.read<Plan>(join(requestDir, "plan.json"));
+  const report = artifacts.read<{ id: string; request: Request; runUrl: string; summary: Totals & { complete: boolean; records: number; shards: number; sourceFiles: number } }>(
     join(dir, "public-evaluation-report", `${origin.reportId}.json`));
   check(request.candidate === origin.candidate && request.suite === "full" && request.reference === spec.baseline &&
     request.corpus === spec.corpus && request.source === "official-baseline" && request.options.mode === "official" &&
@@ -256,14 +303,24 @@ function loadRun(root: string, spec: Inputs, origin: Run) {
   const counted = { fp: 0, missed: 0, misanchor: 0 };
   let candidateArgs: string[] | undefined;
   const seenShards = new Set<string>();
+  const tszEmbedded = pinnedTszEmbedded(origin, request);
   for (const shard of plan.shards) {
     check(/^\d{2}$/.test(shard.id) && !seenShards.has(shard.id), `Invalid shard ${shard.id} in ${origin.run}`);
     seenShards.add(shard.id);
     const name = `full-${origin.candidate}-${shard.id}`;
     const path = join(dir, name);
-    const metrics = verifyShard(plan, shard, path);
-    const receipt = read<{ id: string; shard: string; candidateDistributionSha256?: string;
+    const metrics = artifacts.read<Metrics>(join(path, "metrics.json"));
+    const details = artifacts.read<Detail[]>(join(path, "details.json"));
+    const cases = artifacts.read<string[]>(join(path, "cases.json"));
+    const receipt = artifacts.read<{ id: string; shard: string; candidateDistributionSha256?: string;
       runtimeLibrariesSha256?: string; candidateEnvironment?: Record<string, string> }>(join(path, "public-request.json"));
+    // Keep these checks on the same locked objects the curator consumes, not a second unchecked read by the workflow verifier.
+    const plannedIds = shard.units.map((unit) => unit.id);
+    const plannedRecords = shard.units.flatMap((unit) => unit.records);
+    check(equal(cases, plannedIds) && metrics.meta.manifest?.selectedIdsSha256 === digest(plannedIds) &&
+      metrics.meta.selectedCases === plannedIds.length && equal(details.map((row) => row.id), plannedRecords) &&
+      metrics.meta.baseline === spec.baseline && metrics.meta.expectationSource === plan.source &&
+      metrics.meta.verdictEligible === true && metrics.meta.options?.strategy === "aligned", `Shard does not match requested plan: ${origin.run}/${name}`);
     const input = request.inputs.find((i) => i.shard === shard.id);
     const opts = metrics.meta.options;
     const tools = metrics.meta.tools;
@@ -280,7 +337,6 @@ function loadRun(root: string, spec: Inputs, origin: Run) {
       tools?.reference.sha256 === request.referenceTool.sha256 && tools?.candidate?.sha256 === request.candidateTool.sha256 &&
       metrics.meta.executionFailures?.length === 0, `Input/identity mismatch or execution failures: ${origin.run}/${name}`);
     candidateArgs = opts.candidateEnvArgs;
-    const details = read<Detail[]>(join(path, "details.json"));
     const shardRows: Observation[] = [];
     let cursor = 0;
     for (const unit of shard.units) {
@@ -289,7 +345,7 @@ function loadRun(root: string, spec: Inputs, origin: Run) {
       for (const record of unit.records) {
         const detail = details[cursor++]!;
         check(detail.id === record, `Wrong record for ${unit.id}: ${detail.id}`);
-        const observation = observe(detail, origin.candidate === "tsz" && request.prepared?.environment.TSZ_USE_EMBEDDED_LIBS === "1");
+        const observation = observe(detail, tszEmbedded);
         shardRows.push(observation);
         rows.push({ ...caseKey(detail, unit.id), observation });
         counted.fp += detail.fp.length;
@@ -299,10 +355,13 @@ function loadRun(root: string, spec: Inputs, origin: Run) {
     }
     const shardCounts = coverage(shardRows);
     const { totals, comparison } = metrics;
-    check(shardCounts.hits === totals.hitTotal && shardCounts.expected === totals.expectTotal &&
+    check(shardCounts.records === totals.cases && shardCounts.ran === totals.ran && shardCounts.skipped === totals.skipped &&
+      metrics.skips.reduce((sum, [, n]) => sum + n, 0) === totals.skipped &&
+      comparison.strict.pass + comparison.strict.fail + comparison.strict.unknown === shardCounts.ran &&
+      shardCounts.hits === totals.hitTotal && shardCounts.expected === totals.expectTotal &&
       shardCounts.pass === comparison.compatibility.pass && shardCounts.mismatch === comparison.compatibility.fail &&
       shardCounts.unknown === comparison.compatibility.unknown, `Shard details do not match metrics: ${origin.run}/${name}`);
-    artifactHashes[name] = { metrics: sha256(readFileSync(join(path, "metrics.json"))), details: sha256(readFileSync(join(path, "details.json"))) };
+    artifactHashes[name] = { metrics: artifacts.hash(join(path, "metrics.json")), details: artifacts.hash(join(path, "details.json")) };
   }
   const counts = coverage(rows.map((r) => r.observation));
   const shape = { shards: plan.shards.length, sourceFiles: sourceIds.size, records: rows.length };
@@ -324,12 +383,12 @@ type PointTail = [number, number, string, number];
 type ProbeReport = { upstreamCommit: string; calibrated: boolean; candidate: null; anchors: Record<"ts6" | "ts7", { version: string; sha256: string; native?: { sha256: string } }>;
   probes: { id: string; upstreamCase: string; sourceSha256: string; options: unknown; calibrated: boolean;
     official: Record<"ts6" | "ts7", { status: string; fingerprint: Point[] }> }[] };
-function loadProbes(root: string, spec: Inputs) {
+function loadProbes(root: string, spec: Inputs, artifacts: Artifacts) {
   const { probes: pin } = spec;
   const dir = join(root, String(pin.run));
   checkRun(dir, pin, "TS version probes", "push");
   const path = join(dir, pin.artifact, "report.json");
-  const report = read<ProbeReport>(path);
+  const report = artifacts.read<ProbeReport>(path);
   const manifest = read<ProbeManifest>(join(REPO_ROOT, "config/version-probes/manifest.json"));
   check(report.upstreamCommit === manifest.upstreamCommit && spec.corpus.endsWith(`@${manifest.upstreamCommit}`) &&
     report.calibrated && report.candidate === null && report.probes.length === 5 && manifest.probes.length === report.probes.length &&
@@ -347,7 +406,7 @@ function loadProbes(root: string, spec: Inputs) {
       options: actual.options, ts6: actual.official.ts6.fingerprint, ts7: actual.official.ts7.fingerprint };
   });
   const tool = ({ version, sha256, native }: ProbeReport["anchors"]["ts6"]) => ({ version, sha256, nativeSha256: native?.sha256 ?? null });
-  return { ...pin, url: runUrl(pin), upstreamCommit: manifest.upstreamCommit, reportSha256: sha256(readFileSync(path)),
+  return { ...pin, url: runUrl(pin), upstreamCommit: manifest.upstreamCommit, reportSha256: artifacts.hash(path),
     anchors: { ts6: tool(report.anchors.ts6), ts7: tool(report.anchors.ts7) }, probes };
 }
 
@@ -357,9 +416,10 @@ function main() {
     "Usage: bun scripts/curate-compatibility.ts generate <Actions downloads> <output directory>");
   const spec = read<Inputs>(join(suiteDir, "inputs.json"));
   const root = resolve(input);
-  const runs = spec.runs.map((origin) => loadRun(root, spec, origin));
+  const artifacts = lockedArtifacts(root, read<ArtifactLock>(join(suiteDir, "artifacts.lock.json")));
+  const runs = spec.runs.map((origin) => loadRun(root, spec, origin, artifacts));
   check(runs.every((run) => run.comparableInput === runs[0]?.comparableInput), "The full runs did not use the same corpus plan/reference inputs/options");
-  const probes = loadProbes(root, spec);
+  const probes = loadProbes(root, spec, artifacts);
   const rows = joinEvidence(runs);
   const ledger = rows.map((row) => classify(row, spec.runs));
   const reference = runs[0]!;

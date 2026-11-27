@@ -29,6 +29,7 @@
   "conformance/classes/mixinWithBaseDependingOnSelfNoCrash1.ts",
   "conformance/controlFlow/dependentDestructuredVariablesReferenceInDeclaration1.ts",
   "conformance/es2023/intlPluralRulesSelectRangeES2023.ts",
+  "conformance/es2026/jsonRawJSON3.ts",
   "conformance/expressions/thisKeyword/thisInObjectLiterals.ts",
   "conformance/importSource/importSource7.ts"
 ]

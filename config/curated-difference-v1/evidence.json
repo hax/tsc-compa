@@ -18,10 +18,10 @@
       "multiple-families": 26,
       "single-family": 225,
       "reference-disagreement": 43,
-      "intentional-skip": 1117,
+      "intentional-skip": 1118,
       "control-with-diagnostics": 3812,
       "control-without-diagnostics": 3980,
-      "unclassified": 5143
+      "unclassified": 5142
     },
     "fixed120OverlapByBucket": {
       "multiple-families": 0,
@@ -34,12 +34,12 @@
     }
   },
   "selected": {
-    "records": 32,
+    "records": 33,
     "buckets": {
       "multiple-families": 12,
       "single-family": 6,
       "reference-disagreement": 6,
-      "intentional-skip": 3,
+      "intentional-skip": 4,
       "control-with-diagnostics": 3,
       "control-without-diagnostics": 2,
       "unclassified": 0
@@ -55,10 +55,10 @@
     },
     "perCandidate": {
       "typescript": {
-        "records": 32,
-        "ran": 32,
+        "records": 33,
+        "ran": 33,
         "skipped": 0,
-        "pass": 26,
+        "pass": 27,
         "mismatch": 6,
         "unknown": 0,
         "hits": 86,
@@ -72,44 +72,44 @@
         "diagnosticCoverage": 0.9347826086956522
       },
       "bun-1.4.4": {
-        "records": 32,
+        "records": 33,
         "ran": 28,
-        "skipped": 4,
+        "skipped": 5,
         "pass": 9,
         "mismatch": 19,
         "unknown": 0,
         "hits": 76,
         "expected": 92,
         "skipKinds": {
-          "unsupported-option": 4,
+          "unsupported-option": 5,
           "reference-unavailable": 0,
           "other": 0
         },
-        "recordCoverage": 0.875,
+        "recordCoverage": 0.8484848484848485,
         "diagnosticCoverage": 0.8260869565217391
       },
       "bun-1.4.5": {
-        "records": 32,
+        "records": 33,
         "ran": 28,
-        "skipped": 4,
+        "skipped": 5,
         "pass": 9,
         "mismatch": 19,
         "unknown": 0,
         "hits": 76,
         "expected": 92,
         "skipKinds": {
-          "unsupported-option": 4,
+          "unsupported-option": 5,
           "reference-unavailable": 0,
           "other": 0
         },
-        "recordCoverage": 0.875,
+        "recordCoverage": 0.8484848484848485,
         "diagnosticCoverage": 0.8260869565217391
       },
       "tsrs": {
-        "records": 32,
-        "ran": 32,
+        "records": 33,
+        "ran": 33,
         "skipped": 0,
-        "pass": 26,
+        "pass": 27,
         "mismatch": 6,
         "unknown": 0,
         "hits": 86,
@@ -123,10 +123,10 @@
         "diagnosticCoverage": 0.9347826086956522
       },
       "ts-rust": {
-        "records": 32,
-        "ran": 32,
+        "records": 33,
+        "ran": 33,
         "skipped": 0,
-        "pass": 23,
+        "pass": 24,
         "mismatch": 9,
         "unknown": 0,
         "hits": 85,
@@ -140,20 +140,20 @@
         "diagnosticCoverage": 0.9239130434782609
       },
       "tsz": {
-        "records": 32,
+        "records": 33,
         "ran": 29,
-        "skipped": 3,
+        "skipped": 4,
         "pass": 7,
         "mismatch": 22,
         "unknown": 0,
         "hits": 69,
         "expected": 92,
         "skipKinds": {
-          "unsupported-option": 3,
+          "unsupported-option": 4,
           "reference-unavailable": 0,
           "other": 0
         },
-        "recordCoverage": 0.90625,
+        "recordCoverage": 0.8787878787878788,
         "diagnosticCoverage": 0.75
       }
     }
@@ -649,9 +649,9 @@
       "hits": 23284,
       "expected": 23933,
       "skipKinds": {
-        "unsupported-option": 344,
+        "unsupported-option": 353,
         "reference-unavailable": 2676,
-        "other": 2372
+        "other": 2363
       },
       "recordCoverage": 0.6241461034434685,
       "diagnosticCoverage": 0.9728826306773075,
@@ -2823,6 +2823,70 @@
             ],
             "diagnostics": [
               "error TS6046: Argument for '--target' option must be: 'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'."
+            ]
+          }
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "conformance/es2026/jsonRawJSON3.ts",
+      "configuration": null,
+      "bucket": "intentional-skip",
+      "mismatchFamilies": [],
+      "comparableFamilies": 2,
+      "cluster": "59109303278a758b45cbdacb832a3ba5344d98388b07b16f2a7d3ee4eb9ebc91",
+      "reason": "Explicit unsupported option in at least one candidate; all observed comparisons passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun check 不生成声明文件，无法比较声明生成阶段的诊断"
+        },
+        "bun-1.4.5": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun check 不生成声明文件，无法比较声明生成阶段的诊断"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "候选内置声明库不支持 es2026.json",
+          "optionEvidence": {
+            "args": [
+              "--lib=es2026.json"
+            ],
+            "diagnostics": [
+              "Error: unsupported compilerOptions.lib 'es2026.json' (not found in embedded libs)"
             ]
           }
         },

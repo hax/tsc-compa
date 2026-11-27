@@ -1,5 +1,9 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { sha256 } from "../src/provenance.ts";
 import { expect, test } from "bun:test";
-import { caseKey, classify, joinEvidence, selectCases, tszOptionEvidence, type CaseKey, type Joined, type Observation, type Origin } from "../scripts/curate-compatibility.ts";
+import { caseKey, classify, joinEvidence, lockedArtifacts, observe, selectCases, tszOptionEvidence, type CaseKey, type Joined, type Observation, type Origin } from "../scripts/curate-compatibility.ts";
 
 const origins: Origin[] = [
   { candidate: "typescript", family: "typescript", role: "reference-control" },
@@ -82,4 +86,51 @@ test("embedded tsz only promotes evidenced TS6046/TS5108 option failures, not ge
     actualRawOutput: { stdout: `Files: 0\nErrors: 2\n${system}\n${bundler}`, stderr: "" } })).toEqual({
     args: ["--module=system", "--moduleresolution=bundler"], diagnostics: [bundler, system],
   });
+});
+
+
+test("rejects shifted diagnostic positions or effective args even if counts and verdicts do not change", () => {
+  const root = mkdtempSync(join(tmpdir(), "curated-artifact-lock-"));
+  try {
+    const name = "123/full-bun-1.4.4-01/details.json";
+    const path = join(root, name);
+    mkdirSync(dirname(path), { recursive: true });
+    const original = [{ status: "ran", verdict: "pass", actual: [{ line: 4, col: 2 }], actualArgs: ["--target", "esnext"] }];
+    const bytes = JSON.stringify(original);
+    const lock = { schemaVersion: 1, sha256: { [name]: sha256(bytes) } };
+    writeFileSync(path, bytes);
+    const trusted = lockedArtifacts(root, lock);
+    expect(trusted.read(path)).toEqual(original);
+    expect(() => trusted.read(join(root, "123/full-bun-1.4.4-01/cases.json"))).toThrow("Missing or invalid artifact hash");
+    for (const changed of [
+      [{ ...original[0], actual: [{ line: 5, col: 2 }] }],
+      [{ ...original[0], actualArgs: ["--target", "es2026"] }],
+    ]) {
+      writeFileSync(path, JSON.stringify(changed));
+      expect(() => lockedArtifacts(root, lock)).toThrow(`Actions artifact SHA-256 mismatch: ${name}`);
+      expect(() => trusted.read(path)).toThrow(`Actions artifact SHA-256 mismatch: ${name}`);
+    }
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("embedded library skip needs pinned tsz mode, exact standalone output, effective lib and failure", () => {
+  const lib = "es2026.json";
+  const line = `Error: unsupported compilerOptions.lib '${lib}' (not found in embedded libs)`;
+  const expected: Observation = { status: "skip", kind: "unsupported-option", reason: `候选内置声明库不支持 ${lib}`,
+    optionEvidence: { args: [`--lib=${lib}`], diagnostics: [line] } };
+  const detail = { id: "conformance/es2026/jsonRawJSON3.ts", status: "skip" as const, skipReason: expected.reason,
+    actual: [], expected: [], hits: 0, fp: [], missed: [], misanchor: 0, comparison: null,
+    actualExitCode: 1, actualArgs: ["--lib", "es2025", "--lib", `es2025,${lib}`], actualRawOutput: { stdout: "", stderr: `${line}\n` } };
+  expect(observe(detail, true)).toEqual(expected);
+  expect(observe(detail, false)).toMatchObject({ kind: "other" });
+  for (const changed of [
+    { ...detail, actualExitCode: 0 },
+    { ...detail, actualExitCode: null },
+    { ...detail, actualArgs: [...detail.actualArgs, "--lib", "es2025"] },
+    { ...detail, actualRawOutput: { stdout: "panic: unexpected error", stderr: line } },
+    { ...detail, actualRawOutput: { stdout: "", stderr: line.replace(lib, "es2026.array") } },
+    { ...detail, skipReason: "实现输出含无文件位置的诊断" },
+  ]) expect(observe(changed, true)).toMatchObject({ kind: "other" });
 });
