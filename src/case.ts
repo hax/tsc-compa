@@ -187,6 +187,7 @@ export function parseCase(raw: string, id: string): ParsedCase {
       if (currentPath !== null) result.files.push({ path: currentPath, text: buffer.join("\n") });
       const normalized = normalizeVirtualPath(value);
       if (normalized.escapes) result.skip ??= "虚拟文件路径越出用例根";
+      if (/^[A-Za-z]:|^\\/.test(value)) result.skip ??= "不支持 Windows 绝对虚拟文件路径";
       if (value.startsWith("/")) result.absoluteFiles.push(value);
       currentPath = normalized.path.length > 0 ? normalized.path : null;
       buffer = [];
@@ -292,6 +293,17 @@ export function expandCaseVariants(parsed: ParsedCase): CaseVariantExpansion {
         settings: final, options };
     }),
   };
+}
+
+/** TS7 resolves Node module kinds to their matching resolver when a case does not set one.
+ * Only replace the inherited harness default; explicit overrides and case directives still win. */
+export function ts7CaseBaseArgs(base: string[], options: CompilerOptions): string[] {
+  const module = options.find((option) => option.name === "module")?.value;
+  if (typeof module !== "string") return base;
+  const kind = module.toLowerCase();
+  const resolution = kind === "nodenext" ? "nodenext" : ["node16", "node18", "node20"].includes(kind) ? "node16" : null;
+  if (resolution === null || options.some((option) => option.name === "moduleResolution")) return base;
+  return base.flatMap((arg, index) => base[index - 1] === "--moduleResolution" && arg === "bundler" ? [resolution] : [arg]);
 }
 
 /** 把选项转成 tsc 风格命令行参数（不含文件路径）。 */

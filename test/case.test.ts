@@ -1,7 +1,7 @@
 // case 解析与选项推导的单测。
 
 import { expect, test } from "bun:test";
-import { expandCaseVariants, parseCase, toTscArgs } from "../src/case.ts";
+import { expandCaseVariants, parseCase, toTscArgs, ts7CaseBaseArgs } from "../src/case.ts";
 import { isValidCaseId, loadManifest, readCase } from "../src/discover.ts";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -167,4 +167,16 @@ test("具名配置按选项名排序，lib 保持列表，声明开关传给编�
 test("无效的变体值不会成为文件名的一部分", () => {
   const expanded = expandCaseVariants(parseCase("// @target: es2015, ../../oops\nlet x = 1;", "compiler/x.ts"));
   expect(expanded.status).toBe("unsupported");
+});
+
+test("Node module variants derive resolver defaults without overriding explicit resolution", () => {
+  const defaults = ["--target", "es2026", "--moduleResolution", "bundler"];
+  expect(ts7CaseBaseArgs(defaults, [{ name: "module", value: "NodeNext" }])).toEqual(["--target", "es2026", "--moduleResolution", "nodenext"]);
+  expect(ts7CaseBaseArgs(defaults, [{ name: "module", value: "Node18" }])).toEqual(["--target", "es2026", "--moduleResolution", "node16"]);
+  expect(ts7CaseBaseArgs(defaults, [{ name: "module", value: "NodeNext" }, { name: "moduleResolution", value: "bundler" }])).toEqual(defaults);
+});
+
+test("Windows absolute virtual paths are declared unsupported before materializing files", () => {
+  const parsed = parseCase("// @filename: C:/a/b.ts\nexport {};\n", "compiler/windows.ts");
+  expect(parsed.skip).toContain("Windows");
 });

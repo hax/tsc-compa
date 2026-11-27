@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { materializeCase } from "../case.ts";
 import { parseExtendedDiagnostics } from "../perf.ts";
 import type { Adapter, CaseInput, CaseOutcome, Diagnostic } from "../types.ts";
-import { containsOnlyKnownAuxiliaryLines, looksLikePrettyDiagnostics, parsePlainDiagnostics, rejectsCompilerOptions } from "./plain-diagnostics.ts";
+import { containsOnlyKnownAuxiliaryLines, looksLikePrettyDiagnostics, parsePlainDiagnostics, rejectsCompilerOptions, unsupportedCliDiagnostics } from "./plain-diagnostics.ts";
 
 export interface ParsedTscOutput {
   diagnostics: Diagnostic[];
@@ -159,6 +159,11 @@ export class TscCliAdapter implements Adapter {
           exitCode,
           rawOutput,
         };
+      }
+
+      const unsupported = unsupportedCliDiagnostics(exitCode, parsed, text);
+      if (unsupported !== null) {
+        return { id: input.id, status: "skip", diagnostics: parsed.diagnostics, skipReason: unsupported, exitCode, rawOutput };
       }
 
       // 非零退出却没有可比较诊断：这是采集/命令失败，不是零诊断。

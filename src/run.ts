@@ -32,7 +32,7 @@ import {
   lookupOfficialVariantBaseline, officialBaselineDirOf, summaryBlockOf,
 } from "./officialBaseline.ts";
 import { identifyTool, sha256 } from "./provenance.ts";
-import { expandCaseVariants, toTscArgs, type CaseVariant, type ParsedCase } from "./case.ts";
+import { expandCaseVariants, toTscArgs, ts7CaseBaseArgs, type CaseVariant, type ParsedCase } from "./case.ts";
 import {
   buildPerfReport,
   planPerfOrder,
@@ -594,8 +594,10 @@ async function main(): Promise<void> {
     }
     const options = args.mode === "fixed" ? adapter.fixedOptions! : variant.options;
     if (args.mode === "fixed" && variant.options.length > 0) optionDirectiveIgnored++;
-    const expectationArgs = toTscArgs(options, baseArgs);
-    const adapterArgs = toTscArgs(options, candidateBaseArgs);
+    const inherited = baseline?.baseArgs ?? DEFAULT_BASE_ARGS;
+    const referenceDefaults = baseline?.id === "7.1.0-beta-official" ? ts7CaseBaseArgs(inherited, options) : inherited;
+    const expectationArgs = toTscArgs(options, [...referenceDefaults, ...args.baseArgsExtra]);
+    const adapterArgs = toTscArgs(options, [...(args.optionStrategy === "aligned" ? referenceDefaults : []), ...args.baseArgsExtra, ...args.adapterArgsExtra]);
     let expectation: ExpectationResult;
     // 官方基线原文（T3 字节比对用）；现场生成期望时为 null。
     let baselineText: string | null = null;

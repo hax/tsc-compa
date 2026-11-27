@@ -44,7 +44,8 @@ export type ParsedOfficialBaseline =
   | { status: "unsupported"; reason: string };
 
 const DIAG = /^(.+?)\((\d+),(\d+)\):\s+(error|warning)\s+TS(\d+):\s?(.*)$/;
-const CONFIG_ERROR = /^error TS\d+:/;
+const CONFIG_ERROR = /^(?:error|warning|message|suggestion) TS\d+:/;
+const OTHER_CATEGORY = /^.+?\(\d+,\d+\):\s+(?:message|suggestion)\s+TS\d+:/;
 const CASE_HEADER = /^====/;
 const ANSI = /\x1b\[[0-9;]*m/;
 const PRETTY_DIAGNOSTIC = /^\S+:\d+:\d+\s+-\s+(?:error|warning)\s+TS\d+:/m;
@@ -102,6 +103,7 @@ export function parseOfficialBaselineText(text: string): ParsedOfficialBaseline 
     }
     // 无位置的配置错误无法映射到文件诊断，整个用例跳过。
     if (CONFIG_ERROR.test(line)) return { status: "unsupported", reason: "官方基线含配置错误（无文件位置）" };
+    if (OTHER_CATEGORY.test(line)) return { status: "unsupported", reason: "官方基线包含暂不支持的 message / suggestion 诊断" };
     // 其余是 elaboration 续行（tsc 多行错误说明），不是新诊断。
   }
   if (diagnostics.some((d) => (d.code >= 1000 && d.code < 2000) || d.code === 17006 || d.code === 17007)) {

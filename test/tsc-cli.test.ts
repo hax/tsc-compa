@@ -161,6 +161,13 @@ describe("TscCliAdapter 输出分类", () => {
     expect(outcome.rawOutput?.stdout).toContain("Check time");
   });
 
+  test("诊断超出协议类别或文件范围时保留原文并跳过，不误判为崩溃或零诊断", async () => {
+    const message = await withFake('#!/bin/sh\necho "x.ts(1,1): message TS1450: advisory"\nexit 2\n');
+    expect(message).toMatchObject({ status: "skip", exitCode: 2, rawOutput: { stdout: expect.stringContaining("TS1450") } });
+    const external = await withFake('#!/bin/sh\necho "/outside/lib.d.ts(1,1): error TS2411: library diagnostic"\nexit 2\n');
+    expect(external).toMatchObject({ status: "skip", exitCode: 2, rawOutput: { stdout: expect.stringContaining("TS2411") } });
+  });
+
   test("非零退出且无诊断 → crash，不当作零诊断", async () => {
     const outcome = await withFake('#!/bin/sh\necho "internal failure" >&2\nexit 1\n');
     expect(outcome.status).toBe("crash");

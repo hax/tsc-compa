@@ -80,6 +80,16 @@ export function containsOnlyKnownAuxiliaryLines(text: string): boolean {
   return text.split(/\r?\n/).every(isKnownAuxiliaryLine);
 }
 
+/** Out-of-scope diagnostics are not proof of zero diagnostics, nor a process crash. */
+export function unsupportedCliDiagnostics(exitCode: number | null, parsed: ParsedPlainDiagnostics, text: string): string | null {
+  if (exitCode !== 0 && exitCode !== 1 && exitCode !== 2) return null;
+  if (/^.+?\(\d+,\d+\):\s+(?:message|suggestion)\s+TS\d+:/m.test(text)) return "输出包含暂不支持的 message / suggestion 诊断";
+  if (parsed.outsideHeaders > 0 && parsed.diagnostics.length === 0 && parsed.unpositioned.length === 0) {
+    return "诊断仅出现在用例目录外（如内置库）";
+  }
+  return null;
+}
+
 /** 是否像 pretty 诊断输出（ANSI 颜色或 `file:line:col - error TS` 首行）。 */
 export function looksLikePrettyDiagnostics(text: string): boolean {
   if (/\x1b\[[0-9;]*m/.test(text)) return true;

@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { materializeCase } from "./case.ts";
-import { containsOnlyKnownAuxiliaryLines, looksLikePrettyDiagnostics, parsePlainDiagnostics, rejectsCompilerOptions } from "./adapters/plain-diagnostics.ts";
+import { containsOnlyKnownAuxiliaryLines, looksLikePrettyDiagnostics, parsePlainDiagnostics, rejectsCompilerOptions, unsupportedCliDiagnostics } from "./adapters/plain-diagnostics.ts";
 import type { CaseFile, CompilerOptions, Diagnostic } from "./types.ts";
 
 export interface ExpectationResult {
@@ -135,6 +135,7 @@ export function expectationOf(
     const parsed = parsePlainDiagnostics(tmp, text);
     const rawDiagnostics = parsed.diagnostics.map((d) => d.raw);
     const rejectedOptions = rejectsCompilerOptions(r.status, parsed);
+    const unsupported = unsupportedCliDiagnostics(r.status, parsed, text);
     // pretty 诊断包含源码标注/ANSI，不能可靠恢复 UTF-16 位置和顺序；明确标为不支持。
     if (parsed.headerLines === 0 && parsed.diagnostics.length === 0 && looksLikePrettyDiagnostics(text)) {
       result = {
@@ -157,6 +158,8 @@ export function expectationOf(
         rawDiagnostics,
         message: `参考输出含无文件位置的诊断（无法比较）：${parsed.unpositioned.map((d) => d.text).join("\n").slice(0, 500)}`,
       };
+    } else if (unsupported !== null) {
+      result = { status: "unsupported", diagnostics: parsed.diagnostics, message: unsupported, exitCode: r.status, rawOutput, rawDiagnostics };
     } else if (parsed.diagnostics.length === 0 && (r.status === null || r.status !== 0)) {
       result = {
         status: "crash",
