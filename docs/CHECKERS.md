@@ -1,6 +1,6 @@
-# 候选检查器目录
+# 候选检查器一览
 
-想判断某个固定版本是否适合你的 TypeScript 项目，先在[公开报告站](https://johnhax.net/tsc-compa/)选候选、参考配置和测试集。没有公开报告的候选，可先查下文的 Linux 适配器冒烟，再用自己的项目配置复测。本文列的是 tsc-compa 固定和验证过的配置，不是各项目的版本发布表或支持承诺。
+想判断某个固定版本是否适合你的 TypeScript 项目，先在[公开报告站](https://johnhax.net/tsc-compa/)选候选、版本和测试集；参考固定为 TypeScript 7.1.0-beta 的官方结果文件。没有公开报告的候选，可先查下文的 Linux 适配器冒烟，再用自己的项目配置复测。本文列的是 tsc-compa 固定和验证过的配置，不是各项目的版本发布表或支持承诺。
 
 ## 登记和公开范围
 
@@ -66,6 +66,6 @@ TS7 官方基线入库的兼容回归记录有四份：[官方 CLI](../config/ra
 
 ## tsrs async API 试点
 
-[`tsrs-async` 试点 PR #22](https://github.com/hax/tsc-compa/pull/22)单独跟踪结构化 API 接入，不替换公开的 tsrs CLI 候选，也不增加一个实现家族。候选使用同一 npm 版本的 `tsrs/async` SDK 和持久原生子进程，参考侧使用独立的官方 TS7 async API（`--expectation-source ts7-api`），不是公开报告所用的 `.errors.txt`。截至 2026-11-27，试点 PR 尚未合入 `main`。
+tsrs 还有一个独立的结构化 API 试点（`tsrs-async`），详见 [PR #22](https://github.com/hax/tsc-compa/pull/22)。它不进入公开评测，不替换 tsrs CLI，也不增加一个实现家族。候选使用同一 npm 版本的 `tsrs/async` SDK 和持久原生子进程，参考侧使用独立的官方 TS7 async API（`--expectation-source ts7-api`），不是公开报告所用的 `.errors.txt`。
 
 PR 记录的本地验证（macOS arm64、Bun 1.4.5、对齐选项）：28 例全部运行且兼容，严格通过 27 例；120 例全部运行、兼容且严格通过。28 例中唯一严格差异是 `compiler/builtinIterator.ts` 的 TS6502 附加诊断（related info）指向字节相同的 `lib.es2025.iterator.d.ts`，但 npm 安装绝对路径不同。[试点 Linux 任务](https://github.com/hax/tsc-compa/actions/runs/45977982412/job/140434483579)的 28 例产物也记录了 28 例兼容、27 例严格通过、1 例严格失败，未跳过。该任务分别记录候选 SDK 入口和原生可执行文件的版本与摘要，检查执行和产物来源，不以诊断一致为门禁。API 可返回声明诊断，但不生成声明文件，也不提供逐案进程退出码。
