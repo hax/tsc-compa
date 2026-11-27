@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 2,
+  "id": "bb9e732186e2c78264893763839b442cc745294b8e199754f0ba2173e43c2660",
+  "request": {
+    "version": 2,
+    "resultPolicy": "candidate-execution-failures-v1",
+    "candidate": "typescript",
+    "candidateVersion": "7.1.0-beta",
+    "reference": "7.1.0-beta-official",
+    "source": "official-baseline",
+    "suite": "curated-difference-v1",
+    "corpus": "microsoft/TypeScript@3e9236361fa97a9e6c685f4833ac457ae2d8c50a",
+    "planSha256": "e34662090aca880cd0eee7ba99f06c180fb3344af26e93894d43e1d062c29087",
+    "planCounts": {
+      "shards": 1,
+      "sourceFiles": 33,
+      "records": 33
+    },
+    "manifestSha256": "69d42f3a52021f62b7885dcc0390aa2f86fd2bd55dad6bc1da24e323570d98e4",
+    "harnessSha256": "cb5d2ad9329cd3d576b68e573c51e698366d9e6e074a132e0b7447579acf56c9",
+    "runner": "Bun 1.4.5 (a7733435cf40429e3b35c36072769df2052b80f1)",
+    "platform": "linux/x64",
+    "runnerImage": "ubuntu24",
+    "node": "v22.18.0",
+    "locale": "C.UTF-8",
+    "timezone": "UTC",
+    "adapter": "tsc-cli",
+    "options": {
+      "mode": "official",
+      "strategy": "aligned",
+      "referenceBaseArgs": [
+        "--noEmit",
+        "--ignoreConfig",
+        "--pretty",
+        "false",
+        "--target",
+        "es2026",
+        "--module",
+        "es2022",
+        "--moduleResolution",
+        "bundler",
+        "--strict",
+        "true",
+        "--skipDefaultLibCheck",
+        "--noErrorTruncation"
+      ]
+    },
+    "referenceTool": {
+      "version": "7.1.0-beta",
+      "sha256": "a183b1956edbe7e7d98f2249858eedf2d8a9790809cc4909db1276e202faaa70",
+      "nativeSha256": null,
+      "embeddedTypeScript": null
+    },
+    "candidateTool": {
+      "version": "Version 7.1.0-beta",
+      "sha256": "a183b1956edbe7e7d98f2249858eedf2d8a9790809cc4909db1276e202faaa70",
+      "nativeSha256": null,
+      "embeddedTypeScript": null
+    },
+    "distributions": {
+      "reference": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4",
+      "candidate": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4"
+    },
+    "inputs": [
+      {
+        "shard": "01",
+        "parsedInputsSha256": "70d2857a5b5e3f7252b8dba01b6b01345eaee40d4794f76058051a7e0d6881ed",
+        "officialInputsSha256": "7508d2813423a97737653d2952fe78a06a27b3c7268f716ff5a7c94f09e809b9"
+      }
+    ]
+  },
+  "candidate": {
+    "id": "typescript",
+    "name": "TypeScript",
+    "version": "7.1.0-beta"
+  },
+  "reference": {
+    "id": "7.1.0-beta-official",
+    "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+  },
+  "suite": {
+    "id": "curated-difference-v1",
+    "label": "精选差异样本 v1（33 个目标配置）"
+  },
+  "generatedAt": "2026-11-27T17:54:37.571Z",
+  "reportPath": "reports/bb9e732186e2c78264893763839b442cc745294b8e199754f0ba2173e43c2660.html",
+  "runUrl": "https://github.com/hax/tsc-compa/actions/runs/46045310744",
+  "workflowRun": {
+    "number": 49,
+    "attempt": 1
+  },
+  "summary": {
+    "complete": true,
+    "shards": 1,
+    "sourceFiles": 33,
+    "records": 33,
+    "ran": 33,
+    "skipped": 0,
+    "coverage": 0.9347826086956522,
+    "hits": 86,
+    "expected": 92,
+    "fp": 3,
+    "missed": 6,
+    "misanchor": 0,
+    "compatibility": {
+      "pass": 27,
+      "fail": 6,
+      "unknown": 0
+    },
+    "strict": {
+      "pass": 12,
+      "fail": 6,
+      "unknown": 15
+    },
+    "executionFailures": {
+      "crash": 0,
+      "timeout": 0
+    }
+  },
+  "evidence": [
+    {
+      "shard": "01",
+      "parsedInputsSha256": "70d2857a5b5e3f7252b8dba01b6b01345eaee40d4794f76058051a7e0d6881ed",
+      "officialInputsSha256": "7508d2813423a97737653d2952fe78a06a27b3c7268f716ff5a7c94f09e809b9"
+    }
+  ],
+  "differences": [
+    {
+      "id": "compiler/alwaysStrictNoImplicitUseStrict.ts",
+      "extra": 1,
+      "missed": 0,
+      "misanchor": 0
+    },
+    {
+      "id": "compiler/augmentExportEquals2.ts",
+      "extra": 2,
+      "missed": 0,
+      "misanchor": 0
+    },
+    {
+      "id": "compiler/collisionExportsRequireAndAlias.ts",
+      "extra": 0,
+      "missed": 2,
+      "misanchor": 0
+    },
+    {
+      "id": "compiler/importHelpersES6.ts",
+      "extra": 0,
+      "missed": 1,
+      "misanchor": 0
+    },
+    {
+      "id": "compiler/privateNameWeakMapCollision.ts",
+      "extra": 0,
+      "missed": 2,
+      "misanchor": 0
+    },
+    {
+      "id": "compiler/superWithTypeArgument2.ts",
+      "extra": 0,
+      "missed": 1,
+      "misanchor": 0
+    }
+  ],
+  "candidateFailures": []
+}

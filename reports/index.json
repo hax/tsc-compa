@@ -2,6 +2,53 @@
   "schemaVersion": 1,
   "reports": [
     {
+      "id": "bb9e732186e2c78264893763839b442cc745294b8e199754f0ba2173e43c2660",
+      "candidate": {
+        "id": "typescript",
+        "name": "TypeScript",
+        "version": "7.1.0-beta"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "curated-difference-v1",
+        "label": "精选差异样本 v1（33 个目标配置）"
+      },
+      "generatedAt": "2026-11-27T17:54:37.571Z",
+      "reportPath": "reports/bb9e732186e2c78264893763839b442cc745294b8e199754f0ba2173e43c2660.html",
+      "runUrl": "https://github.com/hax/tsc-compa/actions/runs/46045310744",
+      "summary": {
+        "complete": true,
+        "shards": 1,
+        "sourceFiles": 33,
+        "records": 33,
+        "ran": 33,
+        "skipped": 0,
+        "coverage": 0.9347826086956522,
+        "hits": 86,
+        "expected": 92,
+        "fp": 3,
+        "missed": 6,
+        "misanchor": 0,
+        "compatibility": {
+          "pass": 27,
+          "fail": 6,
+          "unknown": 0
+        },
+        "strict": {
+          "pass": 12,
+          "fail": 6,
+          "unknown": 15
+        },
+        "executionFailures": {
+          "crash": 0,
+          "timeout": 0
+        }
+      }
+    },
+    {
       "id": "34c83c8c40ae8a119fcff029dc2876d39391df8a0a72c14daa04802aaff32ef5",
       "candidate": {
         "id": "tsz",
