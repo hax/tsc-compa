@@ -2,6 +2,49 @@
   "schemaVersion": 1,
   "reports": [
     {
+      "id": "1f9324afafdf8041f717b8187f7f3ff5d51129591da1b393a5d45da875b9c6ec",
+      "candidate": {
+        "id": "bun",
+        "name": "Bun",
+        "version": "1.4.4"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "fixed-120",
+        "label": "固定诊断样本（120 例）"
+      },
+      "generatedAt": "2026-11-27T08:55:45.012Z",
+      "reportPath": "reports/1f9324afafdf8041f717b8187f7f3ff5d51129591da1b393a5d45da875b9c6ec.html",
+      "runUrl": "https://github.com/hax/tsc-compa/actions/runs/45969338186",
+      "summary": {
+        "complete": true,
+        "shards": 1,
+        "sourceFiles": 120,
+        "records": 120,
+        "ran": 120,
+        "skipped": 0,
+        "coverage": 1,
+        "hits": 385,
+        "expected": 385,
+        "fp": 0,
+        "missed": 0,
+        "misanchor": 0,
+        "compatibility": {
+          "pass": 120,
+          "fail": 0,
+          "unknown": 0
+        },
+        "strict": {
+          "pass": 0,
+          "fail": 0,
+          "unknown": 120
+        }
+      }
+    },
+    {
       "id": "27f8ff7652cf9b22d6e063fecdda50e1de1fba2d70e681d21a80075f77d04329",
       "candidate": {
         "id": "tsrs",
