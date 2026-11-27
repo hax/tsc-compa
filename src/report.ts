@@ -378,6 +378,7 @@ export interface RunProvenance {
     nativeBin: string | null;
     nativeSha256: string | null;
     embeddedTypeScript: string | null;
+    sdk: { module: string | null; path: string | null; version: string | null; sha256: string | null };
     source: string | null;
   };
 }
@@ -784,6 +785,7 @@ function normalizeProvenance(meta: Record<string, unknown>, adapter: string | nu
   const candidateTool = obj(tools.candidate);
   const referenceNative = obj(referenceTool.native);
   const candidateNative = obj(candidateTool.native);
+  const candidateSdk = obj(candidateTool.sdk);
   const strategy = text(meta.optionPolicy ?? meta.optionStrategy ?? optionDef.strategy ?? provenance.optionPolicy);
   const optionPolicy = strategy === "defaults"
     ? "默认设置（参考与候选各自使用默认值，未显式对齐）"
@@ -835,9 +837,19 @@ function normalizeProvenance(meta: Record<string, unknown>, adapter: string | nu
       nativeBin: text(candidate.nativeBin ?? candidateNative.path),
       nativeSha256: text(candidate.nativeSha256 ?? candidateNative.sha256),
       embeddedTypeScript: text(candidate.embeddedTypeScript ?? candidateTool.embeddedTypeScript),
+      sdk: { module: text(candidateSdk.module), path: text(candidateSdk.path), version: text(candidateSdk.version), sha256: text(candidateSdk.sha256) },
       source: text(candidate.source),
     },
   };
+}
+
+function sdkProvenanceBits(sdk: RunProvenance["candidate"]["sdk"], render: (value: string) => string = (value) => value): string[] {
+  return [
+    sdk.module === null ? null : `SDK ${render(sdk.module)}`,
+    sdk.version === null ? null : `SDK 版本 ${render(sdk.version)}`,
+    sdk.path === null ? null : `SDK 入口 ${render(sdk.path)}`,
+    sdk.sha256 === null ? null : `SDK sha256 ${render(sdk.sha256.slice(0, 12))}`,
+  ].filter((value): value is string => value !== null);
 }
 
 function normalizeAggregate(v: unknown): PerfAggregate | null {
@@ -1589,6 +1601,7 @@ function renderHeaderMd(model: ReportModel): string[] {
   if (model.provenance.candidate.embeddedTypeScript !== null) {
     candidateBits.push(`内置 TypeScript ${mdCode(model.provenance.candidate.embeddedTypeScript)}（Bun 内置版本，不是参考 tsc 版本）`);
   }
+  candidateBits.push(...sdkProvenanceBits(model.provenance.candidate.sdk, mdCode));
   if (model.provenance.candidate.source !== null) candidateBits.push(`源 ${mdCode(model.provenance.candidate.source)}`);
   lines.push(`| 候选来源 | ${candidateBits.length === 0 ? "未提供" : candidateBits.join(" · ")} |`);
   if (model.provenance.runner !== null || model.provenance.platform !== null) {
@@ -2853,6 +2866,7 @@ export function renderHtml(model: ReportModel): string {
         model.provenance.candidate.nativeBin === null ? null : `原生 ${model.provenance.candidate.nativeBin}`,
         model.provenance.candidate.nativeSha256 === null ? null : `原生 sha256 ${model.provenance.candidate.nativeSha256.slice(0, 12)}`,
         model.provenance.candidate.embeddedTypeScript === null ? null : `内置 TypeScript ${model.provenance.candidate.embeddedTypeScript}（Bun 内置，不是参考 tsc 版本）`,
+        ...sdkProvenanceBits(model.provenance.candidate.sdk),
         model.provenance.candidate.source === null ? null : `源 ${model.provenance.candidate.source}`,
       ]
         .filter((x): x is string => x !== null)

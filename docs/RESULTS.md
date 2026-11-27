@@ -366,6 +366,47 @@ bun scripts/validate-compatibility.ts "$TS71_CASES" "$OUT/tsrs" tsrs "$TSRS"
 未扣启动成本的 wall 比值记录实际调用耗时，但不能用来做跨工具性能排名。
 
 
+## tsrs async 候选试验（2026-11-27）
+
+在 macOS arm64 上用 Bun 1.4.5（`a7733435c`），将 `tsrs@0.25.0-ts7.1.0-beta`
+的 `tsrs/async` 与独立的官方 `typescript-7-1/async` 比较。使用 TS7 测试集提交
+`3e9236361fa97a9e6c685f4833ac457ae2d8c50a`，两侧按 `aligned` 策略继承相同的参考基础参数。
+
+| 测试集 | 执行 | 兼容通过 | 严格通过 | 诊断命中 |
+|---|---:|---:|---:|---:|
+| TS7 冒烟 | 28/28 | 28/28 | 27/28 | 76/76（100%） |
+| TS7 固定诊断样本 | 120/120 | 120/120 | 120/120 | 385/385（100%） |
+
+两次运行均无跳过、崩溃、超时、未确认结果、多报错误、漏报或错锚。冒烟的唯一严格差异是
+`compiler/builtinIterator.ts` 的 TS2322 所带的 TS6502 相关信息：同一份
+`lib.es2025.iterator.d.ts` 的安装绝对路径不同。两份库文件逐字节相同，相关信息的行列、范围和文案相同，
+诊断摘要也相同。报告保留该路径差异，没有按文件名合并，也不把它解读为类型检查语义退步。
+官方 API 冒烟自比为严格 28/28。
+
+直接探测确认 SDK 以 `--api --async` 启动原生 `tsrs`，通过 stdin/stdout 传输 JSON-RPC。
+四次 program 请求复用同一个子进程，关闭 API 后该进程以 0 退出。API 返回位置、范围、消息链和相关信息；
+`getDeclarationDiagnostics()` 能返回 TS4094（有前置错误时，共用适配器仍按编译选项决定是否查询声明诊断）。
+逐案不执行 CLI、不写出 `.d.ts`，也没有逐案退出码。候选原生程序 SHA-256 前缀为 `3fb9de42effd`，
+SDK 入口为 `d28f34c05665`，独立的官方原生程序为 `29f5eb8daa5c`。这两个样本不覆盖所有项目模式或 emit 行为。
+
+复跑（在仓库根目录用 Bun 1.4.5；`TS71_CASES` 指向上述提交的 `tsc/testdata/tests/cases`）：
+
+```sh
+bun install --frozen-lockfile
+unset TSRS_BINARY
+bun scripts/install-impl.ts --name tsrs --source npm --dest .cache/tsrs-async/sdk
+TSC_COMPA_TEST_TSRS_ASYNC=1 bun test test/tsrs-async.test.ts
+for MANIFEST in smoke-cases-ts71-official official-baseline-cases-ts71; do
+  OUT=".cache/tsrs-async-pilot/$MANIFEST"
+  bun src/run.ts --baseline 7.1.0-beta-official --corpus "$TS71_CASES" \
+    --expectation-source ts7-api --adapter tsrs-async --mode official --option-strategy aligned \
+    --cases "config/$MANIFEST.json" --out "$OUT" --report-out "$OUT"
+done
+```
+
+现有 `candidate-adapter-smoke` 工作流的 `tsrs / tsrs-async` 任务只跑 28 例，检查执行和工具来源，
+兼容与严格差异仅报告。公开评测与现有 `tsrs` CLI 入口不变。
+
 ## 局限
 
 - 冒烟清单每项只有 28 个源文件，TS6 和 TS7 的官方结果扩展清单分别为 191 和 120 个；

@@ -510,7 +510,7 @@ async function main(): Promise<void> {
     "checker-batch": process.env.CHECKER_BATCH_BIN ?? process.env.CHECKER_BIN,
     "mock-batch": join(import.meta.dir, "adapters", "mock-batch.ts"),
   } as Record<string, string | undefined>)[args.adapter]) ?? args.reportImplBin;
-  const candidateIdentity = identifyTool(adapterTarget);
+  const candidateIdentity = adapter.toolIdentity ?? identifyTool(adapterTarget);
   const bunIdentity = args.adapter.startsWith("bun-check") && candidateIdentity !== null
     ? (() => {
       const exact = spawnSync(candidateIdentity.path, ["-p", "JSON.stringify({version: Bun.version, revision: Bun.revision, typescript: process.versions.typescript, path: process.execPath})"], { encoding: "utf8", timeout: 5_000 });

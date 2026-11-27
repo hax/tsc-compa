@@ -2,6 +2,7 @@
 //
 // 内置：
 //   tsc-cli        参考实现：直接用真实 tsc 跑逐案 CLI（TSC_COMPA_ADAPTER_TSC 覆盖二进制）
+//   tsrs-async     固定 tsrs npm SDK 与原生后端（可选候选）
 //   bun-check      Bun 内置类型检查器（bun-check:<bin> 或显式 BUN_CHECK_BIN）
 //   checker-cli    被测检查器逐案 CLI（CHECKER_BIN 或 checker-cli:<bin>），固定 strict+esnext 口径
 //   checker-batch  同一检查器的批量 NDJSON 模式（CHECKER_BATCH_BIN，缺省回落 CHECKER_BIN），固定口径
@@ -18,6 +19,7 @@ import { CheckerCliAdapter } from "./checker-cli.ts";
 import { CliAdapter } from "./cli.ts";
 import { Ts7ApiAdapter } from "./ts7-api.ts";
 import { TscCliAdapter } from "./tsc-cli.ts";
+import { createTsrsAsyncAdapter } from "./tsrs-async.ts";
 
 class NoopAdapter implements Adapter {
   readonly name = "none";
@@ -31,6 +33,7 @@ class NoopAdapter implements Adapter {
 export const ADAPTER_NAMES = [
   "tsc-cli",
   "ts7-api",
+  "tsrs-async",
   "bun-check",
   "bun-check:<bin>",
   "checker-cli",
@@ -56,6 +59,7 @@ export async function createAdapter(name: string): Promise<Adapter> {
     return new TscCliAdapter({ name: embedded.length > 0 ? name : "tsc-cli", bin, extraArgs });
   }
   if (name === "ts7-api") return new Ts7ApiAdapter();
+  if (name === "tsrs-async") return createTsrsAsyncAdapter();
   if (name === "bun-check" || name.startsWith("bun-check:")) {
     // 只用显式指定的固定版本：不把当前 runner 的 Bun 当成候选。
     const embedded = name.startsWith("bun-check:") ? name.slice("bun-check:".length) : "";
