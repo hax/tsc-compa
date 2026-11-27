@@ -1,0 +1,22 @@
+{
+  "suite": "curated-difference-v1-draft",
+  "corpus": "microsoft/TypeScript@3e9236361fa97a9e6c685f4833ac457ae2d8c50a",
+  "baseline": "7.1.0-beta-official",
+  "budgets": {
+    "multiple-families": 12,
+    "single-family-per-family": 4,
+    "reference-disagreement": 6,
+    "intentional-skip": 6,
+    "control-with-diagnostics": 3,
+    "control-without-diagnostics": 3
+  },
+  "runs": [
+    { "candidate": "typescript", "family": "typescript", "role": "reference-control", "run": 45969353606, "attempt": 1, "commit": "fdfa4397daeb174b106a75007ef95c51ae5bd968", "reportId": "c39b32e929eef994d8ed3b952859aa8120fcee9485bbd04bc49d1ae27ad03603" },
+    { "candidate": "bun-1.4.4", "family": "bun", "role": "public-full", "run": 45969572330, "attempt": 1, "commit": "fdfa4397daeb174b106a75007ef95c51ae5bd968", "reportId": "32517ad0f8abbac5e9327c138e75dad4bdb8b55177c351f854217861ce0b65eb" },
+    { "candidate": "bun-1.4.5", "family": "bun", "role": "public-full", "run": 45969577715, "attempt": 1, "commit": "fdfa4397daeb174b106a75007ef95c51ae5bd968", "reportId": "95210b7a160de9186b2c25cca74f6747fdd1637ef126a0f4de9aab6269deb2f6" },
+    { "candidate": "tsrs", "family": "tsrs", "role": "public-full", "run": 45969582556, "attempt": 1, "commit": "fdfa4397daeb174b106a75007ef95c51ae5bd968", "reportId": "261be62fe7c7936d7d37649eb369a3cf204943184e1b6a8eb3f35dcec56798be" },
+    { "candidate": "ts-rust", "family": "ts-rust", "role": "release-preview", "run": 46000898108, "attempt": 1, "commit": "c988b253cd695ba086da3d24737d594e6ecab547", "reportId": "49b6989472de8b2be6f971513531d60021a465d89ab76b78ac76c8db90c182d0" },
+    { "candidate": "tsz", "family": "tsz", "role": "release-preview", "run": 46000904225, "attempt": 1, "commit": "c988b253cd695ba086da3d24737d594e6ecab547", "reportId": "34c83c8c40ae8a119fcff029dc2876d39391df8a0a72c14daa04802aaff32ef5" }
+  ],
+  "probes": { "run": 45980973195, "attempt": 1, "commit": "dc6e55c272b671bf8a6c1aa03fc45e1f22e9849e", "artifact": "ts-version-probes-official" }
+}

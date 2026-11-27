@@ -1,0 +1,3750 @@
+{
+  "schemaVersion": 1,
+  "suite": "curated-difference-v1-draft",
+  "corpus": "microsoft/TypeScript@3e9236361fa97a9e6c685f4833ac457ae2d8c50a",
+  "baseline": "7.1.0-beta-official",
+  "budgets": {
+    "multiple-families": 12,
+    "single-family-per-family": 4,
+    "reference-disagreement": 6,
+    "intentional-skip": 6,
+    "control-with-diagnostics": 3,
+    "control-without-diagnostics": 3
+  },
+  "inventory": {
+    "records": 14346,
+    "sourceFiles": 12974,
+    "buckets": {
+      "multiple-families": 26,
+      "single-family": 225,
+      "reference-disagreement": 43,
+      "intentional-skip": 1118,
+      "control-with-diagnostics": 3812,
+      "control-without-diagnostics": 3980,
+      "unclassified": 5142
+    },
+    "fixed120OverlapByBucket": {
+      "multiple-families": 0,
+      "single-family": 1,
+      "reference-disagreement": 0,
+      "intentional-skip": 0,
+      "control-with-diagnostics": 119,
+      "control-without-diagnostics": 0,
+      "unclassified": 0
+    }
+  },
+  "selected": {
+    "records": 33,
+    "buckets": {
+      "multiple-families": 12,
+      "single-family": 6,
+      "reference-disagreement": 6,
+      "intentional-skip": 4,
+      "control-with-diagnostics": 3,
+      "control-without-diagnostics": 2,
+      "unclassified": 0
+    },
+    "fixed120OverlapByBucket": {
+      "multiple-families": 0,
+      "single-family": 1,
+      "reference-disagreement": 0,
+      "intentional-skip": 0,
+      "control-with-diagnostics": 0,
+      "control-without-diagnostics": 0,
+      "unclassified": 0
+    },
+    "perCandidate": {
+      "typescript": {
+        "records": 33,
+        "ran": 33,
+        "skipped": 0,
+        "pass": 27,
+        "mismatch": 6,
+        "unknown": 0,
+        "hits": 86,
+        "expected": 92,
+        "skipKinds": {
+          "unsupported-option": 0,
+          "reference-unavailable": 0,
+          "other": 0
+        },
+        "recordCoverage": 1,
+        "diagnosticCoverage": 0.9347826086956522
+      },
+      "bun-1.4.4": {
+        "records": 33,
+        "ran": 28,
+        "skipped": 5,
+        "pass": 9,
+        "mismatch": 19,
+        "unknown": 0,
+        "hits": 76,
+        "expected": 92,
+        "skipKinds": {
+          "unsupported-option": 5,
+          "reference-unavailable": 0,
+          "other": 0
+        },
+        "recordCoverage": 0.8484848484848485,
+        "diagnosticCoverage": 0.8260869565217391
+      },
+      "bun-1.4.5": {
+        "records": 33,
+        "ran": 28,
+        "skipped": 5,
+        "pass": 9,
+        "mismatch": 19,
+        "unknown": 0,
+        "hits": 76,
+        "expected": 92,
+        "skipKinds": {
+          "unsupported-option": 5,
+          "reference-unavailable": 0,
+          "other": 0
+        },
+        "recordCoverage": 0.8484848484848485,
+        "diagnosticCoverage": 0.8260869565217391
+      },
+      "tsrs": {
+        "records": 33,
+        "ran": 33,
+        "skipped": 0,
+        "pass": 27,
+        "mismatch": 6,
+        "unknown": 0,
+        "hits": 86,
+        "expected": 92,
+        "skipKinds": {
+          "unsupported-option": 0,
+          "reference-unavailable": 0,
+          "other": 0
+        },
+        "recordCoverage": 1,
+        "diagnosticCoverage": 0.9347826086956522
+      },
+      "ts-rust": {
+        "records": 33,
+        "ran": 33,
+        "skipped": 0,
+        "pass": 24,
+        "mismatch": 9,
+        "unknown": 0,
+        "hits": 85,
+        "expected": 92,
+        "skipKinds": {
+          "unsupported-option": 0,
+          "reference-unavailable": 0,
+          "other": 0
+        },
+        "recordCoverage": 1,
+        "diagnosticCoverage": 0.9239130434782609
+      },
+      "tsz": {
+        "records": 33,
+        "ran": 29,
+        "skipped": 4,
+        "pass": 7,
+        "mismatch": 22,
+        "unknown": 0,
+        "hits": 69,
+        "expected": 92,
+        "skipKinds": {
+          "unsupported-option": 4,
+          "reference-unavailable": 0,
+          "other": 0
+        },
+        "recordCoverage": 0.8787878787878788,
+        "diagnosticCoverage": 0.75
+      }
+    }
+  },
+  "familyVersionDivergence": [
+    {
+      "family": "bun",
+      "candidates": [
+        "bun-1.4.4",
+        "bun-1.4.5"
+      ],
+      "differingRecords": 0,
+      "selectedDifferingRecords": 0
+    }
+  ],
+  "reference": {
+    "source": "official-baseline",
+    "tool": {
+      "version": "7.1.0-beta",
+      "sha256": "a183b1956edbe7e7d98f2249858eedf2d8a9790809cc4909db1276e202faaa70",
+      "nativeSha256": null,
+      "embeddedTypeScript": null
+    },
+    "baseArgs": [
+      "--noEmit",
+      "--ignoreConfig",
+      "--pretty",
+      "false",
+      "--target",
+      "es2026",
+      "--module",
+      "es2022",
+      "--moduleResolution",
+      "bundler",
+      "--strict",
+      "true",
+      "--skipDefaultLibCheck",
+      "--noErrorTruncation"
+    ]
+  },
+  "runs": [
+    {
+      "candidate": "typescript",
+      "family": "typescript",
+      "role": "reference-control",
+      "run": 45969353606,
+      "attempt": 1,
+      "commit": "fdfa4397daeb174b106a75007ef95c51ae5bd968",
+      "reportId": "c39b32e929eef994d8ed3b952859aa8120fcee9485bbd04bc49d1ae27ad03603",
+      "url": "https://github.com/hax/tsc-compa/actions/runs/45969353606",
+      "candidateVersion": "7.1.0-beta",
+      "adapter": "tsc-cli",
+      "candidateArgs": [],
+      "platform": "linux/x64",
+      "candidateTool": {
+        "version": "Version 7.1.0-beta",
+        "sha256": "a183b1956edbe7e7d98f2249858eedf2d8a9790809cc4909db1276e202faaa70",
+        "nativeSha256": null,
+        "embeddedTypeScript": null
+      },
+      "distributions": {
+        "reference": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4",
+        "candidate": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4"
+      },
+      "prepared": null,
+      "harnessSha256": "12a2ea8c937cfb4c7450a44394d340bdaf283d7dd483e93a3b5de9f52bf60792",
+      "planSha256": "192a7dfad36ea42b615b2a82c86b641205c03f53e539c32df7e4478f87337b2e",
+      "sourceFiles": 12974,
+      "records": 14346,
+      "ran": 9212,
+      "skipped": 5134,
+      "pass": 9169,
+      "mismatch": 43,
+      "unknown": 0,
+      "hits": 24060,
+      "expected": 24133,
+      "skipKinds": {
+        "unsupported-option": 0,
+        "reference-unavailable": 2676,
+        "other": 2458
+      },
+      "recordCoverage": 0.6421302105116409,
+      "diagnosticCoverage": 0.9969750963411097,
+      "executionFailures": 0,
+      "artifacts": {
+        "full-typescript-01": {
+          "metrics": "ad32bc4a3e960a7f6bb2e0e67ce2d5c9cd41095c773a20e737df1a086576c2d4",
+          "details": "3e982d0fc5ddb1818abc1d23e63631f2571a538f41e668555680910d72a6885f"
+        },
+        "full-typescript-02": {
+          "metrics": "7b66def9ad94ba7135f4012693129c4e83ad51af72649241903d3e5b628005ef",
+          "details": "765e7c31ca6c085758e85b1b54cd65e4652d9a960cc8e081357fd8c0ab825105"
+        },
+        "full-typescript-03": {
+          "metrics": "d83996c49f9194d7f60df11db50311cdc7c51f1e3c645e30ea360843cdd66e5f",
+          "details": "fc73ca4e28dcad89b2fbca55524ef859ead0149090909ad0db72f31e70148444"
+        },
+        "full-typescript-04": {
+          "metrics": "3b540571befc69bdc643227811e99e19f7d57519745957df88abb7aec22de923",
+          "details": "99bdff2c0001fdb870413a942dbb3b1ef693e9f2135a9e8207cc7bbab3dc6aa7"
+        },
+        "full-typescript-05": {
+          "metrics": "b49289a9f48be69c31337d6d9a22565083f0577fd57ee9e8b04ea9b3826bb235",
+          "details": "f8861b5d06bbf01896ba514eef3634f7fa81c2a89499d5866393bd68a7d03278"
+        },
+        "full-typescript-06": {
+          "metrics": "5e09a197b66074b130920b300911d76d18ed342f453c7523136a4e367a32b742",
+          "details": "4b42e0f17ae0fc1b740fba3e9676724cc7646141717c1b15f896c0a25d4d9420"
+        },
+        "full-typescript-07": {
+          "metrics": "19d5c23f3e6c855997e86aa9bbbb4493a58318d4a76a0c5677c955774386afee",
+          "details": "acdd9602aa890481ab211cd1a715a64e1802c1e18aa063a303a7096457243bfe"
+        },
+        "full-typescript-08": {
+          "metrics": "23f4860a867e19ea9a8aa1b80ba1d7307a1814414c608f843046a2440c2e8380",
+          "details": "2f00a3b16cfbdc00792653b6867ec3708f608f349c06d7fea83bdbb278882821"
+        }
+      }
+    },
+    {
+      "candidate": "bun-1.4.4",
+      "family": "bun",
+      "role": "public-full",
+      "run": 45969572330,
+      "attempt": 1,
+      "commit": "fdfa4397daeb174b106a75007ef95c51ae5bd968",
+      "reportId": "32517ad0f8abbac5e9327c138e75dad4bdb8b55177c351f854217861ce0b65eb",
+      "url": "https://github.com/hax/tsc-compa/actions/runs/45969572330",
+      "candidateVersion": "1.4.4",
+      "adapter": "bun-check",
+      "candidateArgs": [],
+      "platform": "linux/x64",
+      "candidateTool": {
+        "version": "Bun 1.4.4 (38afee6c84fcf48c0edb2466aa4b27d287a59c30)",
+        "sha256": "10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235",
+        "nativeSha256": null,
+        "embeddedTypeScript": "7.0.2"
+      },
+      "distributions": {
+        "reference": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4",
+        "candidate": null
+      },
+      "prepared": null,
+      "harnessSha256": "12a2ea8c937cfb4c7450a44394d340bdaf283d7dd483e93a3b5de9f52bf60792",
+      "planSha256": "64ff6b016e260ca4f9c7a50357230dffb211feb39250f0a7b66d127f9e55da78",
+      "sourceFiles": 12974,
+      "records": 14346,
+      "ran": 8030,
+      "skipped": 6316,
+      "pass": 7973,
+      "mismatch": 57,
+      "unknown": 0,
+      "hits": 22315,
+      "expected": 22407,
+      "skipKinds": {
+        "unsupported-option": 1268,
+        "reference-unavailable": 2676,
+        "other": 2372
+      },
+      "recordCoverage": 0.5597379060365258,
+      "diagnosticCoverage": 0.9958941402240371,
+      "executionFailures": 0,
+      "artifacts": {
+        "full-bun-1.4.4-01": {
+          "metrics": "97c199c24cf7a5e6b56743b51040394db9d5b1b452946a74ceae7d777cca7a8e",
+          "details": "d3072af63d2119e031ac40b3d57ea279f2952a398b5b1a4c8673930b37e97d91"
+        },
+        "full-bun-1.4.4-02": {
+          "metrics": "5708bd65c7469c3945ddd3c1de35e860b41c63ca9735bfeeb7fcdd710e43a2f0",
+          "details": "07cfbc99965ae87b32357bedb172eb2f0b0f541f469de952049007b12fae4f10"
+        },
+        "full-bun-1.4.4-03": {
+          "metrics": "b59796bc229c75890798a79dfd51880b46e7fd0767ac26dfde0017c96c33b94b",
+          "details": "f8bb4a4098bffb73fa0677955976626e358991b5a3984fbb964f68185b19eb32"
+        },
+        "full-bun-1.4.4-04": {
+          "metrics": "25ad541491b874fa704e753dab97e2298df2a6f44e0e97d82222b6da781e9160",
+          "details": "4ec4c352fc04bc0f6026672bae88d91c0438d9a82c0de7f372c6a5334803feda"
+        },
+        "full-bun-1.4.4-05": {
+          "metrics": "9d984ef8a0339b114290bc4cf7fb6b1e31ce911f98db303dd0163f3c5b6523e2",
+          "details": "f9ba7626d4104d82cc6739c44bd02d4c0e0623b8721aebe3e7b1afd15c2865bd"
+        },
+        "full-bun-1.4.4-06": {
+          "metrics": "04a8a0cf515186bcb8a1be2ae883ba12169c3226d8dd0c123442ae0c0f3ae065",
+          "details": "82731d16c6fd7779bf481a6b8b6610d1ea4a7997d308500e9082919b0781045f"
+        },
+        "full-bun-1.4.4-07": {
+          "metrics": "7411ff6955a33a6472604707870f3670b1380a2d5db4a76c9bc35d2b73de2833",
+          "details": "6bcae2b239f56268f4416bdd73885535057a9b12e8568798eb078e876e7da049"
+        },
+        "full-bun-1.4.4-08": {
+          "metrics": "45df2d805ea142dfb717715ca888df0a1ec3e0d5d77712f2301269705528077c",
+          "details": "05c0a27fefbdda68e1019a377cde2bee129402fcbb779b0b7ed2871268fbc51e"
+        }
+      }
+    },
+    {
+      "candidate": "bun-1.4.5",
+      "family": "bun",
+      "role": "public-full",
+      "run": 45969577715,
+      "attempt": 1,
+      "commit": "fdfa4397daeb174b106a75007ef95c51ae5bd968",
+      "reportId": "95210b7a160de9186b2c25cca74f6747fdd1637ef126a0f4de9aab6269deb2f6",
+      "url": "https://github.com/hax/tsc-compa/actions/runs/45969577715",
+      "candidateVersion": "1.4.5",
+      "adapter": "bun-check",
+      "candidateArgs": [],
+      "platform": "linux/x64",
+      "candidateTool": {
+        "version": "Bun 1.4.5 (a7733435cf40429e3b35c36072769df2052b80f1)",
+        "sha256": "f05d28a3862f4b84395c7fa32480b835dd47482e80b7e7a49a115227f0c06083",
+        "nativeSha256": null,
+        "embeddedTypeScript": "7.0.2"
+      },
+      "distributions": {
+        "reference": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4",
+        "candidate": null
+      },
+      "prepared": null,
+      "harnessSha256": "12a2ea8c937cfb4c7450a44394d340bdaf283d7dd483e93a3b5de9f52bf60792",
+      "planSha256": "2df009e6fb9868e85db6670191d48b69bd2e06ed8a58d4f2efc89d32c5339816",
+      "sourceFiles": 12974,
+      "records": 14346,
+      "ran": 8030,
+      "skipped": 6316,
+      "pass": 7973,
+      "mismatch": 57,
+      "unknown": 0,
+      "hits": 22315,
+      "expected": 22407,
+      "skipKinds": {
+        "unsupported-option": 1268,
+        "reference-unavailable": 2676,
+        "other": 2372
+      },
+      "recordCoverage": 0.5597379060365258,
+      "diagnosticCoverage": 0.9958941402240371,
+      "executionFailures": 0,
+      "artifacts": {
+        "full-bun-1.4.5-01": {
+          "metrics": "0c855643af2dacaa5c10a260b209185c9829a3c9179f713737e0094ec1a04c1f",
+          "details": "85e2bf6fd58847b86c220c4e9afde53cb6afc7230540f7531a01e142f986bfa0"
+        },
+        "full-bun-1.4.5-02": {
+          "metrics": "ecbdc92d59f45b144ebecab2619eb7e6dfb4b97c4b0e4f034da401d3c1470ca7",
+          "details": "7f903f37a2875285a03a447fb639fb59027b2ba97c53b4c6fa738d947e5d72d5"
+        },
+        "full-bun-1.4.5-03": {
+          "metrics": "820b198d5f7ee9fb688845830f85c83043efe4e1b7a8b7f26217d0a98570f1b9",
+          "details": "3135e64178cfcc84633131e0151bb6b9e70aa93f553fcb8e81f2c2bee3be1f20"
+        },
+        "full-bun-1.4.5-04": {
+          "metrics": "ac788177028e3e03b743cf1045481b2f146115ff229e095e956f643e714a72bc",
+          "details": "6de19cb5b80de6f9cec7de3e5011d9c702728598e6a2dc61b7936870b2e2b9ed"
+        },
+        "full-bun-1.4.5-05": {
+          "metrics": "8664be6067e0e39545fb163520fe035b7ca401bef4e7265d5a4437363303cdc8",
+          "details": "93e3188174c90650bfaf480bcf01bf02b5b8620ff22f5c80e6f2b258c64b7414"
+        },
+        "full-bun-1.4.5-06": {
+          "metrics": "c5e45e8306b15617a02c23025b17b140b5ecf59840ef851ca679c37f127b6332",
+          "details": "44bf8483ce0d5c5998b49f70b9139c40396098c63ab2834aedad825fc6f5e996"
+        },
+        "full-bun-1.4.5-07": {
+          "metrics": "009111554577451fc50ab6f92c09d2ef8459d67bb8db32638a8f36160a61a99d",
+          "details": "63bb9adc243565d99e5b96495668765bea179ff880fab77cdb9dabc18d10a2c6"
+        },
+        "full-bun-1.4.5-08": {
+          "metrics": "e5e42e6ac195a3fbaa37bcc7c7ed17e7b4b31172e9824fcd5f23a5390600f87d",
+          "details": "3807d42a56894b78d16ad12144aad3decef673932aa156907f7fd00882046675"
+        }
+      }
+    },
+    {
+      "candidate": "tsrs",
+      "family": "tsrs",
+      "role": "public-full",
+      "run": 45969582556,
+      "attempt": 1,
+      "commit": "fdfa4397daeb174b106a75007ef95c51ae5bd968",
+      "reportId": "261be62fe7c7936d7d37649eb369a3cf204943184e1b6a8eb3f35dcec56798be",
+      "url": "https://github.com/hax/tsc-compa/actions/runs/45969582556",
+      "candidateVersion": "0.25.0-ts7.1.0-beta",
+      "adapter": "tsc-cli",
+      "candidateArgs": [],
+      "platform": "linux/x64",
+      "candidateTool": {
+        "version": "Version 7.1.0-beta (tsrs 0.25.0-ts7.1.0-beta, microsoft/TypeScript@3e9236361fa9)",
+        "sha256": "5df5caa2f34776a5c073487b63f4668ac7977af98229a6e77331a461ba0e547c",
+        "nativeSha256": null,
+        "embeddedTypeScript": null
+      },
+      "distributions": {
+        "reference": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4",
+        "candidate": "0c1367cfa3ee6603e609752ac45625df989cb5fc01ceb069316daeda96884de6"
+      },
+      "prepared": null,
+      "harnessSha256": "12a2ea8c937cfb4c7450a44394d340bdaf283d7dd483e93a3b5de9f52bf60792",
+      "planSha256": "cf6f6bb315459507ef006400c6fb192375a24cdaf20dbaf7816436502cfe9f7b",
+      "sourceFiles": 12974,
+      "records": 14346,
+      "ran": 9212,
+      "skipped": 5134,
+      "pass": 9169,
+      "mismatch": 43,
+      "unknown": 0,
+      "hits": 24060,
+      "expected": 24133,
+      "skipKinds": {
+        "unsupported-option": 0,
+        "reference-unavailable": 2676,
+        "other": 2458
+      },
+      "recordCoverage": 0.6421302105116409,
+      "diagnosticCoverage": 0.9969750963411097,
+      "executionFailures": 0,
+      "artifacts": {
+        "full-tsrs-01": {
+          "metrics": "4f1f986b8ad9582abdd6cbdc75d85c2fd6b2c93c8aed9f261913c498e15cf79a",
+          "details": "864c344ec18ecdda933ca248f200ab7c0786d07938237f55f2b41beeea2d33a3"
+        },
+        "full-tsrs-02": {
+          "metrics": "b34cf33b212420416affbcb10fa1b3232f562943960eac16da61437303b8a995",
+          "details": "9629f282f99d7bc357ecc6cbaf9bb3385205c74f272c853780d1daaa1608c481"
+        },
+        "full-tsrs-03": {
+          "metrics": "5ec015b443915b5baf3aa89cacfdc30e0feea882232865e25ae05f55ee0a52c6",
+          "details": "311ee8d225b04936bdba220bcb5ab04c5996495dda3729702bb1653fdb05abe8"
+        },
+        "full-tsrs-04": {
+          "metrics": "1e1482234499ac2ccda03dfa708679b9c7e6b33f434216bd723bd87cfc902dcb",
+          "details": "1d27da52f272521ffbb6d3148abcff01753e3e84232b88f85c52d8a17c3cce57"
+        },
+        "full-tsrs-05": {
+          "metrics": "a7163f070fb8bda262657d4a3bae266f815f6ba819b685cb644bcdf78301e924",
+          "details": "1ce79bdbd87dcded299c073045b045e8f88991a89a5e7131a1a4d3fc6c16e006"
+        },
+        "full-tsrs-06": {
+          "metrics": "3e81729eb5ad0463ff717a9fb7a5421000596b25f1987d655a2cb5bba9b66cf0",
+          "details": "c5bb742cf190e2e3125b7da1dc4130f42559e9df051ad7847c0d0f3f91006bf2"
+        },
+        "full-tsrs-07": {
+          "metrics": "7e446d46d51019e13851216ab2488d386afddacfb038b119c427b19d22961ada",
+          "details": "2acb7e8b2f9b1111b26e0136b1de5b8578150e247d3e1773389285597c191dbd"
+        },
+        "full-tsrs-08": {
+          "metrics": "3507f8de68b07894cc3cd97b1a3041438828e7cf68b57357176016aaadc74c1f",
+          "details": "f38a7263800cb067452474710d64fde82fa8d1a8bc9d9388d2502226fcf75a0c"
+        }
+      }
+    },
+    {
+      "candidate": "ts-rust",
+      "family": "ts-rust",
+      "role": "release-preview",
+      "run": 46000898108,
+      "attempt": 1,
+      "commit": "c988b253cd695ba086da3d24737d594e6ecab547",
+      "reportId": "49b6989472de8b2be6f971513531d60021a465d89ab76b78ac76c8db90c182d0",
+      "url": "https://github.com/hax/tsc-compa/actions/runs/46000898108",
+      "candidateVersion": "0.8.0",
+      "adapter": "tsc-cli",
+      "candidateArgs": [
+        "--singleThreaded"
+      ],
+      "platform": "linux/x64",
+      "candidateTool": {
+        "version": "Version 7.1.0-dev",
+        "sha256": "c2d321fe13ff304e40a7650ec123b96239ba1c568f3aa89cba04dfc6ac7c9f7d",
+        "nativeSha256": null,
+        "embeddedTypeScript": null
+      },
+      "distributions": {
+        "reference": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4",
+        "candidate": "f5f5578f607286df07a2fffcf7c89b86269b24b1b5235c3415a1d5524fc0c47a"
+      },
+      "prepared": {
+        "source": {
+          "kind": "npm",
+          "package": "tsc-rs",
+          "version": "0.8.0",
+          "platformPackage": "@tsc-rs/linux-x64",
+          "sourceCommit": "4c032be6dbef6dafaae2358ece165d138f8e0da8",
+          "launcherSha256": "22c0e3f19f98eac88085d2edf5b0ece99c76481c274f29964c14be2fe335e697",
+          "platformSha256": "05a13e235b6d6561a73bb57d412c854ea33bde888aacddcd8336245253a1be47"
+        },
+        "runtimeLibrariesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "environment": {}
+      },
+      "harnessSha256": "04ca9633c5530dc9dcbe3a63913d3e9017a6e85f2147e5c31114c5d7541519ef",
+      "planSha256": "d9f3f804c684b99e7074623ad190ae6dde204dde5f7fd41c08e26b67ce5b1efe",
+      "sourceFiles": 12974,
+      "records": 14346,
+      "ran": 9212,
+      "skipped": 5134,
+      "pass": 9162,
+      "mismatch": 50,
+      "unknown": 0,
+      "hits": 23966,
+      "expected": 24133,
+      "skipKinds": {
+        "unsupported-option": 0,
+        "reference-unavailable": 2676,
+        "other": 2458
+      },
+      "recordCoverage": 0.6421302105116409,
+      "diagnosticCoverage": 0.9930800149173331,
+      "executionFailures": 0,
+      "artifacts": {
+        "full-ts-rust-01": {
+          "metrics": "61d11a932527dba978943f64316e8a873c925a6bcfc2f38d6d46caf5d9fec7e5",
+          "details": "e67a9eff26dbc8da51b41c9cc904639d1bd9d0c448d8110957ecce97814e152d"
+        },
+        "full-ts-rust-02": {
+          "metrics": "c477f5b639ca90c5ba6c96dea8cd2a336d72176d4d01895c1e0adf949d49d898",
+          "details": "1833fb9ac9068c6406611bbe4b01deb3455a2219e87be8b993ab0740f1cf7606"
+        },
+        "full-ts-rust-03": {
+          "metrics": "a4083560a5b3f6d977fed7e76aeb398a8f5e044094a3f9c7b627535e591dc943",
+          "details": "7dcf1c1758911c73f3a1277ff64d009070c0835ef49752e3a7a09420587d86f4"
+        },
+        "full-ts-rust-04": {
+          "metrics": "e90a516846b8c00f9fed7d4cb6b2e1b2586b3c5b1f03d88027b44263189d26d3",
+          "details": "ec8ad7c7c271fe654db2db329569300ed95fa2dd5f4834b2729e98b955eba0e5"
+        },
+        "full-ts-rust-05": {
+          "metrics": "ba2a1a4d940e7872b1dee7a41b5ef556a04cea545053c03ebd44ab68113797d5",
+          "details": "52962a761872378ead858fe9ac474cfc182980dc69a54c84f88c9967af3d60fb"
+        },
+        "full-ts-rust-06": {
+          "metrics": "bf5f252f821af0c67f7b4ca78515ec14cdf9454232df8c75eb0517243ef4592d",
+          "details": "6b9dd1c254695cd451621ce4c74138d72e843bc7379c3df9bb914172fce1b36a"
+        },
+        "full-ts-rust-07": {
+          "metrics": "9fba56d5a24b39912eaadde85702eda9ecb1cb27407ef2f9b7e05b9c11249d96",
+          "details": "6fee0100c815ae34165a7754df317d27b85df3f5a9c8e7ede20562ca6439321c"
+        },
+        "full-ts-rust-08": {
+          "metrics": "8f37b697d84e3ef1fc0fa79ab86f33170c2e97cce238eeeee3133193c8317205",
+          "details": "3fdd73adea4c8d4bf01de40302fa21fb2c660d0b83cd4c64fd0424d18895b4f2"
+        }
+      }
+    },
+    {
+      "candidate": "tsz",
+      "family": "tsz",
+      "role": "release-preview",
+      "run": 46000904225,
+      "attempt": 1,
+      "commit": "c988b253cd695ba086da3d24737d594e6ecab547",
+      "reportId": "34c83c8c40ae8a119fcff029dc2876d39391df8a0a72c14daa04802aaff32ef5",
+      "url": "https://github.com/hax/tsc-compa/actions/runs/46000904225",
+      "candidateVersion": "v0.1.75",
+      "adapter": "tsc-cli",
+      "candidateArgs": [],
+      "platform": "linux/x64",
+      "candidateTool": {
+        "version": "Version 7.0.2",
+        "sha256": "6fa687b52f59f49000f9bf3d403b9bd65c5c9dc394d41351b02bff853a0bdf1c",
+        "nativeSha256": null,
+        "embeddedTypeScript": null
+      },
+      "distributions": {
+        "reference": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4",
+        "candidate": "aba4f86749401145722e5d71d685c37ec6820c809dcf45335abafc7cde99d2f4"
+      },
+      "prepared": {
+        "source": {
+          "kind": "release",
+          "repository": "tsz-org/tsz",
+          "tag": "v0.1.75",
+          "commit": "0c0e53f96bfd64be253cdd8c53e2853fd5cfdadb",
+          "asset": "tsz-v0.1.75-x86_64-unknown-linux-gnu.tar.gz",
+          "archiveSha256": "2feb40f7a2371e397988d6250b3680bc903c88063c6384f72f902122d8d2f7e6",
+          "checksumsSha256": "faaae84be17efa9baa4742a1ff686348b34d7003441d0d1df5ee3267619e07c2"
+        },
+        "runtimeLibrariesSha256": "8d85dec9de8c0cdbe31744ecdb3109882887f7a9831cd8de1f09b80cc64df967",
+        "environment": {
+          "TSZ_USE_EMBEDDED_LIBS": "1"
+        }
+      },
+      "harnessSha256": "04ca9633c5530dc9dcbe3a63913d3e9017a6e85f2147e5c31114c5d7541519ef",
+      "planSha256": "58dbdcb9b86b693df53172e6a2a8807aa279dfeb3951e75de155d8d928cb452f",
+      "sourceFiles": 12974,
+      "records": 14346,
+      "ran": 8954,
+      "skipped": 5392,
+      "pass": 8665,
+      "mismatch": 289,
+      "unknown": 0,
+      "hits": 23284,
+      "expected": 23933,
+      "skipKinds": {
+        "unsupported-option": 353,
+        "reference-unavailable": 2676,
+        "other": 2363
+      },
+      "recordCoverage": 0.6241461034434685,
+      "diagnosticCoverage": 0.9728826306773075,
+      "executionFailures": 0,
+      "artifacts": {
+        "full-tsz-01": {
+          "metrics": "56628abb1092dc9318f26be9ead65b7d3b28d827ff89e2392e20eb2d556a2f23",
+          "details": "45c8998b7ba99539329aea6699bb12ac72f8121802a717e5577c7c243491ea55"
+        },
+        "full-tsz-02": {
+          "metrics": "9c622a7317d54d53d166af962d340d1a3bed07aa85cb2eebdf757d39dfbfba1e",
+          "details": "cd8e912d0dae9b82ee163ef319f8522643f77b6f68689db1f255e74058bee1ea"
+        },
+        "full-tsz-03": {
+          "metrics": "cb3fff7f279ccbd87e20ba7e4f3dc9b11402cde5e642967b21f174fb62418fdb",
+          "details": "8773d87e421e714fb0a60416320171da98514406b8743881e40d27f2fe7ad518"
+        },
+        "full-tsz-04": {
+          "metrics": "58a6400416f8a44ba60797a58a062ebf7d87069bb4ad4f68625d8aae15ab0e07",
+          "details": "5e8810d18921b6864707786bb2e4550004a8f0aee496a73cd46f727af42080de"
+        },
+        "full-tsz-05": {
+          "metrics": "4f30a063fb72f78704ee3533442b1c22cff8e2027afa1c3c4cc179473578f5ec",
+          "details": "d99cf9079d2423bdd4cc3384db73bd5be1deabfd6c4deca97a02bc0313afa31e"
+        },
+        "full-tsz-06": {
+          "metrics": "60579c41a2e71b6edf2aefcf64afbd79f24ce985230319914a7da0bdc60f2f60",
+          "details": "2c588ddc862b3fb2e69e993a5905dc6718abcab71e8becd5f64de956be3754fc"
+        },
+        "full-tsz-07": {
+          "metrics": "cd4ba9a339c34eb4b6936bf7beea1c531e0cd3b04919cfa24a5d59eb9b7575e1",
+          "details": "9d5460fc978c7c6e2285f9162ad1b04f62079bdbd200657786a6c79b948213c6"
+        },
+        "full-tsz-08": {
+          "metrics": "8acdf85b2a044c7f6e5c89e8661d449033a2aaa3704b41c61d4cbf5496dd7943",
+          "details": "651387df698db66acb9547df4706ac1a88ba1a27b142f8804442b24c4f3c6cf1"
+        }
+      }
+    }
+  ],
+  "cases": [
+    {
+      "source": "conformance/es2023/intlPluralRulesSelectRangeES2023.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "ts-rust",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "f06c4e42ae50f199a7b13660a4d13b8cf61cc9853a85e7229f8b25897e2d8bef",
+      "reason": "Compatibility mismatch in multiple families: bun, ts-rust, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            2339
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "38e9c1f3d5388a69dd9eadf3e17d1c761c72f7b80be6f20ce5efe2a39c2a0657"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            2339
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "38e9c1f3d5388a69dd9eadf3e17d1c761c72f7b80be6f20ce5efe2a39c2a0657"
+        },
+        "ts-rust": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            2339
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "38e9c1f3d5388a69dd9eadf3e17d1c761c72f7b80be6f20ce5efe2a39c2a0657"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            2339
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "38e9c1f3d5388a69dd9eadf3e17d1c761c72f7b80be6f20ce5efe2a39c2a0657"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "compiler/iteratorChunks.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "ts-rust",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "b349aab1f6dd4b8b5377c63a0830f3a9024ae563225a27d5a723a6629967f5dd",
+      "reason": "Compatibility mismatch in multiple families: bun, ts-rust, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            2339
+          ],
+          "missing": [
+            2345
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "bd6aa2303c7fc94d1a70b96e8202b2b71d11f7bbc705ecdccd6201e725808dfa"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            2339
+          ],
+          "missing": [
+            2345
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "bd6aa2303c7fc94d1a70b96e8202b2b71d11f7bbc705ecdccd6201e725808dfa"
+        },
+        "ts-rust": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            2339
+          ],
+          "missing": [
+            2345
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "bd6aa2303c7fc94d1a70b96e8202b2b71d11f7bbc705ecdccd6201e725808dfa"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "3c50dab030847b8521e9182da1f49480aa7ca47776b0cfa9819f2b6df3df8c0f"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            2339
+          ],
+          "missing": [
+            2345
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "bd6aa2303c7fc94d1a70b96e8202b2b71d11f7bbc705ecdccd6201e725808dfa"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "3c50dab030847b8521e9182da1f49480aa7ca47776b0cfa9819f2b6df3df8c0f"
+        }
+      }
+    },
+    {
+      "source": "compiler/inferredRestTypeFixedOnce.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "908313f09d914a9576b25ff7e8bea7ac450284703ac86065490215bcd02197e0",
+      "reason": "Compatibility mismatch in multiple families: bun, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            7031
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "83092c9839f15f75dcb21e371c8c28ab41833586fdf100cd385d64ebf30ae464"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            7031
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "83092c9839f15f75dcb21e371c8c28ab41833586fdf100cd385d64ebf30ae464"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "e8b3a71199b47fc8860a3e571de895d2ac6c878a3d42e1a6709268853164b96a"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "e8b3a71199b47fc8860a3e571de895d2ac6c878a3d42e1a6709268853164b96a"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            7031
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "83092c9839f15f75dcb21e371c8c28ab41833586fdf100cd385d64ebf30ae464"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "e8b3a71199b47fc8860a3e571de895d2ac6c878a3d42e1a6709268853164b96a"
+        }
+      }
+    },
+    {
+      "source": "conformance/classes/mixinWithBaseDependingOnSelfNoCrash1.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "ecc7e2450efbee3104a2c5ce5abb7edd80a80bb024a5d3b99548b3709420cc95",
+      "reason": "Compatibility mismatch in multiple families: bun, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            2345
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "e5e2ab035d772762c47ab5d28488740026a2ea3466575104af90359702f13aa2"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            2345
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "e5e2ab035d772762c47ab5d28488740026a2ea3466575104af90359702f13aa2"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            2345
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "e5e2ab035d772762c47ab5d28488740026a2ea3466575104af90359702f13aa2"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "compiler/limitDeepInstantiations.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "78396f52823fdd18166d3e77bd67ea476b7aa7b706e2791111bbdf1e859c2edf",
+      "reason": "Compatibility mismatch in multiple families: bun, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 2,
+          "hits": 1,
+          "extra": [
+            2589
+          ],
+          "missing": [
+            5114
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "f0a962d0559082173e68c5f068a41d7bfc136a08c9422d0dda2a5c8328aca2b6"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 2,
+          "hits": 1,
+          "extra": [
+            2589
+          ],
+          "missing": [
+            5114
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "f0a962d0559082173e68c5f068a41d7bfc136a08c9422d0dda2a5c8328aca2b6"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 2,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "2fb5f08095a8e897ff1cec9a6adc6316340434ee1a3f89e4d0081bb6bc3bfedb"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 2,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "2fb5f08095a8e897ff1cec9a6adc6316340434ee1a3f89e4d0081bb6bc3bfedb"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 2,
+          "hits": 1,
+          "extra": [
+            2589
+          ],
+          "missing": [
+            5114
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "f0a962d0559082173e68c5f068a41d7bfc136a08c9422d0dda2a5c8328aca2b6"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 2,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "2fb5f08095a8e897ff1cec9a6adc6316340434ee1a3f89e4d0081bb6bc3bfedb"
+        }
+      }
+    },
+    {
+      "source": "conformance/importSource/importSource7.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "50d1965d208e26daf5390730acd31e70d3194c3361f89560408da398642ac7bd",
+      "reason": "Compatibility mismatch in multiple families: bun, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            1005
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "c41b0414a3abdc787a62d8196cd911e8dffa287a53ec25d6407077cce4549096"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            1005
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "c41b0414a3abdc787a62d8196cd911e8dffa287a53ec25d6407077cce4549096"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            1005,
+            1434
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "87fae47af13c47e653e1cc0b72382f3eb5e50300f88108baceec10986a363844"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "compiler/keyofGenericExtendingClassDoubleLayer.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "952e21ec7d9a2ec993f24aa7a08ded2ec8ac563ff5896966854d9cebe5e66e55",
+      "reason": "Compatibility mismatch in multiple families: bun, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 3,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [
+            5115
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "6715b21b0521b6b1d01286eafefc4516717f4d072653b7393cb2df9069698c66"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 3,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [
+            5115
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "6715b21b0521b6b1d01286eafefc4516717f4d072653b7393cb2df9069698c66"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 3,
+          "actual": 3,
+          "hits": 3,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "472833f71a68b98839143bdd29df3334d77699f79246c747cee62923ac84ba12"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 3,
+          "actual": 3,
+          "hits": 3,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "472833f71a68b98839143bdd29df3334d77699f79246c747cee62923ac84ba12"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 3,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [
+            5115
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "6715b21b0521b6b1d01286eafefc4516717f4d072653b7393cb2df9069698c66"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 3,
+          "actual": 3,
+          "hits": 3,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "472833f71a68b98839143bdd29df3334d77699f79246c747cee62923ac84ba12"
+        }
+      }
+    },
+    {
+      "source": "conformance/classes/members/privateNames/privateNamesNotAllowedAsDestructuringPatterns.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "916765ce84b9c736530564b253f3652a8685ed68f6e7157a70de8c044665c1ca",
+      "reason": "Compatibility mismatch in multiple families: bun, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            18064
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "869ac07637f75663ad1e82c0a0d4e9373bb6a4c03c2cc0ea5d8131e107ec0d63"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            18064
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "869ac07637f75663ad1e82c0a0d4e9373bb6a4c03c2cc0ea5d8131e107ec0d63"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 2,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "88089e583263816aabe55bb048abe049071e2f2aa4119ee73e88978b17733919"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 2,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "88089e583263816aabe55bb048abe049071e2f2aa4119ee73e88978b17733919"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 3,
+          "hits": 0,
+          "extra": [
+            2339,
+            18016
+          ],
+          "missing": [
+            18064
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "9723de834e3d36a8a8e5c1016a4c4eec2fddf8abe10b342e7038dabe7499b0fd"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 2,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "88089e583263816aabe55bb048abe049071e2f2aa4119ee73e88978b17733919"
+        }
+      }
+    },
+    {
+      "source": "conformance/expressions/thisKeyword/thisInObjectLiterals.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "184c258931f5a8a7f946b7258444b517df25639e236a0bebc3ab4db260ec8693",
+      "reason": "Compatibility mismatch in multiple families: bun, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 3,
+          "hits": 2,
+          "extra": [
+            7023
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "9b345a2dcc9d40d4d15fcb1f68436a35d56061ffd8be855ddd336cb33676dbb5"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 3,
+          "hits": 2,
+          "extra": [
+            7023
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "9b345a2dcc9d40d4d15fcb1f68436a35d56061ffd8be855ddd336cb33676dbb5"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 2,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "3b64b1da318b670634a88c77627d1ee815e3f98ab2b86ae1f89827c8555974b6"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 2,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "3b64b1da318b670634a88c77627d1ee815e3f98ab2b86ae1f89827c8555974b6"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 3,
+          "hits": 2,
+          "extra": [
+            7023
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "9b345a2dcc9d40d4d15fcb1f68436a35d56061ffd8be855ddd336cb33676dbb5"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 2,
+          "actual": 2,
+          "hits": 2,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "3b64b1da318b670634a88c77627d1ee815e3f98ab2b86ae1f89827c8555974b6"
+        }
+      }
+    },
+    {
+      "source": "compiler/promiseAllKeyed.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "920e23b65665f02e9020d154cff08a6336f7a078eea8b331bab8d78cb41cc9d2",
+      "reason": "Compatibility mismatch in multiple families: bun, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 4,
+          "actual": 10,
+          "hits": 0,
+          "extra": [
+            2304,
+            2339
+          ],
+          "missing": [
+            2345
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "6cc1808662dd68188dfdee1e78b0668a7baacc5fc09b0427a9e8a5405af01e44"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 4,
+          "actual": 10,
+          "hits": 0,
+          "extra": [
+            2304,
+            2339
+          ],
+          "missing": [
+            2345
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "6cc1808662dd68188dfdee1e78b0668a7baacc5fc09b0427a9e8a5405af01e44"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 4,
+          "actual": 4,
+          "hits": 4,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "771283e99916c36ac89961b7f288e9f2612007ba082d538bcd5b2fc3f9234edc"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 4,
+          "actual": 4,
+          "hits": 4,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "771283e99916c36ac89961b7f288e9f2612007ba082d538bcd5b2fc3f9234edc"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 4,
+          "actual": 10,
+          "hits": 0,
+          "extra": [
+            2304,
+            2339
+          ],
+          "missing": [
+            2345
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "6cc1808662dd68188dfdee1e78b0668a7baacc5fc09b0427a9e8a5405af01e44"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 4,
+          "actual": 4,
+          "hits": 4,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "771283e99916c36ac89961b7f288e9f2612007ba082d538bcd5b2fc3f9234edc"
+        }
+      }
+    },
+    {
+      "source": "conformance/controlFlow/dependentDestructuredVariablesReferenceInDeclaration1.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "fc1fdf662cf53c82dce1eadc572f8d0c28c610b9ea6b5a499217092019d64be1",
+      "reason": "Compatibility mismatch in multiple families: bun, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 26,
+          "actual": 28,
+          "hits": 26,
+          "extra": [
+            2322,
+            2454
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "d3f7b96b42520471c962ca22a18f0baca8854bd4332f810a2fb7811c6af4e69f"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 26,
+          "actual": 28,
+          "hits": 26,
+          "extra": [
+            2322,
+            2454
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "d3f7b96b42520471c962ca22a18f0baca8854bd4332f810a2fb7811c6af4e69f"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 26,
+          "actual": 26,
+          "hits": 26,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "ff20349bb0d3fb012ae35d12a1293794ee51240cdb34ae05472bda6c0e5ae3c1"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 26,
+          "actual": 26,
+          "hits": 26,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "ff20349bb0d3fb012ae35d12a1293794ee51240cdb34ae05472bda6c0e5ae3c1"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 26,
+          "actual": 26,
+          "hits": 24,
+          "extra": [
+            2454
+          ],
+          "missing": [
+            7022
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "5b3e44c5d534a67752e059c8a9b67ad51920c44022097e8efca88d2883a49758"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 26,
+          "actual": 26,
+          "hits": 26,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "ff20349bb0d3fb012ae35d12a1293794ee51240cdb34ae05472bda6c0e5ae3c1"
+        }
+      }
+    },
+    {
+      "source": "compiler/predicateSemantics.ts",
+      "configuration": null,
+      "bucket": "multiple-families",
+      "mismatchFamilies": [
+        "bun",
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "9bc6843532f572803eddb1c5c0530ecdfcb87b7d650fd6897e328f995564555b",
+      "reason": "Compatibility mismatch in multiple families: bun, tsz",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 35,
+          "actual": 38,
+          "hits": 35,
+          "extra": [
+            2871
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "3c2bf7aa2121d71aa37130f58b84754395386bc0cb1e362a5e98c1a8c855464d"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 35,
+          "actual": 38,
+          "hits": 35,
+          "extra": [
+            2871
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "3c2bf7aa2121d71aa37130f58b84754395386bc0cb1e362a5e98c1a8c855464d"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 35,
+          "actual": 35,
+          "hits": 35,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "db490dfd4b2812d74d0376009e1f112c7a1ecd7ae0b71ab6911c6c0ff07a8aee"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 35,
+          "actual": 35,
+          "hits": 35,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "db490dfd4b2812d74d0376009e1f112c7a1ecd7ae0b71ab6911c6c0ff07a8aee"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 35,
+          "actual": 37,
+          "hits": 33,
+          "extra": [
+            2871,
+            2872
+          ],
+          "missing": [
+            2695,
+            2872
+          ],
+          "moved": [
+            2872
+          ],
+          "diagnosticPointsSha256": "0d8b8d1ba36540e3581f97e198594e0303cca8f824c3a74924334d2ca1b61c60"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 35,
+          "actual": 35,
+          "hits": 35,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "db490dfd4b2812d74d0376009e1f112c7a1ecd7ae0b71ab6911c6c0ff07a8aee"
+        }
+      }
+    },
+    {
+      "source": "compiler/infiniteConstraints.ts",
+      "configuration": null,
+      "bucket": "single-family",
+      "mismatchFamilies": [
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "a6df80fce41cebbe33f1869ef7787e86b2a1726f6c01aaa656d3c70bb82e93ea",
+      "reason": "Only observed mismatch family: tsz; at least one other family passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "pass",
+          "expected": 4,
+          "actual": 4,
+          "hits": 4,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "5df30724f65415207e35e279faab38ec5f39a0ef528f6dd5041923ebfdc88712"
+        },
+        "bun-1.4.5": {
+          "status": "pass",
+          "expected": 4,
+          "actual": 4,
+          "hits": 4,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "5df30724f65415207e35e279faab38ec5f39a0ef528f6dd5041923ebfdc88712"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 4,
+          "actual": 4,
+          "hits": 4,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "5df30724f65415207e35e279faab38ec5f39a0ef528f6dd5041923ebfdc88712"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 4,
+          "actual": 4,
+          "hits": 4,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "5df30724f65415207e35e279faab38ec5f39a0ef528f6dd5041923ebfdc88712"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 4,
+          "actual": 5,
+          "hits": 3,
+          "extra": [
+            2322
+          ],
+          "missing": [
+            2536
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "87113ec87fae817a459f991a9c6ae20b064ffadea180fdd88e20ada6aa2cb865"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 4,
+          "actual": 4,
+          "hits": 4,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "5df30724f65415207e35e279faab38ec5f39a0ef528f6dd5041923ebfdc88712"
+        }
+      }
+    },
+    {
+      "source": "compiler/arrayCast.ts",
+      "configuration": null,
+      "bucket": "single-family",
+      "mismatchFamilies": [
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "c6c9f0b08419a14aa225763aa5dc7dd3b45fb57e57ee643d73ffb67487f21726",
+      "reason": "Only observed mismatch family: tsz; at least one other family passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "11c69ecd2c8dd40baced6aa5cf5f814f8f0d252dca79f563ea1080ad1d68f260"
+        },
+        "bun-1.4.5": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "11c69ecd2c8dd40baced6aa5cf5f814f8f0d252dca79f563ea1080ad1d68f260"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "11c69ecd2c8dd40baced6aa5cf5f814f8f0d252dca79f563ea1080ad1d68f260"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "11c69ecd2c8dd40baced6aa5cf5f814f8f0d252dca79f563ea1080ad1d68f260"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            2352
+          ],
+          "missing": [
+            2353
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "e480967b3fdd158f7ed8ef8760236054ec0370ab5b45dcacaafc157fa00fd4e5"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "11c69ecd2c8dd40baced6aa5cf5f814f8f0d252dca79f563ea1080ad1d68f260"
+        }
+      }
+    },
+    {
+      "source": "compiler/blockScopedNamespaceDifferentFile.ts",
+      "configuration": "target=es2015",
+      "bucket": "single-family",
+      "mismatchFamilies": [
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "2e8d02279b7e3ac0abd63ca14afc44733f9b1b3e621da2b1c5e47f113594e03a",
+      "reason": "Only observed mismatch family: tsz; at least one other family passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "bun-1.4.5": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            2729
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "07f0de6c7709209ebec1a379a8c3b4f73560d7b8d93c86b43388d6eb255cc65e"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "compiler/classMemberInitializerScoping2.ts",
+      "configuration": "target=esnext,usedefineforclassfields=false",
+      "bucket": "single-family",
+      "mismatchFamilies": [
+        "tsz"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "4b9ac0138cfc27e4865df4df0a80b97d9f12ea0fc0405d2dca2ae231b8ab11b8",
+      "reason": "Only observed mismatch family: tsz; at least one other family passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "459ad65feb05a26c74a633073575259df084e7889c183b95b53dd89da5377329"
+        },
+        "bun-1.4.5": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "459ad65feb05a26c74a633073575259df084e7889c183b95b53dd89da5377329"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "459ad65feb05a26c74a633073575259df084e7889c183b95b53dd89da5377329"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "459ad65feb05a26c74a633073575259df084e7889c183b95b53dd89da5377329"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2301
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "a5c9a0444d4dd6b0f2acb53f4e53100e213ad0e9ea5688b24769110ba8679e6b"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "459ad65feb05a26c74a633073575259df084e7889c183b95b53dd89da5377329"
+        }
+      }
+    },
+    {
+      "source": "compiler/regularExpressionUnicodeSetsLoneAmpersand.ts",
+      "configuration": null,
+      "bucket": "single-family",
+      "mismatchFamilies": [
+        "bun"
+      ],
+      "comparableFamilies": 4,
+      "cluster": "a8cf8fcbc58e2f73b1650d4e386bb31acabd952d5675366747ba4ac14e58beb3",
+      "reason": "Only observed mismatch family: bun; at least one other family passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            1508
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "7f08006ec1a9dee0bc7768f27448fe391fb85741a1fe97f8c95dab819434a401"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            1508
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "7f08006ec1a9dee0bc7768f27448fe391fb85741a1fe97f8c95dab819434a401"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "compiler/mappedTypeAsClauseIntersectionConstraintIndexedAccess.ts",
+      "configuration": null,
+      "bucket": "single-family",
+      "mismatchFamilies": [
+        "ts-rust"
+      ],
+      "comparableFamilies": 2,
+      "cluster": "0d0b955cbac8a0391215d6d6a63573bcb76c6b22841e359a73490be5d4bd9b61",
+      "reason": "Only observed mismatch family: ts-rust; at least one other family passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun 1.4.x 不支持 target=es2026（不替换为 esnext）"
+        },
+        "bun-1.4.5": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun 1.4.x 不支持 target=es2026（不替换为 esnext）"
+        },
+        "ts-rust": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 3,
+          "hits": 0,
+          "extra": [
+            2536
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "0dc5696a11b2d2ceb26f97af212e35cc6e3e8b02fe96b0b7568d8a3e5050bbf2"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "实现输出含无文件位置的诊断",
+          "optionEvidence": {
+            "args": [
+              "--target=es2026"
+            ],
+            "diagnostics": [
+              "error TS6046: Argument for '--target' option must be: 'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'."
+            ]
+          }
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "compiler/alwaysStrictNoImplicitUseStrict.ts",
+      "configuration": null,
+      "bucket": "reference-disagreement",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "5b71c2d8ab1ae479a7b9c47733bef6f78af7a1d121b55eea4075d86e8f8f84fb",
+      "reason": "Official TS7 CLI itself differs from .errors.txt; not attributed to candidates",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            1100
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "fb0919f85a01538edfc54531c2d062d606218c8344f5c0217b137adaa2c23162"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            1100
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "fb0919f85a01538edfc54531c2d062d606218c8344f5c0217b137adaa2c23162"
+        },
+        "ts-rust": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            1100
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "fb0919f85a01538edfc54531c2d062d606218c8344f5c0217b137adaa2c23162"
+        },
+        "tsrs": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            1100
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "fb0919f85a01538edfc54531c2d062d606218c8344f5c0217b137adaa2c23162"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            1100
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "fb0919f85a01538edfc54531c2d062d606218c8344f5c0217b137adaa2c23162"
+        },
+        "typescript": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 1,
+          "hits": 0,
+          "extra": [
+            1100
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "fb0919f85a01538edfc54531c2d062d606218c8344f5c0217b137adaa2c23162"
+        }
+      }
+    },
+    {
+      "source": "compiler/importHelpersES6.ts",
+      "configuration": null,
+      "bucket": "reference-disagreement",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "42aa2d2fd8b6ccaede948b2e5d949ddfc6d489b8a779d35c5a157cd1f8d98958",
+      "reason": "Official TS7 CLI itself differs from .errors.txt; not attributed to candidates",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2354
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "c488225ebe799a94eb31c960d8b76e4c9410bee117192ca443f6bd69a5de275d"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2354
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "c488225ebe799a94eb31c960d8b76e4c9410bee117192ca443f6bd69a5de275d"
+        },
+        "ts-rust": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2354
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "c488225ebe799a94eb31c960d8b76e4c9410bee117192ca443f6bd69a5de275d"
+        },
+        "tsrs": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2354
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "c488225ebe799a94eb31c960d8b76e4c9410bee117192ca443f6bd69a5de275d"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2354
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "c488225ebe799a94eb31c960d8b76e4c9410bee117192ca443f6bd69a5de275d"
+        },
+        "typescript": {
+          "status": "mismatch",
+          "expected": 1,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2354
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "c488225ebe799a94eb31c960d8b76e4c9410bee117192ca443f6bd69a5de275d"
+        }
+      }
+    },
+    {
+      "source": "compiler/augmentExportEquals2.ts",
+      "configuration": null,
+      "bucket": "reference-disagreement",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "f20f8c4a5514f3dfae6d7a71bc848aa99e2fe4b8eaa4042a7f07ddf0e9ce9644",
+      "reason": "Official TS7 CLI itself differs from .errors.txt; not attributed to candidates",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            2503,
+            2671
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "cec97f43402c6a3ebd61ea79c6947a4ad270cf971cea2f4372a2eeffb6ee728e"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            2503,
+            2671
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "cec97f43402c6a3ebd61ea79c6947a4ad270cf971cea2f4372a2eeffb6ee728e"
+        },
+        "ts-rust": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            2503,
+            2671
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "cec97f43402c6a3ebd61ea79c6947a4ad270cf971cea2f4372a2eeffb6ee728e"
+        },
+        "tsrs": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            2503,
+            2671
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "cec97f43402c6a3ebd61ea79c6947a4ad270cf971cea2f4372a2eeffb6ee728e"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            2503,
+            2671
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "cec97f43402c6a3ebd61ea79c6947a4ad270cf971cea2f4372a2eeffb6ee728e"
+        },
+        "typescript": {
+          "status": "mismatch",
+          "expected": 0,
+          "actual": 2,
+          "hits": 0,
+          "extra": [
+            2503,
+            2671
+          ],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "cec97f43402c6a3ebd61ea79c6947a4ad270cf971cea2f4372a2eeffb6ee728e"
+        }
+      }
+    },
+    {
+      "source": "compiler/collisionExportsRequireAndAlias.ts",
+      "configuration": null,
+      "bucket": "reference-disagreement",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "46b2f371f19c7bc3235b1fbe47452f95ffd196680f0ba92f3f8f75fcfdb957b8",
+      "reason": "Official TS7 CLI itself differs from .errors.txt; not attributed to candidates",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2441
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "f2890d0d382a5f38343bb712c4a8e9b72f6c14b94db21f9704fc98eb48a136c1"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2441
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "f2890d0d382a5f38343bb712c4a8e9b72f6c14b94db21f9704fc98eb48a136c1"
+        },
+        "ts-rust": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2441
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "f2890d0d382a5f38343bb712c4a8e9b72f6c14b94db21f9704fc98eb48a136c1"
+        },
+        "tsrs": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2441
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "f2890d0d382a5f38343bb712c4a8e9b72f6c14b94db21f9704fc98eb48a136c1"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2441
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "f2890d0d382a5f38343bb712c4a8e9b72f6c14b94db21f9704fc98eb48a136c1"
+        },
+        "typescript": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            2441
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "f2890d0d382a5f38343bb712c4a8e9b72f6c14b94db21f9704fc98eb48a136c1"
+        }
+      }
+    },
+    {
+      "source": "compiler/privateNameWeakMapCollision.ts",
+      "configuration": null,
+      "bucket": "reference-disagreement",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "b02137accc5bb59ebf2fcde7113ae0ad57481af0359665edc5ba37a2201cc345",
+      "reason": "Official TS7 CLI itself differs from .errors.txt; not attributed to candidates",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            18027
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "3b5a57b70b6d605f0aba0c5ee3533c63da8f4022697d481b4d0fb145b86c3476"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            18027
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "3b5a57b70b6d605f0aba0c5ee3533c63da8f4022697d481b4d0fb145b86c3476"
+        },
+        "ts-rust": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            18027
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "3b5a57b70b6d605f0aba0c5ee3533c63da8f4022697d481b4d0fb145b86c3476"
+        },
+        "tsrs": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            18027
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "3b5a57b70b6d605f0aba0c5ee3533c63da8f4022697d481b4d0fb145b86c3476"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            18027
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "3b5a57b70b6d605f0aba0c5ee3533c63da8f4022697d481b4d0fb145b86c3476"
+        },
+        "typescript": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [
+            18027
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "3b5a57b70b6d605f0aba0c5ee3533c63da8f4022697d481b4d0fb145b86c3476"
+        }
+      }
+    },
+    {
+      "source": "compiler/superWithTypeArgument2.ts",
+      "configuration": null,
+      "bucket": "reference-disagreement",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "85c1adf9b6fb667659f484004bd03e5c76302f48c0a06f4f4140e3817e75a3ef",
+      "reason": "Official TS7 CLI itself differs from .errors.txt; not attributed to candidates",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [
+            2554
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "5acb1b08bfdc51e622a7725f4bb45eb32ddbb9d5129117932644b5371462b38e"
+        },
+        "bun-1.4.5": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [
+            2554
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "5acb1b08bfdc51e622a7725f4bb45eb32ddbb9d5129117932644b5371462b38e"
+        },
+        "ts-rust": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [
+            2554
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "5acb1b08bfdc51e622a7725f4bb45eb32ddbb9d5129117932644b5371462b38e"
+        },
+        "tsrs": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [
+            2554
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "5acb1b08bfdc51e622a7725f4bb45eb32ddbb9d5129117932644b5371462b38e"
+        },
+        "tsz": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [
+            2554
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "5acb1b08bfdc51e622a7725f4bb45eb32ddbb9d5129117932644b5371462b38e"
+        },
+        "typescript": {
+          "status": "mismatch",
+          "expected": 2,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [
+            2554
+          ],
+          "moved": [],
+          "diagnosticPointsSha256": "5acb1b08bfdc51e622a7725f4bb45eb32ddbb9d5129117932644b5371462b38e"
+        }
+      }
+    },
+    {
+      "source": "compiler/DeclarationErrorsNoEmitOnError.ts",
+      "configuration": null,
+      "bucket": "intentional-skip",
+      "mismatchFamilies": [],
+      "comparableFamilies": 3,
+      "cluster": "c98aa998111c9d3216765c0564d6c10bdb12caefdebf91879c21aa9f46caf683",
+      "reason": "Explicit unsupported option in at least one candidate; all observed comparisons passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun check 不生成声明文件，无法比较声明生成阶段的诊断"
+        },
+        "bun-1.4.5": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun check 不生成声明文件，无法比较声明生成阶段的诊断"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "compiler/asConstReadonlyTupleInferenceThroughNestedGenericCall.ts",
+      "configuration": null,
+      "bucket": "intentional-skip",
+      "mismatchFamilies": [],
+      "comparableFamilies": 2,
+      "cluster": "bb475f5c669512d37d0a0e32d90ef7bcffb471ef39c4f5a17742262d2beccd87",
+      "reason": "Explicit unsupported option in at least one candidate; all observed comparisons passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun 1.4.x 不支持 target=es2026（不替换为 esnext）"
+        },
+        "bun-1.4.5": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun 1.4.x 不支持 target=es2026（不替换为 esnext）"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "实现输出含无文件位置的诊断",
+          "optionEvidence": {
+            "args": [
+              "--target=es2026"
+            ],
+            "diagnostics": [
+              "error TS6046: Argument for '--target' option must be: 'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'."
+            ]
+          }
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "compiler/comparisonAnonymousMappedTypes.ts",
+      "configuration": null,
+      "bucket": "intentional-skip",
+      "mismatchFamilies": [],
+      "comparableFamilies": 2,
+      "cluster": "ffd12dc216617e3882446d6de2b9837b2c82f7980d859acf7a2a0770a4768ef2",
+      "reason": "Explicit unsupported option in at least one candidate; all observed comparisons passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun check 不生成声明文件，无法比较声明生成阶段的诊断"
+        },
+        "bun-1.4.5": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun check 不生成声明文件，无法比较声明生成阶段的诊断"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "实现输出含无文件位置的诊断",
+          "optionEvidence": {
+            "args": [
+              "--target=es2026"
+            ],
+            "diagnostics": [
+              "error TS6046: Argument for '--target' option must be: 'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'."
+            ]
+          }
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "conformance/es2026/jsonRawJSON3.ts",
+      "configuration": null,
+      "bucket": "intentional-skip",
+      "mismatchFamilies": [],
+      "comparableFamilies": 2,
+      "cluster": "59109303278a758b45cbdacb832a3ba5344d98388b07b16f2a7d3ee4eb9ebc91",
+      "reason": "Explicit unsupported option in at least one candidate; all observed comparisons passed",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun check 不生成声明文件，无法比较声明生成阶段的诊断"
+        },
+        "bun-1.4.5": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "Bun check 不生成声明文件，无法比较声明生成阶段的诊断"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "skip",
+          "kind": "unsupported-option",
+          "reason": "候选内置声明库不支持 es2026.json",
+          "optionEvidence": {
+            "args": [
+              "--lib=es2026.json"
+            ],
+            "diagnostics": [
+              "Error: unsupported compilerOptions.lib 'es2026.json' (not found in embedded libs)"
+            ]
+          }
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "compiler/ClassDeclaration11.ts",
+      "configuration": null,
+      "bucket": "control-with-diagnostics",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "67489bb95137fd1762840dfac455928659f4538af73c5a7de085f80ab0123dde",
+      "reason": "All runs passed against a nonempty official diagnostic set",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "d05471b93b9519d58dba7c7268b2843a19c5b6d340e232dca3fcfcbd5613b066"
+        },
+        "bun-1.4.5": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "d05471b93b9519d58dba7c7268b2843a19c5b6d340e232dca3fcfcbd5613b066"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "d05471b93b9519d58dba7c7268b2843a19c5b6d340e232dca3fcfcbd5613b066"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "d05471b93b9519d58dba7c7268b2843a19c5b6d340e232dca3fcfcbd5613b066"
+        },
+        "tsz": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "d05471b93b9519d58dba7c7268b2843a19c5b6d340e232dca3fcfcbd5613b066"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "d05471b93b9519d58dba7c7268b2843a19c5b6d340e232dca3fcfcbd5613b066"
+        }
+      }
+    },
+    {
+      "source": "compiler/InterfaceDeclaration8.ts",
+      "configuration": null,
+      "bucket": "control-with-diagnostics",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "9f12a34f515ebf2e06b1fd691d5e95e563633140b5c8bf1d5565dfab861961ca",
+      "reason": "All runs passed against a nonempty official diagnostic set",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "4a226ec5e9034f1b55d692d58d99fca8169a53b7ecc127ebb334c5af4a629185"
+        },
+        "bun-1.4.5": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "4a226ec5e9034f1b55d692d58d99fca8169a53b7ecc127ebb334c5af4a629185"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "4a226ec5e9034f1b55d692d58d99fca8169a53b7ecc127ebb334c5af4a629185"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "4a226ec5e9034f1b55d692d58d99fca8169a53b7ecc127ebb334c5af4a629185"
+        },
+        "tsz": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "4a226ec5e9034f1b55d692d58d99fca8169a53b7ecc127ebb334c5af4a629185"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "4a226ec5e9034f1b55d692d58d99fca8169a53b7ecc127ebb334c5af4a629185"
+        }
+      }
+    },
+    {
+      "source": "compiler/MemberAccessorDeclaration15.ts",
+      "configuration": null,
+      "bucket": "control-with-diagnostics",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "fd85679a4b2234e6f31b5daf3ff0814dc688cb66ed667bea843ca23d5f2bc9bf",
+      "reason": "All runs passed against a nonempty official diagnostic set",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "96b09d910de05277778e46a6681b2dcdfa8f151492eeb2350dd74757b5f60cb7"
+        },
+        "bun-1.4.5": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "96b09d910de05277778e46a6681b2dcdfa8f151492eeb2350dd74757b5f60cb7"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "96b09d910de05277778e46a6681b2dcdfa8f151492eeb2350dd74757b5f60cb7"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "96b09d910de05277778e46a6681b2dcdfa8f151492eeb2350dd74757b5f60cb7"
+        },
+        "tsz": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "96b09d910de05277778e46a6681b2dcdfa8f151492eeb2350dd74757b5f60cb7"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 1,
+          "actual": 1,
+          "hits": 1,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "96b09d910de05277778e46a6681b2dcdfa8f151492eeb2350dd74757b5f60cb7"
+        }
+      }
+    },
+    {
+      "source": "compiler/2dArrays.ts",
+      "configuration": null,
+      "bucket": "control-without-diagnostics",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "5cc5d61544fdb4a0b2e97103a8c47a03d73a8c9d60611b695d19c6ce9241d9a8",
+      "reason": "All runs passed against an empty official diagnostic set",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "bun-1.4.5": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    },
+    {
+      "source": "conformance/Symbols/ES5SymbolProperty1.ts",
+      "configuration": "target=es2015",
+      "bucket": "control-without-diagnostics",
+      "mismatchFamilies": [],
+      "comparableFamilies": 4,
+      "cluster": "c89e477a9b11ded36d07d4d201bb3511e4b8065274075fe43ddfc07858ae769a",
+      "reason": "All runs passed against an empty official diagnostic set",
+      "observations": {
+        "bun-1.4.4": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "bun-1.4.5": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "ts-rust": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsrs": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "tsz": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        },
+        "typescript": {
+          "status": "pass",
+          "expected": 0,
+          "actual": 0,
+          "hits": 0,
+          "extra": [],
+          "missing": [],
+          "moved": [],
+          "diagnosticPointsSha256": "643d5437104296e21d906ecb15b2c96ad278f20cfc4af53b12bb6069bd853726"
+        }
+      }
+    }
+  ],
+  "supplemental": {
+    "run": 45980973195,
+    "attempt": 1,
+    "commit": "dc6e55c272b671bf8a6c1aa03fc45e1f22e9849e",
+    "artifact": "ts-version-probes-official",
+    "url": "https://github.com/hax/tsc-compa/actions/runs/45980973195",
+    "upstreamCommit": "3e9236361fa97a9e6c685f4833ac457ae2d8c50a",
+    "reportSha256": "c722d338340e777ee0288bba601f0a7d53810a2ac1430a14f5cc4b6dc77744b5",
+    "anchors": {
+      "ts6": {
+        "version": "Version 6.0.3",
+        "sha256": "8d5fa5bd883fec0979fc2004f1fe1d99aef40570155d550eadc0b03b55513bf0",
+        "nativeSha256": null
+      },
+      "ts7": {
+        "version": "Version 7.1.0-beta",
+        "sha256": "2219f428a7e55aaf1f7ad85b9b0f0cf5078aeb76ccc9a7c6036c92d48f492ffd",
+        "nativeSha256": "a183b1956edbe7e7d98f2249858eedf2d8a9790809cc4909db1276e202faaa70"
+      }
+    },
+    "probes": [
+      {
+        "id": "recursive-mixin",
+        "source": "config/version-probes/recursive-mixin.ts",
+        "upstreamCase": "conformance/classes/mixinWithBaseDependingOnSelfNoCrash1.ts",
+        "reason": "基类通过类型参数引用 mixin 派生类时，构造器约束是否成立。",
+        "sourceSha256": "46e59984337e14a3a861f1be4481126c52cc763290bc675967d1e499f0b770b8",
+        "options": [
+          {
+            "name": "target",
+            "value": "es2022"
+          },
+          {
+            "name": "lib",
+            "value": [
+              "es2022"
+            ]
+          },
+          {
+            "name": "typeRoots",
+            "value": [
+              "./empty-types"
+            ]
+          },
+          {
+            "name": "module",
+            "value": "esnext"
+          },
+          {
+            "name": "moduleResolution",
+            "value": "bundler"
+          },
+          {
+            "name": "moduleDetection",
+            "value": "legacy"
+          },
+          {
+            "name": "strict",
+            "value": true
+          },
+          {
+            "name": "noImplicitAny",
+            "value": true
+          },
+          {
+            "name": "skipLibCheck",
+            "value": true
+          },
+          {
+            "name": "useDefineForClassFields",
+            "value": true
+          },
+          {
+            "name": "exactOptionalPropertyTypes",
+            "value": false
+          },
+          {
+            "name": "noUncheckedIndexedAccess",
+            "value": false
+          },
+          {
+            "name": "noUnusedLocals",
+            "value": false
+          },
+          {
+            "name": "noUnusedParameters",
+            "value": false
+          },
+          {
+            "name": "esModuleInterop",
+            "value": true
+          },
+          {
+            "name": "alwaysStrict",
+            "value": true
+          }
+        ],
+        "ts6": [
+          [
+            "recursive-mixin.ts",
+            4,
+            48,
+            "error",
+            2345
+          ]
+        ],
+        "ts7": []
+      },
+      {
+        "id": "inferred-rest-binding",
+        "source": "config/version-probes/inferred-rest-binding.ts",
+        "upstreamCase": "compiler/inferredRestTypeFixedOnce.ts",
+        "reason": "从泛型 rest 参数推断回调签名时，解构绑定是否报隐式 any。",
+        "sourceSha256": "6aa4dd6793778f38a95fd18457cb39d2d31a866b9881339d3654c2d14094e7eb",
+        "options": [
+          {
+            "name": "target",
+            "value": "es2022"
+          },
+          {
+            "name": "lib",
+            "value": [
+              "es2022"
+            ]
+          },
+          {
+            "name": "typeRoots",
+            "value": [
+              "./empty-types"
+            ]
+          },
+          {
+            "name": "module",
+            "value": "esnext"
+          },
+          {
+            "name": "moduleResolution",
+            "value": "bundler"
+          },
+          {
+            "name": "moduleDetection",
+            "value": "legacy"
+          },
+          {
+            "name": "strict",
+            "value": true
+          },
+          {
+            "name": "noImplicitAny",
+            "value": true
+          },
+          {
+            "name": "skipLibCheck",
+            "value": true
+          },
+          {
+            "name": "useDefineForClassFields",
+            "value": true
+          },
+          {
+            "name": "exactOptionalPropertyTypes",
+            "value": false
+          },
+          {
+            "name": "noUncheckedIndexedAccess",
+            "value": false
+          },
+          {
+            "name": "noUnusedLocals",
+            "value": false
+          },
+          {
+            "name": "noUnusedParameters",
+            "value": false
+          },
+          {
+            "name": "esModuleInterop",
+            "value": true
+          },
+          {
+            "name": "alwaysStrict",
+            "value": true
+          }
+        ],
+        "ts6": [],
+        "ts7": [
+          [
+            "inferred-rest-binding.ts",
+            2,
+            9,
+            "error",
+            7031
+          ]
+        ]
+      },
+      {
+        "id": "mapped-key-constraint",
+        "source": "config/version-probes/mapped-key-constraint.ts",
+        "upstreamCase": "compiler/mappedTypeAsStringTemplate.ts",
+        "reason": "映射类型缺少重映射后的属性时，是报告通用参数不可赋值还是直接报告缺少属性。",
+        "sourceSha256": "151a281cdad2cf580ad6a46f7871996617ae99413221b75b614ae4c58a5df743",
+        "options": [
+          {
+            "name": "target",
+            "value": "es2022"
+          },
+          {
+            "name": "lib",
+            "value": [
+              "es2022"
+            ]
+          },
+          {
+            "name": "typeRoots",
+            "value": [
+              "./empty-types"
+            ]
+          },
+          {
+            "name": "module",
+            "value": "esnext"
+          },
+          {
+            "name": "moduleResolution",
+            "value": "bundler"
+          },
+          {
+            "name": "moduleDetection",
+            "value": "legacy"
+          },
+          {
+            "name": "strict",
+            "value": true
+          },
+          {
+            "name": "noImplicitAny",
+            "value": true
+          },
+          {
+            "name": "skipLibCheck",
+            "value": true
+          },
+          {
+            "name": "useDefineForClassFields",
+            "value": true
+          },
+          {
+            "name": "exactOptionalPropertyTypes",
+            "value": false
+          },
+          {
+            "name": "noUncheckedIndexedAccess",
+            "value": false
+          },
+          {
+            "name": "noUnusedLocals",
+            "value": false
+          },
+          {
+            "name": "noUnusedParameters",
+            "value": false
+          },
+          {
+            "name": "esModuleInterop",
+            "value": true
+          },
+          {
+            "name": "alwaysStrict",
+            "value": true
+          }
+        ],
+        "ts6": [
+          [
+            "mapped-key-constraint.ts",
+            3,
+            8,
+            "error",
+            2345
+          ]
+        ],
+        "ts7": [
+          [
+            "mapped-key-constraint.ts",
+            3,
+            8,
+            "error",
+            2741
+          ]
+        ]
+      },
+      {
+        "id": "unused-type-parameter",
+        "source": "config/version-probes/unused-type-parameter.ts",
+        "upstreamCase": "compiler/unusedTypeParameterInFunction1.ts",
+        "reason": "未使用的类型参数是标在左尖括号还是参数名上，以及所用的诊断码。",
+        "sourceSha256": "c999da1025bda9a89865cb6a0ca8c08c24fc77c5e1d734ac1383bad1d299625b",
+        "options": [
+          {
+            "name": "target",
+            "value": "es2022"
+          },
+          {
+            "name": "lib",
+            "value": [
+              "es2022"
+            ]
+          },
+          {
+            "name": "typeRoots",
+            "value": [
+              "./empty-types"
+            ]
+          },
+          {
+            "name": "module",
+            "value": "esnext"
+          },
+          {
+            "name": "moduleResolution",
+            "value": "bundler"
+          },
+          {
+            "name": "moduleDetection",
+            "value": "legacy"
+          },
+          {
+            "name": "strict",
+            "value": true
+          },
+          {
+            "name": "noImplicitAny",
+            "value": true
+          },
+          {
+            "name": "skipLibCheck",
+            "value": true
+          },
+          {
+            "name": "useDefineForClassFields",
+            "value": true
+          },
+          {
+            "name": "exactOptionalPropertyTypes",
+            "value": false
+          },
+          {
+            "name": "noUncheckedIndexedAccess",
+            "value": false
+          },
+          {
+            "name": "noUnusedLocals",
+            "value": true
+          },
+          {
+            "name": "noUnusedParameters",
+            "value": true
+          },
+          {
+            "name": "esModuleInterop",
+            "value": true
+          },
+          {
+            "name": "alwaysStrict",
+            "value": true
+          }
+        ],
+        "ts6": [
+          [
+            "unused-type-parameter.ts",
+            1,
+            11,
+            "error",
+            6133
+          ]
+        ],
+        "ts7": [
+          [
+            "unused-type-parameter.ts",
+            1,
+            12,
+            "error",
+            6196
+          ]
+        ]
+      },
+      {
+        "id": "merged-member-kind",
+        "source": "config/version-probes/merged-member-kind.ts",
+        "upstreamCase": "compiler/methodSignatureHandledDeclarationKindForSymbol.ts",
+        "reason": "合并接口的方法与同名属性冲突时，报后续属性类型不一致，还是把两处都标为重复声明。",
+        "sourceSha256": "8ee8b4aade20b9aa8a451bf69cbb9379e633aace2603bb834507668cdd851b74",
+        "options": [
+          {
+            "name": "target",
+            "value": "es2022"
+          },
+          {
+            "name": "lib",
+            "value": [
+              "es2022"
+            ]
+          },
+          {
+            "name": "typeRoots",
+            "value": [
+              "./empty-types"
+            ]
+          },
+          {
+            "name": "module",
+            "value": "esnext"
+          },
+          {
+            "name": "moduleResolution",
+            "value": "bundler"
+          },
+          {
+            "name": "moduleDetection",
+            "value": "legacy"
+          },
+          {
+            "name": "strict",
+            "value": true
+          },
+          {
+            "name": "noImplicitAny",
+            "value": true
+          },
+          {
+            "name": "skipLibCheck",
+            "value": true
+          },
+          {
+            "name": "useDefineForClassFields",
+            "value": true
+          },
+          {
+            "name": "exactOptionalPropertyTypes",
+            "value": false
+          },
+          {
+            "name": "noUncheckedIndexedAccess",
+            "value": false
+          },
+          {
+            "name": "noUnusedLocals",
+            "value": false
+          },
+          {
+            "name": "noUnusedParameters",
+            "value": false
+          },
+          {
+            "name": "esModuleInterop",
+            "value": true
+          },
+          {
+            "name": "alwaysStrict",
+            "value": true
+          }
+        ],
+        "ts6": [
+          [
+            "merged-member-kind.ts",
+            5,
+            5,
+            "error",
+            2717
+          ]
+        ],
+        "ts7": [
+          [
+            "merged-member-kind.ts",
+            2,
+            5,
+            "error",
+            2300
+          ],
+          [
+            "merged-member-kind.ts",
+            5,
+            5,
+            "error",
+            2300
+          ]
+        ]
+      }
+    ]
+  }
+}
