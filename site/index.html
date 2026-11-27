@@ -17,7 +17,8 @@
   <main class="shell">
     <header class="intro">
       <h1>检查器兼容性报告</h1>
-      <p>选择候选检查器、参考 TypeScript 和测试集，查看已公开的运行结果。页面不会启动 CI。</p>
+      <p>浏览各候选版本的公开结果。参考固定为 TypeScript 7.1.0-beta 官方结果文件；可选择候选版本和测试集。页面不会启动 CI。</p>
+      <p><a href="#candidate-overview">查看候选版本与全量结果</a></p>
     </header>
     <section class="panel" aria-labelledby="filters-heading">
       <h2 id="filters-heading">选择比较条件</h2>
@@ -40,6 +41,11 @@
         <summary>查看历史报告 <span id="history-count"></span></summary>
         <ul id="history-list" class="history-list"></ul>
       </details>
+    </section>
+    <section id="candidate-overview" class="panel" aria-labelledby="candidate-overview-heading">
+      <h2 id="candidate-overview-heading">候选检查器一览</h2>
+      <p id="candidate-overview-status" class="note" role="status">正在读取候选版本资料…</p>
+      <div id="candidate-overview-content"></div>
     </section>
     <aside class="panel" aria-labelledby="maintainer-heading">
       <h2 id="maintainer-heading">缺少一份报告？</h2>

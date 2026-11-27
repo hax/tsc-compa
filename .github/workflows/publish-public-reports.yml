@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir _site
-          for asset in index.html styles.css app.js catalog.js; do
+          for asset in index.html styles.css app.js catalog.js candidate-overview.js candidate-overview.json; do
             path="source/site/$asset"
             test -f "$path" && test ! -L "$path" || exit 1
             cp "$path" _site/

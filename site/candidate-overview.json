@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "asOf": "2026-11-27T13:15:22Z",
+  "reference": {
+    "id": "7.1.0-beta-official",
+    "label": "TypeScript 7.1.0-beta 官方 .errors.txt",
+    "repo": "microsoft/TypeScript",
+    "commit": "3e9236361fa97a9e6c685f4833ac457ae2d8c50a"
+  },
+  "families": [
+    {
+      "id": "typescript",
+      "name": "TypeScript（官方对照）",
+      "repo": "microsoft/TypeScript",
+      "head": {
+        "branch": "main",
+        "sha": "6327ae16673fe527482c24c37814a5b55162395d",
+        "committedAt": "2026-11-26T20:37:07Z"
+      },
+      "versions": [
+        {
+          "version": "7.1.0-beta",
+          "npm": {
+            "package": "typescript",
+            "version": "7.1.0-beta",
+            "publishedAt": "2026-10-20T16:45:47.402Z",
+            "gitHead": "3e9236361fa97a9e6c685f4833ac457ae2d8c50a"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bun",
+      "name": "Bun（bun check）",
+      "repo": "oven-sh/bun",
+      "head": {
+        "branch": "main",
+        "sha": "d82a8a7b96af659c2b516e73fd4e96aa592f4942",
+        "committedAt": "2026-11-27T07:59:09Z"
+      },
+      "versions": [
+        {
+          "version": "1.4.4",
+          "release": {
+            "tag": "bun-v1.4.4",
+            "taggerDate": null,
+            "commit": "38afee6c84fcf48c0edb2466aa4b27d287a59c30",
+            "commitDate": "2026-10-22T08:31:12Z",
+            "publishedAt": "2026-10-22T10:11:32Z"
+          }
+        },
+        {
+          "version": "1.4.5",
+          "release": {
+            "tag": "bun-v1.4.5",
+            "taggerDate": null,
+            "commit": "a7733435cf40429e3b35c36072769df2052b80f1",
+            "commitDate": "2026-11-19T07:40:45Z",
+            "publishedAt": "2026-11-19T08:47:28Z"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tsrs",
+      "name": "tsrs CLI（oxc-tsrs）",
+      "repo": "oxc-project/tsrs",
+      "head": {
+        "branch": "main",
+        "sha": "e544f3895d5b3ac01b8bc1c457d192c585d334cd",
+        "committedAt": "2026-11-26T11:11:11Z"
+      },
+      "versions": [
+        {
+          "version": "0.25.0-ts7.1.0-beta",
+          "npm": {
+            "package": "tsrs",
+            "version": "0.25.0-ts7.1.0-beta",
+            "publishedAt": "2026-11-12T00:31:08.090Z",
+            "slsaCommit": "0f82b670e4ff861840b1315f8610816229e73e3a"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ts-rust",
+      "name": "ts-rust（pingdotgg）",
+      "repo": "pingdotgg/ts-rust",
+      "head": {
+        "branch": "main",
+        "sha": "91f3d021c4f1f102cebee704ac285e85ae0c8ff5",
+        "committedAt": "2026-10-28T08:54:41Z"
+      },
+      "versions": [
+        {
+          "version": "0.8.0",
+          "npm": {
+            "package": "tsc-rs",
+            "version": "0.8.0",
+            "publishedAt": "2026-10-21T22:37:34.739Z",
+            "gitHead": "4c032be6dbef6dafaae2358ece165d138f8e0da8"
+          },
+          "release": {
+            "tag": "v0.8.0",
+            "taggerDate": "2026-10-21T21:12:36Z",
+            "commit": "4c032be6dbef6dafaae2358ece165d138f8e0da8",
+            "commitDate": "2026-10-21T21:12:25Z",
+            "publishedAt": "2026-10-21T22:34:39Z"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tsz",
+      "name": "tsz",
+      "repo": "tsz-org/tsz",
+      "head": {
+        "branch": "main",
+        "sha": "0b4641ac285f5991a3e805e395e7e4f9ef71f90e",
+        "committedAt": "2026-10-15T14:59:55Z"
+      },
+      "internalSmoke": "0b4641ac285f5991a3e805e395e7e4f9ef71f90e",
+      "versions": [
+        {
+          "version": "v0.1.75",
+          "release": {
+            "tag": "v0.1.75",
+            "taggerDate": "2026-08-19T09:32:35Z",
+            "commit": "0c0e53f96bfd64be253cdd8c53e2853fd5cfdadb",
+            "commitDate": "2026-08-19T09:32:09Z",
+            "publishedAt": "2026-08-19T09:55:11Z"
+          }
+        }
+      ]
+    }
+  ],
+  "internal": {
+    "name": "tsc-rs（kazhiramatsu）",
+    "repo": "kazhiramatsu/tsc-rs",
+    "head": {
+      "branch": "main",
+      "sha": "7811242056c05efa4e259d188e1cc55fd124da17",
+      "committedAt": "2026-11-27T12:43:43Z"
+    },
+    "smoke": {
+      "sha": "2b006e078d5b535185f5aeea04406eab7b8aee3c",
+      "committedAt": "2026-11-03T19:08:05Z"
+    },
+    "release": {
+      "tag": "v0.1.0",
+      "taggerDate": "2026-10-01T14:05:50Z",
+      "commit": "ed173ea362dcd2a6e3d34d508506573ce736d88b",
+      "commitDate": "2026-10-01T04:07:34Z",
+      "publishedAt": "2026-10-01T14:07:04Z"
+    },
+    "issue": 26
+  }
+}
