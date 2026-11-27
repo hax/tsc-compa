@@ -8,6 +8,7 @@
   "scripts": {
     "test": "bun test ./test",
     "typecheck": "node_modules/typescript-7-1/bin/tsc -p tsconfig.json",
+    "probes:versions": "bun scripts/version-probes.ts",
     "smoke": "bun src/run.ts",
     "smoke:5.9": "bun src/run.ts --baseline 5.9.3 --adapter tsc-cli:node_modules/typescript-5-9/bin/tsc",
     "smoke:6.0": "bun src/run.ts --baseline 6.0.3 --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc",

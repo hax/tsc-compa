@@ -273,3 +273,31 @@ target，因此不能把通过率外推到 Bun 默认 target 或项目配置。`
 - `full-summary`：汇总 Markdown 和 JSON，列出每个候选的完成、跳过、两档结果、诊断命中与异常。覆盖率按所有分片的命中数除以期望数，不平均各片百分比。
 
 汇总按计划逐片核对源文件和配置记录；缺片、重计、候选二进制不一致、崩溃或超时都会标为不完整，任务失败。可采集的不兼容结果照常报告，不是工作流故障。当前不支持的配置仍按原因跳过，不能计入兼容通过。若重跑失败的任务，成功分片的产物可继续用于汇总。
+
+## TS6 / TS7 版本差异探针（`version-probes.yml`）
+
+`bun run probes:versions` 在同一源码、相同显式选项下，断言官方 TypeScript
+`6.0.3` 和 `7.1.0-beta` 各自的逐例行为。独立 CI 任务在 PR、`main` push 和手动运行时校准
+这两个锚点，不改 28 例冒烟集合或 `compat-gate`。报告保存为 `ts-version-probes-official` artifact。
+
+探针源码和来源见 [`config/version-probes`](../config/version-probes)：从两个固定官方测试集的
+诊断差异里找样本，再用固定编译器在同一配置下实测。样本分别覆盖递归 mixin 不再报错、
+泛型回调的解构新增隐式 `any`，以及两版均报错但诊断码、位置或条数变化。样本不读取外部
+fixture；显式选择 ES2022 标准库、目标和模块选项，用空类型根隔离环境声明。
+
+已有候选二进制时，可用 `config/implementations.json` 的登记名走同一套探针：
+
+```sh
+bun install --frozen-lockfile
+BIN=$(bun scripts/install-impl.ts --name tsrs --dest .cache/tools --source npm)
+bun run probes:versions --candidate tsrs --bin "$BIN"
+```
+
+`--bin` 也可以直接指向已有的固定版本二进制。一次运行一项候选，复用其登记的 adapter；
+默认把 `report.json` 和 `report.md` 写到 `.cache/version-probes/<候选名>`，也可用 `--out`。
+报告记录源码指纹、选项、工具身份、期望与实测。按用例内文件、UTF-16 行列（从 1 开始）、
+严重度、诊断码比较诊断多重集，保留重复诊断，不比较顺序或措辞，也不合并等价码。
+`ts6` / `ts7` 指完整指纹吻合一侧；`neither` 是实际完成、与两侧均不同，正常的空诊断也参与比较。
+`unsupported` 是配置或诊断不可比较，`execution-error` 是执行或采集失败，均保留原因和已有的原始输出，
+不当作空诊断。没有校准成功的探针不会给候选贴版本标签。只有官方断言失败会令命令非零退出；
+候选结果供诊断，不进入兼容性门禁，也不拿几例探针推断候选的整体版本或兼容性。

@@ -1,0 +1,41 @@
+{
+  "upstreamCommit": "3e9236361fa97a9e6c685f4833ac457ae2d8c50a",
+  "probes": [
+    {
+      "id": "recursive-mixin",
+      "upstreamCase": "conformance/classes/mixinWithBaseDependingOnSelfNoCrash1.ts",
+      "description": "基类通过类型参数引用 mixin 派生类时，构造器约束是否成立。",
+      "ts6": [[4, 48, "error", 2345]],
+      "ts7": []
+    },
+    {
+      "id": "inferred-rest-binding",
+      "upstreamCase": "compiler/inferredRestTypeFixedOnce.ts",
+      "description": "从泛型 rest 参数推断回调签名时，解构绑定是否报隐式 any。",
+      "ts6": [],
+      "ts7": [[2, 9, "error", 7031]]
+    },
+    {
+      "id": "mapped-key-constraint",
+      "upstreamCase": "compiler/mappedTypeAsStringTemplate.ts",
+      "description": "映射类型缺少重映射后的属性时，是报告通用参数不可赋值还是直接报告缺少属性。",
+      "ts6": [[3, 8, "error", 2345]],
+      "ts7": [[3, 8, "error", 2741]]
+    },
+    {
+      "id": "unused-type-parameter",
+      "upstreamCase": "compiler/unusedTypeParameterInFunction1.ts",
+      "description": "未使用的类型参数是标在左尖括号还是参数名上，以及所用的诊断码。",
+      "options": [{ "name": "noUnusedLocals", "value": true }, { "name": "noUnusedParameters", "value": true }],
+      "ts6": [[1, 11, "error", 6133]],
+      "ts7": [[1, 12, "error", 6196]]
+    },
+    {
+      "id": "merged-member-kind",
+      "upstreamCase": "compiler/methodSignatureHandledDeclarationKindForSymbol.ts",
+      "description": "合并接口的方法与同名属性冲突时，报后续属性类型不一致，还是把两处都标为重复声明。",
+      "ts6": [[5, 5, "error", 2717]],
+      "ts7": [[2, 5, "error", 2300], [5, 5, "error", 2300]]
+    }
+  ]
+}
