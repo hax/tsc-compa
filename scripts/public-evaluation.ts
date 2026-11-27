@@ -36,6 +36,7 @@ const writeJson = (path: string, value: unknown) => writeFileSync(path, json(val
 const hash = (value: unknown) => sha256(JSON.stringify(value));
 const isHash = (value: unknown) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const runUrlPattern = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/[0-9]+$/;
+type WorkflowRun = { number: number; attempt: number };
 const output = (value: Record<string, string>) => {
   const text = Object.entries(value).map(([key, item]) => `${key}=${item}\n`).join("");
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, text);
@@ -156,7 +157,7 @@ export function verifyShardInputs(request: Request, shard: string, manifest: { p
 }
 
 const noDifferences = (r: CaseRecord) => r.fp.length === 0 && r.missed.length === 0 && r.misanchor === 0;
-export function makeReport(request: Request, plan: Plan, root: string, runUrl: string, generatedAt = new Date().toISOString()) {
+export function makeReport(request: Request, plan: Plan, root: string, runUrl: string, generatedAt = new Date().toISOString(), workflowRun?: WorkflowRun) {
   if (!runUrlPattern.test(runUrl) || !Number.isFinite(Date.parse(generatedAt)) || request.planSha256 !== hash(plan) ||
       hash(request.planCounts) !== hash(planCounts(plan)) || plan.candidates.length !== 1 || request.candidate !== plan.candidates[0] || plan.source !== source || request.corpus !== plan.corpusRef) {
     throw new Error("Invalid public evaluation plan or run provenance");
@@ -182,7 +183,7 @@ export function makeReport(request: Request, plan: Plan, root: string, runUrl: s
     }
   }
   return { schemaVersion: 1, id, request, candidate: candidates[request.candidate], reference, suite: suites[request.suite],
-    generatedAt, reportPath: `reports/${id}.html`, runUrl,
+    generatedAt, reportPath: `reports/${id}.html`, runUrl, ...(workflowRun && { workflowRun }),
     summary: { complete: true, shards: summary.shards, sourceFiles, records, ran, skipped, coverage, hits, expected, fp, missed, misanchor,
       compatibility, strict }, evidence, differences };
 }
@@ -210,7 +211,7 @@ ${r.differences.length ? `<h2>差异示例（最多 8 条）</h2><ul>${r.differe
 <h2>运行条件与证据</h2><ul><li>语料：<code>${escapeHtml(request.corpus)}</code></li><li>适配器：<code>${escapeHtml(request.adapter)}</code></li>
 <li>候选可执行文件 SHA-256：<code>${escapeHtml(request.candidateTool.nativeSha256 ?? request.candidateTool.sha256)}</code></li>
 <li>测试集计划 SHA-256：<code>${escapeHtml(request.planSha256)}</code></li><li>执行器 SHA-256：<code>${escapeHtml(request.harnessSha256)}</code></li></ul>
-<p><a href="${r.id}.json">精简 JSON</a> · <a href="${escapeHtml(r.runUrl)}">GitHub Actions 运行（原始产物有保留期限）</a></p>
+<p><a href="${r.id}.json">精简 JSON</a> · <a href="${escapeHtml(r.runUrl)}">GitHub Actions 运行（原始产物有保留期限）</a>${r.workflowRun ? ` · 运行编号 ${r.workflowRun.number}，第 ${r.workflowRun.attempt} 次尝试` : ""}</p>
 </main></body></html>\n`;
 }
 
@@ -221,6 +222,8 @@ const exactKeys = (value: unknown, keys: string) => {
   return Object.keys(value).length === expected.length && expected.every((key) => Object.hasOwn(value, key));
 };
 const isString = (value: unknown) => typeof value === "string";
+const validWorkflowRun = (run: WorkflowRun) => exactKeys(run, "number attempt") &&
+  [run.number, run.attempt].every((n) => count(n) && n > 0);
 const digestOrNull = (value: unknown) => value === null || isHash(value);
 const isDate = (value: unknown) => isString(value) && /^\d{4}-\d\d-\d\dT/.test(value) && Number.isFinite(Date.parse(value));
 const validCounts = (s: Request["planCounts"]) => exactKeys(s, "shards sourceFiles records") && [s.shards, s.sourceFiles, s.records].every(count);
@@ -263,7 +266,9 @@ export function readIndex(data: string): { schemaVersion: 1; reports: IndexEntry
 export function verifyReport(value: unknown, id: string): asserts value is Report {
   const r = value as Report;
   const q = r?.request;
-  if (!exactKeys(r, "schemaVersion id request candidate reference suite generatedAt reportPath runUrl summary evidence differences") ||
+  const hasWorkflowRun = r != null && Object.hasOwn(r, "workflowRun");
+  if (!exactKeys(r, `schemaVersion id request candidate reference suite generatedAt reportPath runUrl summary evidence differences${hasWorkflowRun ? " workflowRun" : ""}`) ||
+      (hasWorkflowRun && !validWorkflowRun(r.workflowRun!)) ||
       r.schemaVersion !== 1 || r.id !== id || !validEntry(indexEntry(r)) ||
       !exactKeys(q, "version candidate candidateVersion reference source suite corpus planSha256 planCounts manifestSha256 harnessSha256 runner platform runnerImage node locale timezone adapter options referenceTool candidateTool distributions inputs") ||
       q.version !== 2 || !isString(q.candidate) || !Object.hasOwn(candidates, q.candidate) || q.candidateVersion !== r.candidate.version ||
@@ -332,28 +337,45 @@ export function cached(data: string, id: string): boolean {
   }
 }
 
-export function saveReport(data: string, bundle: string, id: string) {
+export function planExecution(data: string, id: string, force = false) {
+  const cacheHit = cached(data, id);
+  return { cacheHit, shouldRun: force || !cacheHit };
+}
+
+export function saveReport(data: string, bundle: string, id: string, force = false) {
   if (!isHash(id)) throw new Error("Invalid public evaluation ID");
   // Revalidate and reconstruct the only two files we copy from the trusted job.
   const report = readJson<unknown>(join(bundle, `${id}.json`));
   verifyReport(report, id);
+  if (force && !report.workflowRun) throw new Error("Forced refresh requires workflow run order");
   const index = readIndex(data);
   const dir = join(data, "reports");
   for (const file of ["catalog.json", `${id}.json`, `${id}.html`]) {
     const path = lstatSync(join(dir, file), { throwIfNoEntry: false });
     if (path && !path.isFile()) throw new Error(`Invalid public data path: ${file}`);
   }
-  if (!cached(data, id)) {
-    const previous = index.reports.filter((row) => row?.id !== id);
-    if (!previous.every(validEntry)) throw new Error("Malformed previous index entry; refusing to discard history");
-    mkdirSync(dir, { recursive: true });
-    writeJson(join(dir, `${id}.json`), report);
-    writeFileSync(join(dir, `${id}.html`), reportHtml(report));
-    writeJson(join(dir, "index.json"), { schemaVersion: 1, reports: [indexEntry(report), ...previous].sort((a, b) =>
-      b.generatedAt.localeCompare(a.generatedAt) || a.id.localeCompare(b.id)) });
+  const hit = cached(data, id);
+  if (hit) {
+    verifyPublic(data);
+    if (!force) return "already-stored";
+    const stored = readJson<Report>(join(dir, `${id}.json`)).workflowRun;
+    if (!stored) throw new Error("Cannot refresh stored evidence without workflow run order");
+    // Compare workflow dispatch order first: an older dispatch can finish, or
+    // be re-run, after a newer one. Report generation time cannot order them.
+    const incoming = report.workflowRun!;
+    const order = incoming.number - stored.number || incoming.attempt - stored.attempt;
+    if (order <= 0) return order === 0 ? "already-stored" : "superseded";
   }
+  const previous = index.reports.filter((row) => row?.id !== id);
+  if (!previous.every(validEntry)) throw new Error("Malformed previous index entry; refusing to discard history");
+  mkdirSync(dir, { recursive: true });
+  writeJson(join(dir, `${id}.json`), report);
+  writeFileSync(join(dir, `${id}.html`), reportHtml(report));
+  writeJson(join(dir, "index.json"), { schemaVersion: 1, reports: [indexEntry(report), ...previous].sort((a, b) =>
+    b.generatedAt.localeCompare(a.generatedAt) || a.id.localeCompare(b.id)) });
   writeJson(join(data, "reports/catalog.json"), publicCatalog());
   verifyPublic(data);
+  return hit ? "refreshed" : "stored";
 }
 
 function main() {
@@ -361,8 +383,8 @@ function main() {
   if (cmd === "pin" && args.length === 0) {
     const { repo, ref } = configuration();
     output({ repo, ref });
-  } else if (cmd === "plan" && args.length === 6) {
-    const [candidateArg, suiteArg, checkout, dest, dir, data] = args as [string, string, string, string, string, string];
+  } else if (cmd === "plan" && (args.length === 6 || (args.length === 7 && args[6] === "--force"))) {
+    const [candidateArg, suiteArg, checkout, dest, dir, data, force] = args as [string, string, string, string, string, string, "--force"?];
     const candidate = asCandidate(candidateArg);
     const suite = asSuite(suiteArg);
     const { config, definition, ref } = configuration();
@@ -377,7 +399,8 @@ function main() {
     mkdirSync(dir, { recursive: true });
     writeJson(join(dir, "request.json"), request);
     writeJson(join(dir, "plan.json"), plan);
-    output({ id, cached: String(cached(data, id)), matrix: JSON.stringify({ shard: plan.shards.map((shard) => shard.id) }) });
+    const { cacheHit, shouldRun } = planExecution(data, id, force === "--force");
+    output({ id, "cache-hit": String(cacheHit), "should-run": String(shouldRun), matrix: JSON.stringify({ shard: plan.shards.map((shard) => shard.id) }) });
   } else if (cmd === "run" && args.length === 6) {
     const [dir, id, shardId, checkout, dest, out] = args as [string, string, string, string, string, string];
     const plan = readJson<Plan>(join(dir, "plan.json"));
@@ -394,24 +417,25 @@ function main() {
     verifyShardInputs(request, shard.id, metrics.meta.manifest);
     if (metrics.meta.executionFailures!.length) throw new Error(`${metrics.meta.executionFailures!.length} execution failures; see shard artifact`);
     writeJson(join(out, "public-request.json"), { id, shard: shard.id });
-  } else if (cmd === "report" && args.length === 5) {
-    const [dir, id, root, bundle, runUrl] = args as [string, string, string, string, string];
+  } else if (cmd === "report" && (args.length === 5 || args.length === 7)) {
+    const [dir, id, root, bundle, runUrl, runNumber, runAttempt] = args as [string, string, string, string, string, string?, string?];
     const request = readJson<Request>(join(dir, "request.json"));
     if (hash(request) !== id) throw new Error("Evaluation request identity changed");
-    const report = makeReport(request, readJson<Plan>(join(dir, "plan.json")), root, runUrl);
+    const workflowRun = runNumber === undefined ? undefined : { number: Number(runNumber), attempt: Number(runAttempt) };
+    const report = makeReport(request, readJson<Plan>(join(dir, "plan.json")), root, runUrl, undefined, workflowRun);
     verifyReport(report, id);
     mkdirSync(bundle, { recursive: true });
     writeJson(join(bundle, `${id}.json`), report);
     writeFileSync(join(bundle, `${id}.html`), reportHtml(report));
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Public evaluation · complete\n\n- Request: \`${id}\`\n- Compared: ${report.summary.ran}/${report.summary.records}; skipped: ${report.summary.skipped}\n`);
-  } else if (cmd === "save" && args.length === 3) {
-    saveReport(args[0]!, args[1]!, args[2]!);
+  } else if (cmd === "save" && (args.length === 3 || (args.length === 4 && args[3] === "--force"))) {
+    console.log(saveReport(args[0]!, args[1]!, args[2]!, args[3] === "--force"));
   } else if (cmd === "verify-public" && args.length === 1) {
     verifyPublic(args[0]!);
   } else if (cmd === "verify-cache" && args.length === 2) {
     if (!cached(args[0]!, args[1]!)) throw new Error("Public evaluation cache entry missing or incomplete");
   } else {
-    throw new Error("Expected pin | plan <candidate> <suite> <checkout> <tools> <out> <public-data> | run <plan-dir> <id> <shard> <checkout> <tools> <out> | report <plan-dir> <id> <shard-artifacts> <bundle> <run-url> | save <public-data> <bundle> <id> | verify-cache <public-data> <id> | verify-public <public-data>");
+    throw new Error("Expected pin | plan <candidate> <suite> <checkout> <tools> <out> <public-data> [--force] | run <plan-dir> <id> <shard> <checkout> <tools> <out> | report <plan-dir> <id> <shard-artifacts> <bundle> <run-url> [<run-number> <run-attempt>] | save <public-data> <bundle> <id> [--force] | verify-cache <public-data> <id> | verify-public <public-data>");
   }
 }
 
