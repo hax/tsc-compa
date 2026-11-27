@@ -2,6 +2,49 @@
   "schemaVersion": 1,
   "reports": [
     {
+      "id": "95210b7a160de9186b2c25cca74f6747fdd1637ef126a0f4de9aab6269deb2f6",
+      "candidate": {
+        "id": "bun",
+        "name": "Bun",
+        "version": "1.4.5"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "full",
+        "label": "全量类型检查测试集（compiler / conformance）"
+      },
+      "generatedAt": "2026-11-27T08:58:19.479Z",
+      "reportPath": "reports/95210b7a160de9186b2c25cca74f6747fdd1637ef126a0f4de9aab6269deb2f6.html",
+      "runUrl": "https://github.com/hax/tsc-compa/actions/runs/45969577715",
+      "summary": {
+        "complete": true,
+        "shards": 8,
+        "sourceFiles": 12974,
+        "records": 14346,
+        "ran": 8030,
+        "skipped": 6316,
+        "coverage": 0.9958941402240371,
+        "hits": 22315,
+        "expected": 22407,
+        "fp": 124,
+        "missed": 92,
+        "misanchor": 0,
+        "compatibility": {
+          "pass": 7973,
+          "fail": 57,
+          "unknown": 0
+        },
+        "strict": {
+          "pass": 3994,
+          "fail": 103,
+          "unknown": 3933
+        }
+      }
+    },
+    {
       "id": "261be62fe7c7936d7d37649eb369a3cf204943184e1b6a8eb3f35dcec56798be",
       "candidate": {
         "id": "tsrs",
