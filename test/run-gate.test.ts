@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, test } from "bun:test";
+import { shardInputEvidence } from "../scripts/public-evaluation-inputs.ts";
 import { comparisonFields } from "../src/comparison.ts";
 
 // 端到端验证 --gate：用临时语料 + 官方基线期望源 + “永远不报错”的 none 适配器，
@@ -252,6 +253,31 @@ describe("官方 Go 配置变体端到端", () => {
     const metrics = JSON.parse(readFileSync(join(f.out, "metrics.json"), "utf8"));
     expect(metrics.meta.selectedCases).toBe(1);
     expect(metrics.totals.cases).toBe(2);
+  });
+
+  test("exact target execution and official input evidence exclude sibling baselines", () => {
+    const f = variantFixture();
+    const source = "compiler/clean.ts";
+    const targets = [{ source, configuration: "target=es2020" }];
+    writeFileSync(f.manifest, JSON.stringify(targets));
+    const args = baseArgs(f).map((arg) => arg === "--cases" ? "--case-targets" : arg);
+    const r = spawnRun(f, args);
+    expect(r.status).toBe(0);
+    const details = JSON.parse(readFileSync(join(f.out, "details.json"), "utf8"));
+    expect(details).toEqual([expect.objectContaining({ caseId: source, configuration: "target=es2020", status: "ran", missed: [] })]);
+    const metrics = JSON.parse(readFileSync(join(f.out, "metrics.json"), "utf8"));
+    expect(metrics.totals.cases).toBe(1);
+    const evidence = shardInputEvidence(f.corpus, "01", [source], targets);
+    expect(metrics.meta.manifest.officialInputsSha256).toBe(evidence.officialInputsSha256);
+    const all = shardInputEvidence(f.corpus, "01", [source]);
+    expect(evidence.officialInputsSha256).not.toBe(all.officialInputsSha256);
+    writeFileSync(join(f.baselineDir, "compiler", "clean(target=es2015).errors.txt"), "clean.ts(1,1): error TS9000: changed sibling\n====\n");
+    expect(shardInputEvidence(f.corpus, "01", [source], targets)).toEqual(evidence);
+    expect(shardInputEvidence(f.corpus, "01", [source]).officialInputsSha256).not.toBe(all.officialInputsSha256);
+    for (const invalid of [[{ source, configuration: null }], [{ source, configuration: "target=esnext" }], [...targets, ...targets]]) {
+      writeFileSync(f.manifest, JSON.stringify(invalid));
+      expect(spawnRun(f, args).status).not.toBe(0);
+    }
   });
 
   test("未找到特定配置的官方执行证据时不冒充零诊断", () => {

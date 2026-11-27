@@ -245,7 +245,7 @@ export interface RunMeta {
   generatedAt: string;
   selectedCases: number;
   executionFailures?: { id: string; side: "reference" | "candidate"; status: "crash" | "timeout"; reason: string }[];
-  manifest?: { path: string; sha256: string; selectedIdsSha256: string; parsedInputsSha256: string; officialInputsSha256?: string };
+  manifest?: { path: string; sha256: string; selectedIdsSha256: string; selectedTargetsSha256?: string; parsedInputsSha256: string; officialInputsSha256?: string };
   options?: { strategy: "defaults" | "aligned"; referenceBaseArgs: string[]; sharedArgs: string[]; candidateArgs: string[]; candidateEnvArgs: string[]; onlyClasses: string[]; excludeClasses: string[] };
   tools?: { runner: string; platform: string; reference: ToolIdentity; candidate: ToolIdentity | null };
   /** 设置了 --ratchet / --ratchet-impl 时的对比结果。 */

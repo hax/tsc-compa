@@ -344,6 +344,8 @@ export interface RunProvenance {
   manifestSha: string | null;
   /** 用例选择后的 id 集合哈希；范围相同时即使 manifest 文件字节变化也可比较。 */
   selectedIdsSha: string | null;
+  /** 精确选择的源文件与配置集合哈希；未使用精确选择时不提供。 */
+  selectedTargetsSha: string | null;
   /** 解析后的用例输入哈希，覆盖用例正文与指令。 */
   parsedInputsSha: string | null;
   /** 官方 .errors.txt 输入哈希；变化时参考期望本身也不同。 */
@@ -800,6 +802,7 @@ function normalizeProvenance(meta: Record<string, unknown>, adapter: string | nu
     manifest: text(manifest.path ?? meta.manifestPath ?? provenance.manifest),
     manifestSha,
     selectedIdsSha,
+    selectedTargetsSha: text(manifest.selectedTargetsSha256),
     parsedInputsSha,
     officialInputsSha,
     optionStrategy:
@@ -1050,7 +1053,6 @@ const formatPctPoints = (n: number): string => `${(n * 100).toFixed(1)}pp`;
 
 function scopeOf(previous: ReportModel, current: ReportModel): DeltaScope {
   const v2 = previous.comparison.known && current.comparison.known;
-  if (!v2) return { v2: false, comparable: false, reasons: [] };
   const reasons: string[] = [];
   const compare = (label: string, before: string | null, after: string | null): void => {
     if (before === null && after === null) return;
@@ -1060,6 +1062,8 @@ function scopeOf(previous: ReportModel, current: ReportModel): DeltaScope {
     }
     if (before !== after) reasons.push(`${label}不同`);
   };
+  compare("目标配置选择", previous.provenance.selectedTargetsSha, current.provenance.selectedTargetsSha);
+  if (!v2) return { v2, comparable: false, reasons };
   // 用例选择哈希优先：manifest 可能因注释或格式变化而内容哈希改变，但实际选中的
   // 用例不变；两侧都没有选择哈希时才退回 manifest 文件哈希。
   if (previous.provenance.selectedIdsSha !== null && current.provenance.selectedIdsSha !== null) {
@@ -1206,7 +1210,7 @@ function computeDelta(previous: ReportModel, current: ReportModel): ReportDelta 
     rows.push(metricRow("T3 全文用例", previous.totals.byTier.full, current.totals.byTier.full, String, "up"));
   }
   // 覆盖率变化用百分点展示更直观，覆盖掉上面的百分比差值文本。
-  if ((!scope.v2 || scope.comparable) && previous.totals.coverage !== null && current.totals.coverage !== null) {
+  if (scope.reasons.length === 0 && previous.totals.coverage !== null && current.totals.coverage !== null) {
     rows[0]!.change = formatPctPoints(current.totals.coverage - previous.totals.coverage);
   }
 
@@ -1238,7 +1242,7 @@ function computeDelta(previous: ReportModel, current: ReportModel): ReportDelta 
       regressions = movements.regressions;
       improvements = movements.improvements;
     }
-  } else {
+  } else if (scope.reasons.length === 0) {
     const previousById = new Map(previous.details.map((d) => [d.id, d]));
     const currentById = new Map(current.details.map((d) => [d.id, d]));
     const tierRank = (tier: Tier | null): number => (tier === null ? -1 : TIERS.indexOf(tier));
@@ -1281,7 +1285,7 @@ function computeDelta(previous: ReportModel, current: ReportModel): ReportDelta 
     }
   }
   // 范围不可比时，所有汇总差异都不能被读成检查器改善/变差；数字保留供复现核对。
-  if (scope.v2 && !scope.comparable) {
+  if (scope.reasons.length > 0) {
     rows = rows.map((row) => ({ ...row, change: "n/a（范围不可比）", trend: "na" as const }));
     fields = fields.map((row) => ({ ...row, trend: "na" as const }));
   }

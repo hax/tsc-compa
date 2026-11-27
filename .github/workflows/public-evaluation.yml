@@ -16,9 +16,9 @@ on:
         options: [typescript, bun-1.4.4, bun-1.4.5, tsrs, ts-rust, tsz]
         default: typescript
       suite:
-        description: TS7 test suite (select full for ts-rust or tsz)
+        description: TS7 test suite (fixed-120 is not available for ts-rust or tsz)
         type: choice
-        options: [fixed-120, full]
+        options: [fixed-120, full, curated-difference-v1]
         default: fixed-120
       preview:
         description: Read-only preview (never write to the public data branch)

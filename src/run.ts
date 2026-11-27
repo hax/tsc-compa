@@ -25,6 +25,7 @@ import { readRunData, REPORT_HTML_FILENAME, REPORT_MD_FILENAME, writeReport } fr
 import { checkRatchetState, protectedCountsOf, ratchetPathFor, readRatchetState, writeRatchetState } from "./ratchet.ts";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "./baselines.ts";
 import { classifyCase, exclusionOf, parseTagList, runtimeTags } from "./classify.ts";
+import { loadCaseTargets, resolveCaseTarget } from "./case-targets.ts";
 import { loadManifest, readCase } from "./discover.ts";
 import { expectationOf, resolveTscPath, shortCaseName, tscVersionOf, type ExpectationResult } from "./tsc.ts";
 import {
@@ -48,6 +49,7 @@ const DEFAULT_BASE_ARGS = ["--noEmit", "--ignoreConfig", "--pretty", "false"];
 interface Args {
   corpus: string;
   cases?: string;
+  caseTargets?: string;
   tsc?: string;
   adapter: string;
   mode: "official" | "fixed";
@@ -180,6 +182,9 @@ function parseArgs(argv: string[]): Args {
       case "--cases":
         args.cases = next();
         break;
+      case "--case-targets":
+        args.caseTargets = next();
+        break;
       case "--tsc":
         args.tsc = next();
         break;
@@ -308,7 +313,7 @@ function parseArgs(argv: string[]): Args {
       case "--help":
       case "-h":
         console.log(
-          "用法：bun src/run.ts [--corpus <tests/cases>] [--baseline <id>] [--cases <manifest>] [--tsc <bin>] " +
+          "用法：bun src/run.ts [--corpus <tests/cases>] [--baseline <id>] [--cases <manifest> | --case-targets <manifest>] [--tsc <bin>] " +
             "[--adapter <name>] [--mode official|fixed] [--base-arg name=value]... [--adapter-arg name=value]... " +
             "[--expectation-source tsc|official-baseline|ts7-api] [--option-strategy defaults|aligned] [--exclude-class <tags>] [--only-class <tags>] " +
             "[--ratchet <file> | --ratchet-impl <impl>] [--ratchet-init] [--perf-ratio] [--perf-sample N] [--perf-seed <s>] [--perf-timeout ms] " +
@@ -324,6 +329,10 @@ function parseArgs(argv: string[]): Args {
       default:
         throw new Error(`未知参数 ${arg}`);
     }
+  }
+  if (args.caseTargets !== undefined && (args.cases !== undefined || args.limit !== undefined ||
+      args.onlyClasses.length || args.excludeClasses.length || args.mode !== "official")) {
+    throw new Error("--case-targets requires official mode and cannot be combined with --cases, --limit or class filters");
   }
   if (args.corpus === "") {
     throw new Error("缺少语料目录：用 --corpus 或环境变量 TSC_COMPA_CORPUS 指定 tests/cases");
@@ -482,7 +491,7 @@ async function main(): Promise<void> {
     ...args.adapterArgsExtra,
   ];
   const casesPath =
-    args.cases ?? (baseline !== null ? join(REPO_ROOT, baseline.manifest) : join(REPO_ROOT, "config/smoke-cases.json"));
+    args.caseTargets ?? args.cases ?? (baseline !== null ? join(REPO_ROOT, baseline.manifest) : join(REPO_ROOT, "config/smoke-cases.json"));
 
   const adapter: Adapter = await createAdapter(args.adapter);
   await using activeCandidate = { [Symbol.asyncDispose]: async () => { await adapter.close?.(); } };
@@ -498,7 +507,8 @@ async function main(): Promise<void> {
     );
   }
 
-  const ids = loadManifest(casesPath).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
+  const exact = args.caseTargets ? loadCaseTargets(casesPath) : undefined;
+  const ids = exact?.map((target) => target.source) ?? loadManifest(casesPath).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
   const parsedInputs = createHash("sha256");
   const officialInputs = createHash("sha256");
   const candidateEnvArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter(Boolean);
@@ -523,11 +533,12 @@ async function main(): Promise<void> {
   // 清单保留源文件 ID；每个实际配置有独立的比较、计时和回归记录 ID。
   const executions: { parsed: ParsedCase; variant?: CaseVariant; reason?: string }[] = [];
   const executionIds = new Set<string>();
-  for (const id of ids) {
+  for (const [index, id] of ids.entries()) {
     const parsed = readCase(args.corpus, id);
     parsedInputs.update(`${JSON.stringify([id, parsed])}\n`);
     const reason = parsed.skip ?? (parsed.unknown[0] === undefined ? null : `未知指令 ${parsed.unknown[0]}`);
-    const expanded = reason === null ? expandCaseVariants(parsed) : { status: "unsupported" as const, reason };
+    const expanded = exact ? { status: "ok" as const, variants: [resolveCaseTarget(parsed, exact[index]!)] }
+      : reason === null ? expandCaseVariants(parsed) : { status: "unsupported" as const, reason };
     const entries = expanded.status === "ok"
       ? expanded.variants.map((variant) => ({ parsed, variant }))
       : [{ parsed, reason: expanded.reason }];
@@ -719,7 +730,7 @@ async function main(): Promise<void> {
   }
 
   const meta: RunMeta = {
-    suite: args.cases === undefined ? "smoke" : "manifest",
+    suite: args.cases === undefined && exact === undefined ? "smoke" : "manifest",
     corpus: args.corpus,
     adapter: adapter.name,
     mode: args.mode,
@@ -734,6 +745,7 @@ async function main(): Promise<void> {
     executionFailures,
     manifest: {
       path: casesPath, sha256: sha256(readFileSync(casesPath)), selectedIdsSha256: sha256(JSON.stringify(ids)),
+      ...(exact ? { selectedTargetsSha256: sha256(JSON.stringify(exact)) } : {}),
       parsedInputsSha256: parsedInputs.digest("hex"),
       officialInputsSha256: args.expectationSource === "official-baseline" ? officialInputs.digest("hex") : undefined,
     },

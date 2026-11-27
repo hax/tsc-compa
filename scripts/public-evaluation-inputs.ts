@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { resolveCaseTarget, type CaseTarget } from "../src/case-targets.ts";
 import { expandCaseVariants } from "../src/case.ts";
 import { readCase } from "../src/discover.ts";
 import { expectationFromOfficialBaseline, expectationFromOfficialVariantBaseline } from "../src/officialBaseline.ts";
@@ -71,14 +72,15 @@ export function verifyCorpus(dir: string, ref: string): string {
   return join(root, casesPath);
 }
 
-export function shardInputEvidence(corpus: string, shard: string, ids: string[]) {
+export function shardInputEvidence(corpus: string, shard: string, ids: string[], targets?: readonly CaseTarget[]) {
   const parsedInputs = createHash("sha256");
   const officialInputs = createHash("sha256");
-  for (const id of ids) {
+  if (targets && JSON.stringify(targets.map((t) => t.source)) !== JSON.stringify(ids)) throw new Error("Exact targets do not match input sources");
+  for (const [index, id] of ids.entries()) {
     const parsed = readCase(corpus, id);
     parsedInputs.update(`${JSON.stringify([id, parsed])}\n`);
-    if (parsed.skip !== null || parsed.unknown.length) continue;
-    const expanded = expandCaseVariants(parsed);
+    if (!targets && (parsed.skip !== null || parsed.unknown.length)) continue;
+    const expanded = targets ? { status: "ok" as const, variants: [resolveCaseTarget(parsed, targets[index]!)] } : expandCaseVariants(parsed);
     if (expanded.status !== "ok") continue;
     for (const variant of expanded.variants) {
       // Match run.ts's official-baseline path, including zero-diagnostic

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "../src/baselines.ts";
+import { resolveCaseTarget, type CaseTarget } from "../src/case-targets.ts";
 import { expandCaseVariants } from "../src/case.ts";
 import { isValidCaseId, readCase } from "../src/discover.ts";
 import { activePolicies, isAddedCandidate, type AddedCandidate } from "./public-evaluation-policy.ts";
@@ -15,7 +16,7 @@ const candidates = ["typescript", "bun-1.4.4", "bun-1.4.5", "tsrs"] as const;
 export type LegacyCandidate = typeof candidates[number];
 export type Candidate = LegacyCandidate | AddedCandidate;
 type Source = "official-baseline" | "tsc";
-type Unit = { id: string; records: string[] };
+type Unit = { id: string; records: string[]; target?: CaseTarget };
 type Shard = { id: string; units: Unit[]; estimatedCost: number };
 export interface Plan {
   version: 1;
@@ -52,12 +53,15 @@ export function buildPlan(corpus: string, corpusRef: string, n: number, source: 
   return buildPlanForIds(corpus, corpusRef, n, source, selected, compilerCaseIds(corpus));
 }
 
-export function buildPlanForIds(corpus: string, corpusRef: string, n: number, source: Source, selected: Candidate[], ids: string[]): Plan {
+export function buildPlanForIds(corpus: string, corpusRef: string, n: number, source: Source, selected: Candidate[], ids: string[], targets?: readonly CaseTarget[]): Plan {
   if (!Number.isInteger(n) || n < 1 || n > 32) throw new Error("Shard count must be between 1 and 32");
+  if (targets && JSON.stringify(targets.map((t) => t.source)) !== JSON.stringify(ids)) throw new Error("Exact targets do not match planned sources");
   const allRecordIds = new Set<string>();
-  const units = ids.map((id) => {
+  const units = ids.map((id, index) => {
     const parsed = readCase(corpus, id);
-    const expanded = parsed.skip === null && parsed.unknown.length === 0 ? expandCaseVariants(parsed) : null;
+    const target = targets?.[index];
+    const expanded = target ? { status: "ok" as const, variants: [resolveCaseTarget(parsed, target)] }
+      : parsed.skip === null && parsed.unknown.length === 0 ? expandCaseVariants(parsed) : null;
     const runnable = expanded?.status === "ok";
     const records = runnable ? expanded.variants.map((variant) => variant.variantId) : [id];
     for (const record of records) {
@@ -67,7 +71,7 @@ export function buildPlanForIds(corpus: string, corpusRef: string, n: number, so
     const bytes = parsed.files.reduce((sum, file) => sum + Buffer.byteLength(file.text), 0);
     // A process start is a fixed cost. Use source size and configuration count only as a balancing heuristic.
     const cost = runnable ? records.length * (64 + Math.min(1024, Math.ceil(bytes / 256))) : 1;
-    return { id, records, cost };
+    return { id, records, cost, ...(target ? { target } : {}) };
   });
   if (units.length < n) throw new Error(`Not enough sources (${units.length}) for ${n} shards`);
   const shards: Shard[] = Array.from({ length: n }, (_, i) => ({ id: String(i + 1).padStart(2, "0"), units: [], estimatedCost: 0 }));
@@ -89,6 +93,14 @@ export function verifyVersion(candidate: Candidate, bin: string): void {
   if (result.status !== 0 || result.stdout?.trim() !== expected) throw new Error(`${candidate}: expected ${expected}, got ${result.stdout || result.stderr || result.error}`);
 }
 
+export function shardTargets(shard: Shard): CaseTarget[] | undefined {
+  if (!shard.units.some((unit) => unit.target !== undefined)) return undefined;
+  return shard.units.map(({ id, target }) => {
+    if (target?.source !== id) throw new Error(`Invalid or missing exact target: ${id}`);
+    return target;
+  });
+}
+
 export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus: string, dir: string, binArg?: string, candidateArgs: readonly string[] = [], candidateEnv: Readonly<Record<string, string>> = {}): void {
   const config = loadBaselines();
   const referenceWrapper = resolveBaselineTsc(findBaseline(config, baseline));
@@ -102,9 +114,10 @@ export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus:
   const candidateBin = native?.status === 0 && native.stdout.trim() ? native.stdout.trim() : bin;
   mkdirSync(dir, { recursive: true });
   const manifest = join(dir, "cases.json");
-  writeJson(manifest, shard.units.map((unit) => unit.id));
+  const targets = shardTargets(shard);
+  writeJson(manifest, targets ?? shard.units.map((unit) => unit.id));
   const result = spawnSync(process.execPath, ["src/run.ts", "--baseline", baseline, "--tsc", reference,
-    "--corpus", corpus, "--cases", manifest, "--expectation-source", plan.source, "--option-strategy", "aligned",
+    "--corpus", corpus, targets ? "--case-targets" : "--cases", manifest, "--expectation-source", plan.source, "--option-strategy", "aligned",
     "--adapter", `${isBun ? "bun-check" : "tsc-cli"}:${candidateBin}`, "--out", dir], {
     cwd: REPO_ROOT, env: { ...process.env, ...candidateEnv, TSC_COMPA_ADAPTER_ARGS: candidateArgs.join(" "), TSC_BIN: "" }, stdio: "inherit",
   });
@@ -116,11 +129,17 @@ const toolKey = (tool: ToolIdentity | null | undefined) => tool === undefined ||
 
 export function verifyShard(plan: Plan, shard: Shard, dir: string, candidate?: Candidate): Metrics {
   const metrics = readJson<Metrics>(join(dir, "metrics.json"));
-  const records = readJson<{ id: string; status: string }[]>(join(dir, "details.json"));
+  const records = readJson<{ id: string; status: string; caseId?: string; configuration?: string }[]>(join(dir, "details.json"));
   const ids = shard.units.map((unit) => unit.id);
   const expected = shard.units.flatMap((unit) => unit.records);
   const ran = records.filter((record) => record.status === "ran").length;
-  if (JSON.stringify(readJson<string[]>(join(dir, "cases.json"))) !== JSON.stringify(ids) ||
+  const targets = shardTargets(shard);
+  if (JSON.stringify(readJson<unknown>(join(dir, "cases.json"))) !== JSON.stringify(targets ?? ids) ||
+      metrics.meta?.manifest?.selectedTargetsSha256 !== (targets && sha256(JSON.stringify(targets))) ||
+      (targets && !records.every((record, i) => {
+        const target = targets[i];
+        return target && (record.caseId ?? record.id) === target.source && (record.configuration ?? null) === target.configuration;
+      })) ||
       metrics.meta?.manifest?.selectedIdsSha256 !== manifestHash(ids) || metrics.meta.selectedCases !== ids.length ||
       metrics.meta.baseline !== baseline || metrics.meta.corpusRef !== plan.corpusRef || metrics.meta.expectationSource !== plan.source ||
       metrics.meta.options?.strategy !== "aligned" || metrics.meta.verdictEligible !== true ||
