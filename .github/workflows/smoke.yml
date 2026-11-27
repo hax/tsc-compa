@@ -262,9 +262,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # 汇总各档报告：下载 matrix 的 report-<slug> artifact → 一份 Markdown 摘要
-  # （写进 $GITHUB_STEP_SUMMARY）+ 可下载的 HTML 索引（report-summary artifact，
-  # 打开 report/index.html 可逐档点开）。失败 run 也执行（if: always()），摘要里
+  # 汇总各档报告：report-summary artifact 保留完整 Markdown 和 HTML 索引，
+  # $GITHUB_STEP_SUMMARY 只写概览，避免逐档正文超过大小限制。失败 run 也执行，摘要里
   # 标出失败档位与缺 metrics 的档位；合并失败直接让 job 变红。
   report:
     needs: [detect, smoke]
@@ -287,12 +286,13 @@ jobs:
             --root report \
             --md report/summary.md \
             --html report/index.html \
+            --step-summary "$RUNNER_TEMP/tsc-compa-step-summary.md" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: Step summary
         if: always()
         run: |
-          if [ -f report/summary.md ]; then
-            cat report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$RUNNER_TEMP/tsc-compa-step-summary.md" ]; then
+            cat "$RUNNER_TEMP/tsc-compa-step-summary.md" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "报告汇总没有生成（见上一步日志）" >> "$GITHUB_STEP_SUMMARY"
           fi

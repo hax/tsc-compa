@@ -1147,7 +1147,8 @@ describe("scripts/merge-reports.ts", () => {
         gate: { passed: false, thresholds: {}, checks: [{ name: "假阳性", ok: false, detail: "1 > 0" }] },
       },
     });
-    writeEntry(root, "report-7.1.0-beta-official", failedMetrics, "# 7.1 official\n\n假阳性 1\n", "<html>bad</html>");
+    const largeBody = "完整诊断正文\n".repeat(80_000);
+    writeEntry(root, "report-7.1.0-beta-official", failedMetrics, `# 7.1 official\n\n假阳性 1\n${largeBody}`, "<html>bad</html>");
     writeEntry(
       root,
       "report-7.1.0-beta-self",
@@ -1160,10 +1161,11 @@ describe("scripts/merge-reports.ts", () => {
 
     const md = join(root, "summary.md");
     const html = join(root, "index.html");
-    const run = (): { status: number | null; stdout: string } => {
+    const stepSummary = join(root, "step-summary.md");
+    const run = (...extra: string[]): { status: number | null; stdout: string } => {
       const r = spawnSync(
         process.execPath,
-        ["scripts/merge-reports.ts", "--root", root, "--md", md, "--html", html, "--run-url", "https://ci.example/run/1"],
+        ["scripts/merge-reports.ts", "--root", root, "--md", md, "--html", html, "--run-url", "https://ci.example/run/1", ...extra],
         { cwd: REPO_ROOT, encoding: "utf8" },
       );
       return { status: r.status, stdout: r.stdout ?? "" };
@@ -1182,10 +1184,24 @@ describe("scripts/merge-reports.ts", () => {
     expect(index).toContain("tsc-compa 兼容性报告汇总");
     expect(index).toContain('href="report-6.0.3-self/report.html"');
     expect(index).toContain('class="status-bad"');
-    // 确定性：同输入再跑一次，字节一致。
-    const before = readFileSync(md, "utf8");
-    expect(run().status).toBe(0);
-    expect(readFileSync(md, "utf8")).toBe(before);
+    expect(Buffer.byteLength(summary, "utf8")).toBeGreaterThan(1024 * 1024);
+    expect(summary).toContain(largeBody.trimEnd());
+    expect(run("--step-summary", stepSummary).status).toBe(0);
+    // 请求预览不会改变完整产物；预览逐字节保留聚合表，但不嵌入逐档正文。
+    expect(readFileSync(md, "utf8")).toBe(summary);
+    expect(readFileSync(html, "utf8")).toBe(index);
+    const compact = readFileSync(stepSummary, "utf8");
+    expect(Buffer.byteLength(compact, "utf8")).toBeLessThan(1024 * 1024);
+    const table = (markdown: string): string[] => markdown.split("\n").filter((line) => line.startsWith("|"));
+    expect(table(compact)).toEqual(table(summary));
+    expect(compact).toContain("**门禁失败档位（1）**：7.1.0-beta-official");
+    expect(compact).toContain("无 metrics（运行失败）");
+    expect(compact).toContain("`report-summary`");
+    expect(compact).toContain("`summary.md` 或 `index.html`");
+    expect(compact).not.toContain("<details>");
+    expect(compact).not.toContain("完整诊断正文");
+    expect(run("--step-summary", stepSummary).status).toBe(0);
+    expect(readFileSync(stepSummary, "utf8")).toBe(compact);
   });
 
   test("root 不存在或没有任何档位 → 非零退出", () => {
