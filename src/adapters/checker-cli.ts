@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIXED_STRICT_ESNEXT, materializeCase } from "../case.ts";
 import type { Adapter, CaseInput, CaseOutcome, Diagnostic } from "../types.ts";
+import { renderDiagnostics, utf16Width } from "./cli.ts";
+
 
 interface CheckerJsonDiagnostic {
   file: string;
@@ -21,8 +23,8 @@ interface CheckerJsonDiagnostic {
   end: number;
   line: number;
   col: number;
-  end_line: number;
-  end_col: number;
+  end_line?: number;
+  end_col?: number;
   severity: string;
   code: number;
   message: string;
@@ -59,6 +61,8 @@ export class CheckerCliAdapter implements Adapter {
         maxBuffer: 1 << 28,
         timeout: this.timeoutMs,
       });
+      const rawOutput = { stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+      const exitCode = r.error === undefined ? r.status : null;
       if (r.error !== undefined) {
         const timeout = /ETIMEDOUT|timed out/i.test(String(r.error));
         return {
@@ -67,6 +71,8 @@ export class CheckerCliAdapter implements Adapter {
           diagnostics: [],
           skipReason: timeout ? "检查器超时（30s）" : "检查器崩溃",
           message: String(r.error),
+          exitCode,
+          rawOutput,
         };
       }
       // 检查器在有诊断时退出码为 1；>1 视为崩溃。
@@ -77,19 +83,34 @@ export class CheckerCliAdapter implements Adapter {
           diagnostics: [],
           skipReason: `检查器异常退出（status=${r.status}）`,
           message: (r.stderr ?? "").slice(0, 200),
+          exitCode,
+          rawOutput,
         };
       }
-      const diagnostics = this.parseDiagnostics(tmp, r.stdout ?? "");
-      if (diagnostics === null) {
+      const parsed = this.parseDiagnostics(tmp, r.stdout ?? "");
+      if (parsed === null) {
         return {
           id: input.id,
           status: "crash",
           diagnostics: [],
           skipReason: "检查器输出不是 JSON",
           message: (r.stdout ?? "").slice(0, 200),
+          exitCode,
+          rawOutput,
         };
       }
-      return { id: input.id, status: "ok", diagnostics };
+      if (parsed.length === 0 && r.status !== 0) {
+        return {
+          id: input.id,
+          status: "crash",
+          diagnostics: [],
+          skipReason: `检查器退出状态 ${r.status} 且没有诊断`,
+          message: `stdout=${(r.stdout ?? "").slice(0, 200)} stderr=${(r.stderr ?? "").slice(0, 200)}`,
+          exitCode,
+          rawOutput,
+        };
+      }
+      return { id: input.id, status: "ok", diagnostics: parsed, fullText: renderDiagnostics(parsed), exitCode, rawOutput };
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -115,11 +136,9 @@ export class CheckerCliAdapter implements Adapter {
         col: item.col - 1,
         code: item.code,
         severity: item.severity === "error" ? "error" : "warning",
-        width:
-          typeof item.end === "number" && typeof item.start === "number"
-            ? item.end - item.start
-            : undefined,
+        width: utf16Width(item),
         message: item.message,
+        raw: item,
       });
     }
     return out;

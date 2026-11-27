@@ -32,6 +32,7 @@ export interface BaselineDef {
 export interface BaselineConfig {
   corpora: Record<string, CorpusRef>;
   baselines: BaselineDef[];
+  equivalentDiagnosticCodesByTscVersion?: Record<string, number[][]>;
 }
 
 export const REPO_ROOT = resolve(import.meta.dir, "..");

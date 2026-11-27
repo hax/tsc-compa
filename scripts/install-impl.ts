@@ -5,6 +5,7 @@
 //   bun scripts/install-impl.ts --name tsrs --dest .tools          # npm 预编译（CI 用）
 //   bun scripts/install-impl.ts --name tsrs --source local          # 用 localEnv 指向的本地二进制
 //   bun scripts/install-impl.ts --name tsrs --source cargo          # 只检查 cargo 产物是否就绪
+//   bun scripts/install-impl.ts --name bun-check-1.4.5 --dest .tools # 官方 Bun release zip
 //
 // 最后一行向 stdout 打印可执行文件路径（相对当前目录；不在当前目录下则绝对路径）。
 // 失败以非零退出并打印原因；不改变 reference/ 下的任何仓库。
@@ -29,12 +30,26 @@ interface CargoAcquisition {
   env?: Record<string, string>;
   bin: string;
 }
+interface ReleaseAcquisition {
+  repo: string;
+  version: string;
+  tag: string;
+  /** 可用 {platform} 占位；默认按 install.sh 的目标名映射。 */
+  url: string;
+  /** release zip 内的可执行文件路径，可用 {platform} 占位。 */
+  bin: string;
+  /** 解压后顶层目录未必叫 bun-{platform} 时的候选。 */
+  fallbackBin?: string;
+}
 interface Implementation {
   displayName: string;
   adapter: string;
+  /** native 表示实现自带类型检查器；兼容 CLI 实现缺省为 tsc-compatible。 */
+  kind?: string;
   acquisition: {
     npm?: NpmAcquisition;
     cargo?: CargoAcquisition;
+    release?: ReleaseAcquisition;
     localEnv?: string;
   };
 }
@@ -89,8 +104,43 @@ function ensureCargoBinary(name: string, cargo: CargoAcquisition, destAbs: strin
   return binPath;
 }
 
+/** 与 Bun 官方 install.sh 相同的平台目标名（CI 只在 Linux 上运行）。 */
+function platformTarget(): string {
+  if (process.platform === "darwin") return process.arch === "arm64" ? "darwin-aarch64" : "darwin-x64";
+  if (process.platform === "linux") {
+    const musl = existsSync("/etc/alpine-release");
+    const arch = process.arch === "arm64" ? "aarch64" : "x64";
+    return `linux-${arch}${musl ? "-musl" : ""}`;
+  }
+  if (process.platform === "win32") return process.arch === "arm64" ? "windows-aarch64" : "windows-x64";
+  die(`不支持的平台：${process.platform}/${process.arch}`);
+}
+
+/**
+ * 下载官方 Bun release zip 并解压到 destAbs/bun/<version>/，返回二进制路径。
+ * 不做 npm 包回退：npm 的 bun 包会执行 postinstall，且版本探测不保证内置检查器。
+ */
+function ensureReleaseBinary(name: string, release: ReleaseAcquisition, destAbs: string): string {
+  const platform = platformTarget();
+  const installDir = join(destAbs, "bun", release.version);
+  const binPath = join(installDir, release.bin.replaceAll("{platform}", platform));
+  if (existsSync(binPath)) return binPath;
+  const fallback = release.fallbackBin === undefined ? undefined : join(installDir, release.fallbackBin);
+  if (fallback !== undefined && existsSync(fallback)) return fallback;
+
+  mkdirSync(installDir, { recursive: true });
+  const archive = join(installDir, `bun-${platform}.zip`);
+  const url = release.url.replaceAll("{platform}", platform);
+  console.error(`下载 ${name} ${release.tag}（${url}）`);
+  run("curl", ["--fail", "--location", "--silent", "--show-error", "--output", archive, url], installDir);
+  run("unzip", ["-o", "-q", archive, "-d", installDir], installDir);
+  if (existsSync(binPath)) return binPath;
+  if (fallback !== undefined && existsSync(fallback)) return fallback;
+  die(`Bun release 解压后找不到可执行文件：${binPath}`);
+}
+
 function usage(): never {
-  console.error("用法：bun scripts/install-impl.ts --name <impl> [--dest <dir>] [--source npm|local|cargo]");
+  console.error("用法：bun scripts/install-impl.ts --name <impl> [--dest <dir>] [--source npm|local|cargo|release]");
   process.exit(2);
 }
 
@@ -130,16 +180,18 @@ function main(): void {
     console.error(`未知实现 ${name}；可用：${Object.keys(registry.implementations).join(" / ")}`);
     process.exit(1);
   }
-  const { npm, cargo, localEnv } = impl.acquisition;
+  const { npm, cargo, release, localEnv } = impl.acquisition;
 
   const chosen =
     source.length > 0
       ? source
       : localEnv !== undefined && (process.env[localEnv] ?? "").length > 0
         ? "local"
-        : npm !== undefined
-          ? "npm"
-          : "cargo";
+        : release !== undefined
+          ? "release"
+          : npm !== undefined
+            ? "npm"
+            : "cargo";
 
   const print = (path: string): void => {
     console.log(resolve(path));
@@ -161,6 +213,15 @@ function main(): void {
       process.exit(1);
     }
     print(ensureCargoBinary(name, cargo, resolve(dest)));
+    return;
+  }
+
+  if (chosen === "release") {
+    if (release === undefined) {
+      console.error(`实现 ${name} 未登记 release 获取方式`);
+      process.exit(1);
+    }
+    print(ensureReleaseBinary(name, release, resolve(dest)));
     return;
   }
 
@@ -190,7 +251,7 @@ function main(): void {
     return;
   }
 
-  console.error(`--source 只接受 npm / local / cargo，收到 ${chosen}`);
+  console.error(`--source 只接受 npm / local / cargo / release，收到 ${chosen}`);
   process.exit(2);
 }
 

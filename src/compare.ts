@@ -1,21 +1,13 @@
 // 期望 vs 实际：匹配规则与指标汇总。
 //
-// 判定粒度（L1）：文件 + 行 + 列 + 错误码；宽度只有部分实现提供，缺省时跳过；
-// message 暂不比较（L2/L3 见 docs/DESIGN.md）。只比较 error 级：warning 不进
-// 分母，避免把实现自己的 warning 口径算进来。
-//
-// 错锚（misanchor）的正式定义：**同一文件、同一错误码，但位置不同**。
-// 这类差异先成对抵消（expected × actual 各取一条），**不计入 fp、也不计入
-// miss**，单独累计。它是「判定一致、锚点口径不同」的信号，不能当成兼容性
-// 差异（跨 tsc 版本之间尤其常见）；但自比（同版本期望 × 同版本实现）出现
-// 错锚就是 harness 的 bug。
-//
-// 覆盖率分母仍是全部期望诊断，分子只数「位置也一致」的命中，因此错锚会
-// 让覆盖率略低于 100%；配套的 misanchor 数字负责解释这部分差额。
+// compareDiagnostics 提供两档判定；T0–T3 只为旧产物及旧清单保留。
+// 多报错误、漏报、错锚按新的对应关系汇总；错锚仍不重复计入 fp/miss。
 
+import { comparisonFields, compareDiagnostics, type ComparisonField, type ComparisonOptions, type DiagnosticComparison, type FieldStatus, type Verdict } from "./comparison.ts";
 import { summaryBlockOf } from "./officialBaseline.ts";
-import type { GateReport } from "./gate.ts";
-import type { Diagnostic } from "./types.ts";
+import type { GateProfile, GateReport } from "./gate.ts";
+import type { RatchetStateRegression } from "./ratchet.ts";
+import type { CaseOutcome, CompilerOptions, Diagnostic } from "./types.ts";
 
 /**
  * 与官方基线的四级一致性（对齐 reference/tsc-rs 的 Agreement 枚举）：
@@ -53,6 +45,17 @@ export interface CaseRecord {
   classes: string[];
   expected: Diagnostic[];
   actual: Diagnostic[];
+  comparison: DiagnosticComparison | null;
+  /** 各适配器实际提供的诊断输出；null 不是空输出。 */
+  expectedOutput: string | null;
+  actualOutput: string | null;
+  expectedRawOutput?: CaseOutcome["rawOutput"];
+  actualRawOutput?: CaseOutcome["rawOutput"];
+  expectedExitCode: number | null;
+  actualExitCode: number | null;
+  options?: CompilerOptions;
+  expectedArgs?: string[];
+  actualArgs?: string[];
   /** 多报的诊断（假阳性）；错锚已从中剔除。 */
   fp: Diagnostic[];
   /** 官方期望里没被命中的诊断（漏报）；错锚已从中剔除。 */
@@ -65,8 +68,6 @@ export interface CaseRecord {
   /** T3 未达时的原因分类（只有官方基线存在正文时设置）。 */
   t3Reason?: T3DiffReason;
 }
-
-const isError = (d: Diagnostic): boolean => d.severity === "error";
 
 const fmtDiagLine = (d: Diagnostic): string =>
   `${d.file}(${d.line + 1},${d.col + 1}): ${d.severity} TS${d.code}: ${d.message ?? ""}`;
@@ -158,8 +159,10 @@ export function tierOf(
   return summaryBlockOf(expectedText) === actBlock ? "full" : "text";
 }
 
-const bucketKey = (d: Diagnostic): string => `${d.file}\u0000${d.code}`;
-const spotKey = (d: Diagnostic): string => `${d.line}:${d.col}`;
+interface CompareCaseOptions extends ComparisonOptions {
+  expectedExitCode?: number | null;
+  actualExitCode?: number | null;
+}
 
 export function compareCase(
   id: string,
@@ -168,69 +171,36 @@ export function compareCase(
   classes: string[] = [],
   baselineText: string | null = null,
   actualText: string | null = null,
+  options: CompareCaseOptions = {},
 ): CaseRecord {
-  const exp = expected.filter(isError);
-  const act = actual.filter(isError);
-
-  const expBuckets = new Map<string, Diagnostic[]>();
-  const actBuckets = new Map<string, Diagnostic[]>();
-  for (const d of exp) expBuckets.set(bucketKey(d), [...(expBuckets.get(bucketKey(d)) ?? []), d]);
-  for (const d of act) actBuckets.set(bucketKey(d), [...(actBuckets.get(bucketKey(d)) ?? []), d]);
-
-  let hits = 0;
-  let misanchor = 0;
-  const fp: Diagnostic[] = [];
-  const missed: Diagnostic[] = [];
-  const keys = new Set([...expBuckets.keys(), ...actBuckets.keys()]);
-  for (const key of keys) {
-    const bucketExp = expBuckets.get(key) ?? [];
-    const bucketAct = actBuckets.get(key) ?? [];
-    // 精确位置的多重集匹配（同位置同码可能合法地出现多条）。
-    const remaining = new Map<string, number>();
-    for (const d of bucketExp) remaining.set(spotKey(d), (remaining.get(spotKey(d)) ?? 0) + 1);
-    const restAct: Diagnostic[] = [];
-    for (const d of bucketAct) {
-      const k = spotKey(d);
-      const n = remaining.get(k) ?? 0;
-      if (n > 0) {
-        hits++;
-        remaining.set(k, n - 1);
-      } else {
-        restAct.push(d);
-      }
-    }
-    const restExp: Diagnostic[] = [];
-    for (const d of bucketExp) {
-      const k = spotKey(d);
-      const n = remaining.get(k) ?? 0;
-      if (n > 0) {
-        remaining.set(k, n - 1);
-        restExp.push(d);
-      }
-    }
-    // 同文件同码、位置不同的剩余项成对归入错锚，其余才计 fp / miss。
-    const pairs = Math.min(restExp.length, restAct.length);
-    misanchor += pairs;
-    fp.push(...restAct.slice(pairs));
-    missed.push(...restExp.slice(pairs));
-  }
-
+  const expectedOutput = options.expectedOutput ?? (baselineText === null ? undefined : summaryBlockOf(baselineText));
+  const actualOutput = options.actualOutput ?? actualText ?? undefined;
+  const comparison = compareDiagnostics(expected, actual, { ...options, expectedOutput, actualOutput });
+  const movedExpected = new Set(comparison.positionDifferences.map((pair) => pair.expected));
+  const movedActual = new Set(comparison.positionDifferences.map((pair) => pair.actual));
+  const missed = comparison.missing.filter((i) => !movedExpected.has(i)).map((i) => expected[i]!);
+  const fp = comparison.extraErrors.filter((i) => !movedActual.has(i)).map((i) => actual[i]!);
   const tier = tierOf(expected, actual, baselineText, actualText);
   const record: CaseRecord = {
     id,
     status: "ran",
     classes,
-    expected: exp,
-    actual: act,
+    expected,
+    actual,
+    comparison,
+    expectedOutput: expectedOutput ?? null,
+    actualOutput: actualOutput ?? null,
+    expectedExitCode: options.expectedExitCode ?? null,
+    actualExitCode: options.actualExitCode ?? null,
     fp,
     missed,
-    hits,
-    misanchor,
+    hits: comparison.matches.length,
+    misanchor: comparison.positionDifferences.length,
     tier,
   };
   // T3 失败原因只对「官方基线存在正文」的用例归因（无基线 = 期望零错误，归入 fp）。
   if (tier !== "full" && baselineText !== null) {
-    record.t3Reason = classifyT3Diff(baselineText, actualText ?? renderErrorBlock(act));
+    record.t3Reason = classifyT3Diff(baselineText, actualText ?? renderErrorBlock(actual));
   }
   return record;
 }
@@ -243,6 +213,11 @@ export function skipRecord(id: string, reason: string, classes: string[] = []): 
     classes,
     expected: [],
     actual: [],
+    comparison: null,
+    expectedOutput: null,
+    actualOutput: null,
+    expectedExitCode: null,
+    actualExitCode: null,
     fp: [],
     missed: [],
     hits: 0,
@@ -265,9 +240,13 @@ export interface RunMeta {
   /** 语料来源版本（repo@ref），用于多基线时区分语料。 */
   corpusRef?: string;
   /** 期望来源；缺省（旧记录）视为 tsc。 */
-  expectationSource?: "tsc" | "official-baseline";
+  expectationSource?: "tsc" | "official-baseline" | "ts7-api";
   generatedAt: string;
   selectedCases: number;
+  executionFailures?: { id: string; side: "reference" | "candidate"; status: "crash" | "timeout"; reason: string }[];
+  manifest?: { path: string; sha256: string; selectedIdsSha256: string; parsedInputsSha256: string; officialInputsSha256?: string };
+  options?: { strategy: "defaults" | "aligned"; referenceBaseArgs: string[]; sharedArgs: string[]; candidateArgs: string[]; candidateEnvArgs: string[]; onlyClasses: string[]; excludeClasses: string[] };
+  tools?: { runner: string; platform: string; reference: ToolIdentity; candidate: ToolIdentity | null };
   /** 设置了 --ratchet / --ratchet-impl 时的对比结果。 */
   ratchet?: {
     path: string;
@@ -276,12 +255,31 @@ export interface RunMeta {
     /** 本次运行是否首次创建清单（只登记当前档位、不作回落判定）。 */
     initialized?: boolean;
     regressions: number;
+    profile?: GateProfile;
+    blockingRegressions?: number;
+    regressionDetails?: (RatchetStateRegression & { blocking: boolean })[];
     improvements: number;
     wrote: boolean;
   };
   /** 设置了 --gate 时的门禁结论（逐项检查结果，CI 用它判断红绿）。 */
   gate?: GateReport;
 }
+
+export interface ToolIdentity {
+  path: string;
+  version: string | null;
+  sha256: string | null;
+  native?: { path: string; sha256: string | null };
+  embeddedTypeScript?: string;
+}
+
+type VerdictCounts = Record<Verdict, number>;
+export interface ComparisonTotals {
+  compatibility: VerdictCounts;
+  strict: VerdictCounts;
+  fields: Record<ComparisonField, Record<FieldStatus, number>>;
+}
+const verdictCounts = (): VerdictCounts => ({ pass: 0, fail: 0, unknown: 0 });
 
 export interface ClassTotals {
   cases: number;
@@ -295,6 +293,8 @@ export interface ClassTotals {
   misanchorCases: number;
   misanchorTotal: number;
   coverage: number | null;
+  compatibility: VerdictCounts;
+  strict: VerdictCounts;
 }
 
 export interface Metrics {
@@ -303,7 +303,7 @@ export interface Metrics {
     cases: number;
     ran: number;
     skipped: number;
-    /** 完全一致（fp、漏报、错锚都为 0）的用例数。 */
+    /** 兼容通过的用例数；严格一致见 comparison.strict。 */
     passCases: number;
     /** fp=0 的用例数（允许漏报与错锚）。 */
     fpFreeCases: number;
@@ -324,6 +324,7 @@ export interface Metrics {
     /** T3 未达用例的原因分布（diagnostics/order/elaboration/related/other）。 */
     t3Failures: [string, number][];
   };
+  comparison: ComparisonTotals;
   /** 按标签聚合；标签正交，数字不可相加。 */
   byClass: Record<string, ClassTotals>;
   byCode: { fp: [string, number][]; miss: [string, number][] };
@@ -350,6 +351,8 @@ interface ClassAcc {
   missTotal: number;
   misanchorCases: number;
   misanchorTotal: number;
+  compatibility: VerdictCounts;
+  strict: VerdictCounts;
 }
 
 export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
@@ -375,6 +378,10 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
   const t3Reasons = new Map<string, number>();
   const t3Samples: string[] = [];
   const classAcc = new Map<string, ClassAcc>();
+  const comparison: ComparisonTotals = {
+    compatibility: verdictCounts(), strict: verdictCounts(),
+    fields: Object.fromEntries(comparisonFields.map((f) => [f, { equal: 0, different: 0, unavailable: 0 }])) as ComparisonTotals["fields"],
+  };
 
   /** T2 未达（T0/T1 已达、文案不同）的样例，供「文案对齐待办」用。 */
   const textDiffSample = (r: CaseRecord): string | null => {
@@ -409,11 +416,17 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
           missTotal: 0,
           misanchorCases: 0,
           misanchorTotal: 0,
+          compatibility: verdictCounts(),
+          strict: verdictCounts(),
         };
       acc.cases++;
       if (r.status === "skip") acc.skipped++;
       else {
         acc.ran++;
+        if (r.comparison !== null) {
+          acc.compatibility[r.comparison.compatibility]++;
+          acc.strict[r.comparison.strict]++;
+        }
         acc.expectTotal += r.expected.length;
         acc.hitTotal += r.hits;
         acc.missTotal += r.missed.length;
@@ -433,6 +446,11 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
       continue;
     }
     ran++;
+    if (r.comparison !== null) {
+      comparison.compatibility[r.comparison.compatibility]++;
+      comparison.strict[r.comparison.strict]++;
+      for (const field of comparisonFields) comparison.fields[field][r.comparison.fields[field]]++;
+    }
     expectTotal += r.expected.length;
     hitTotal += r.hits;
     missTotal += r.missed.length;
@@ -442,24 +460,13 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
       t3Reasons.set(r.t3Reason, (t3Reasons.get(r.t3Reason) ?? 0) + 1);
       if (t3Samples.length < 40) t3Samples.push(`${r.id} ${r.t3Reason}`);
     }
-    // 诊断级「文案差」：位置（file/line/col/code）命中但首行 message 不同。
-    {
-      const actualByKey = new Map<string, Diagnostic>();
-      for (const d of r.actual) {
-        const key = `${d.file}\u0000${d.line}\u0000${d.col}\u0000${d.code}`;
-        if (!actualByKey.has(key)) actualByKey.set(key, d);
-      }
-      for (const d of r.expected) {
-        const actual = actualByKey.get(`${d.file}\u0000${d.line}\u0000${d.col}\u0000${d.code}`);
-        if (actual === undefined) continue;
-        if ((actual.message ?? "") === (d.message ?? "")) continue;
-        messageMismatch++;
-        if (messageDiffSamples.length < 40) {
-          const trunc = (x: string | undefined): string => (x ?? "(无)").slice(0, 100);
-          messageDiffSamples.push(
-            `${r.id} ${d.file}:${d.line + 1}:${d.col + 1} TS${d.code} expected="${trunc(d.message)}" actual="${trunc(actual.message)}"`,
-          );
-        }
+    for (const match of r.comparison?.matches ?? []) {
+      if (match.fields.message !== "different") continue;
+      messageMismatch++;
+      if (messageDiffSamples.length < 40) {
+        const d = r.expected[match.expected]!;
+        const a = r.actual[match.actual]!;
+        messageDiffSamples.push(`${fmtDiag(r.id, d)} expected=${JSON.stringify(d.message)} actual=${JSON.stringify(a.message)}`);
       }
     }
     if (textDiffSamples.length < 40) {
@@ -468,7 +475,7 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
     }
     if (r.misanchor > 0) misanchorCases++;
     if (r.fp.length === 0) fpFreeCases++;
-    if (r.fp.length === 0 && r.missed.length === 0 && r.misanchor === 0) passCases++;
+    if (r.comparison?.compatibility === "pass") passCases++;
     if (r.fp.length > 0) {
       fpCases++;
       fpTotal += r.fp.length;
@@ -511,6 +518,7 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
       byTier,
       t3Failures: [...t3Reasons.entries()].sort((a, b) => b[1] - a[1]),
     },
+    comparison,
     byClass,
     byCode: { fp: topEntries(fpByCode, 15), miss: topEntries(missByCode, 15) },
     skips: [...skips.entries()].sort((a, b) => b[1] - a[1]),
@@ -522,16 +530,13 @@ export function formatSummary(m: Metrics): string {
   const t = m.totals;
   const pct = (x: number | null): string => (x === null ? "n/a" : `${(x * 100).toFixed(1)}%`);
   const lines = [
-    `tsc-compa ${m.meta.suite} — 用例 ${t.cases}：跑 ${t.ran}，完全通过 ${t.passCases}，跳过 ${t.skipped}`,
+    `tsc-compa ${m.meta.suite} — 用例 ${t.cases}：完成 ${t.ran}，跳过 ${t.skipped}`,
+    `兼容：${m.comparison.compatibility.pass} 通过 / ${m.comparison.compatibility.fail} 失败 / ${m.comparison.compatibility.unknown} 无法确认；` +
+      `严格一致：${m.comparison.strict.pass} 通过 / ${m.comparison.strict.fail} 失败 / ${m.comparison.strict.unknown} 无法确认`,
     `假阳性 ${t.fpCases} 用例 / ${t.fpTotal} 条；覆盖 ${t.hitTotal}/${t.expectTotal} = ${pct(t.coverage)}；漏报 ${t.missTotal}；错锚 ${t.misanchorCases} 用例 / ${t.misanchorTotal} 条（不计入 fp/miss）`,
   ];
   if (m.byCode.fp.length > 0) lines.push(`top fp：${m.byCode.fp.map(([c, n]) => `${c}×${n}`).join(" ")}`);
   if (m.byCode.miss.length > 0) lines.push(`top miss：${m.byCode.miss.map(([c, n]) => `${c}×${n}`).join(" ")}`);
-  const tierText = TIERS.map((t) => `${t}=${m.totals.byTier[t]}`).join(" ");
-  lines.push(`分档（T0~T3）：${tierText}；命中位置但文案不同 ${m.totals.messageMismatch} 条`);
-  if (m.totals.t3Failures.length > 0) {
-    lines.push(`T3 未达原因：${m.totals.t3Failures.map(([r, n]) => `${r}×${n}`).join(" ")}`);
-  }
   for (const tag of ["suite:compiler", "suite:conformance"]) {
     const cls = m.byClass[tag];
     if (cls === undefined) continue;

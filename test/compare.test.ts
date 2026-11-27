@@ -36,22 +36,26 @@ test("精确命中、漏报、假阳性与错锚分别计数", () => {
   expect(record.misanchor).toBe(1);
 });
 
-test("错锚成对抵消，多出来的仍计 fp / miss", () => {
+test("多个候选位置无法归因时保留漏报和多报，不虚构位置对应", () => {
   const expected = [d({ line: 1 }), d({ line: 2 })];
   const actual = [d({ line: 1 }), d({ line: 5 }), d({ line: 6 })];
   const record = compareCase("case-x", expected, actual);
   expect(record.hits).toBe(1);
-  expect(record.misanchor).toBe(1);
-  expect(record.missed.length).toBe(0);
-  expect(record.fp.length).toBe(1);
+  expect(record.misanchor).toBe(0);
+  expect(record.missed.length).toBe(1);
+  expect(record.fp.length).toBe(2);
+  expect(record.comparison?.compatibility).toBe("fail");
 });
 
-test("warning 不进分母：只比较 error", () => {
+test("warning 保留；额外 warning 不计多报，error 降级仍算命中", () => {
   const expected = [d({ code: 2322 })];
-  const actual = [d({ code: 2322 }), d({ code: 9999, severity: "warning" })];
+  const actual = [d({ code: 2322, severity: "warning" }), d({ code: 9999, severity: "warning" })];
   const record = compareCase("case-b", expected, actual);
+  expect(record.actual).toEqual(actual);
   expect(record.hits).toBe(1);
   expect(record.fp.length).toBe(0);
+  expect(record.comparison?.compatibility).toBe("pass");
+  expect(record.comparison?.strict).toBe("fail");
 });
 
 test("汇总：覆盖率为空期望时记 null，skip 按原因分类，按类聚合", () => {

@@ -6,6 +6,8 @@
 //   - 某行含 FAKE_TS2345 → 该行 0 列报 TS2345
 //   - 整个用例含 FAKE_SKIP  → status=skip
 //   - 整个用例含 FAKE_CRASH → status=crash
+//   - 整个用例含 FAKE_RICH  → 返回完整协议字段（消息链/related/attributes/
+//     fullText/exitCode/checkMs/rawOutput），验证客户端不丢字段。
 // shutdown 或 EOF 时退出。它演示了协议的最小实现，也给 client 侧测试用。
 
 import { createInterface } from "node:readline";
@@ -24,6 +26,22 @@ function diagnosticsOf(files: { path: string; text: string }[]): Diagnostic[] {
     const lines = file.text.split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? "";
+      if (line.includes("FAKE_RICH")) {
+        out.push({
+          file: file.path,
+          line: i,
+          col: 0,
+          code: 2322,
+          severity: "error",
+          width: 3,
+          message: "rich message",
+          messageChain: { text: "rich message", children: [{ text: "child" }] },
+          related: [{ file: file.path, line: i, col: 1, width: 1, code: 2728, message: "related" }],
+          attributes: { source: "TS", reportsUnnecessary: false },
+          fullText: `${file.path}(${i + 1},1): error TS2322: rich message\n  child`,
+          raw: { marker: "FAKE_RICH" },
+        });
+      }
       if (line.includes("FAKE_TS2322")) {
         out.push({ file: file.path, line: i, col: 0, code: 2322, severity: "error" });
       }
@@ -65,5 +83,19 @@ rl.on("line", (line) => {
     write({ protocol: 1, type: "result", id: request.id, status: "skip", skipReason: "mock skip" });
     return;
   }
-  write({ protocol: 1, type: "result", id: request.id, status: "ok", diagnostics: diagnosticsOf(files) });
+  const diagnostics = diagnosticsOf(files);
+  const rich = text.includes("FAKE_RICH");
+  write({
+    protocol: 1,
+    type: "result",
+    id: request.id,
+    status: "ok",
+    diagnostics,
+    ...(rich && {
+      fullText: diagnostics.map((d) => d.fullText).join("\n"),
+      exitCode: 2,
+      checkMs: 12,
+      rawOutput: { stdout: "mock stdout", stderr: "mock stderr" },
+    }),
+  });
 });

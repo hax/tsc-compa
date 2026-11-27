@@ -50,7 +50,7 @@ export const CASE_TAGS: readonly CaseTag[] = [
   "expect:no-errors",
 ];
 
-/** emit/declaration 类指令：不影响「语义诊断」，但会在 emit 相关用例里出现。 */
+/** emit/declaration 类选项；有些会改变诊断，单独分类。 */
 const EMIT_DIRECTIVES = new Set([
   "declaration",
   "declarationmap",
@@ -111,7 +111,7 @@ export function classifyCase(id: string, parsed: ParsedCase): StaticTag[] {
 
   if (parsed.options.some((o) => MODULE_OPTIONS.has(o.name))) tags.push("options:module");
   if (parsed.options.some((o) => o.name === "lib")) tags.push("options:lib");
-  if (parsed.ignored.some((key) => EMIT_DIRECTIVES.has(key))) tags.push("options:emit");
+  if (parsed.ignored.some((key) => EMIT_DIRECTIVES.has(key)) || parsed.options.some((o) => EMIT_DIRECTIVES.has(o.name.toLowerCase()))) tags.push("options:emit");
   if (ENV_SKIP_DIRECTIVES.some((d) => (parsed.skip ?? "").startsWith(d))) tags.push("env:skip");
 
   return tags;

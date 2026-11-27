@@ -26,6 +26,7 @@ afterEach(() => {
 interface FixtureMetrics {
   meta?: Record<string, unknown>;
   totals?: Record<string, unknown>;
+  comparison?: Record<string, unknown>;
   skips?: unknown;
   byCode?: unknown;
   samples?: unknown;
@@ -69,6 +70,7 @@ function metricsOf(overrides: FixtureMetrics = {}): Record<string, unknown> {
   return {
     meta: { ...BASE_META, ...(overrides.meta ?? {}) },
     totals: { ...BASE_TOTALS, ...(overrides.totals ?? {}) },
+    ...(overrides.comparison !== undefined ? { comparison: overrides.comparison } : {}),
     skips: overrides.skips ?? [],
     byCode: overrides.byCode ?? { fp: [], miss: [] },
     samples: overrides.samples ?? { fp: [], miss: [], textDiff: [], messageDiff: [], t3: [] },
@@ -94,6 +96,92 @@ function detailsWithTier(entries: [string, string][]): Record<string, unknown>[]
     tier,
   }));
 }
+
+const NEW_FIELDS = {
+  code: "equal",
+  severity: "equal",
+  location: "equal",
+  width: "equal",
+  message: "equal",
+  messageChain: "equal",
+  related: "equal",
+  attributes: "equal",
+  count: "equal",
+  order: "equal",
+  output: "equal",
+} as const;
+
+function comparisonOf(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    compatibility: "pass",
+    strict: "pass",
+    fields: { ...NEW_FIELDS },
+    matches: [],
+    positionDifferences: [],
+    missing: [],
+    extraErrors: [],
+    extraWarnings: [],
+    unclassified: [],
+    unresolved: { expected: [], actual: [] },
+    ...overrides,
+  };
+}
+
+function newDetails(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "compiler/a.ts",
+    status: "ran",
+    expected: [{ file: "a.ts", line: 0, col: 0, code: 2322, severity: "error", message: "expected" }],
+    actual: [{ file: "a.ts", line: 0, col: 0, code: 2322, severity: "error", message: "actual" }],
+    comparison: comparisonOf(),
+    expectedExitCode: 2,
+    actualExitCode: 2,
+    expectedOutput: "a.ts(1,1): error TS2322: expected",
+    actualOutput: "a.ts(1,1): error TS2322: actual",
+    options: [{ name: "strict", value: true }],
+    expectedArgs: ["--strict", "true"],
+    actualArgs: ["--strict", "true"],
+    hits: 1,
+    fp: [],
+    missed: [],
+    misanchor: 0,
+    tier: "full",
+    ...overrides,
+  };
+}
+
+function v2Metrics(options: {
+  compatibility?: "pass" | "fail" | "unknown";
+  strict?: "pass" | "fail" | "unknown";
+  generatedAt?: string;
+  manifest?: Record<string, unknown> | null;
+  expectationSource?: string;
+  optionStrategy?: "defaults" | "aligned";
+} = {}): Record<string, unknown> {
+  const compatibility = options.compatibility ?? "pass";
+  const strict = options.strict ?? "pass";
+  return metricsOf({
+    meta: {
+      ...(options.generatedAt === undefined ? {} : { generatedAt: options.generatedAt }),
+      ...(options.manifest === undefined ? {} : { manifest: options.manifest }),
+      ...(options.expectationSource === undefined ? {} : { expectationSource: options.expectationSource }),
+      ...(options.optionStrategy === undefined ? {} : { options: { strategy: options.optionStrategy } }),
+    },
+    comparison: {
+      compatibility: { pass: compatibility === "pass" ? 1 : 0, fail: compatibility === "fail" ? 1 : 0, unknown: compatibility === "unknown" ? 1 : 0 },
+      strict: { pass: strict === "pass" ? 1 : 0, fail: strict === "fail" ? 1 : 0, unknown: strict === "unknown" ? 1 : 0 },
+      fields: Object.fromEntries(Object.keys(NEW_FIELDS).map((field) => [field, { equal: 1, different: 0, unavailable: 0 }])),
+    },
+  });
+}
+
+const SAME_V2_SCOPE = {
+  path: "config/v2-cases.json",
+  sha256: "manifest-a",
+  selectedIdsSha256: "selected-a",
+  parsedInputsSha256: "parsed-a",
+  officialInputsSha256: "official-a",
+};
 
 describe("报告渲染：最小 metrics 输入", () => {
   test("Markdown 含标题、摘要卡、阶梯、头部口径", () => {
@@ -249,7 +337,411 @@ describe("报告渲染：最小 metrics 输入", () => {
   });
 });
 
+describe("新两档报告：比较主视图与逐案展开", () => {
+  test("metrics.comparison 为主视图：兼容/严格各 pass/fail/unknown、字段回归表", () => {
+    const metrics = metricsOf({
+      comparison: {
+        compatibility: { pass: 1, fail: 1, unknown: 1 },
+        strict: { pass: 0, fail: 2, unknown: 1 },
+        fields: {
+          ...Object.fromEntries(Object.keys(NEW_FIELDS).map((field) => [field, { equal: 1, different: 1, unavailable: 1 }])),
+          output: { equal: 0, different: 2, unavailable: 1 },
+        },
+      },
+    });
+    const { markdown, html } = generateReport({ metrics, details: [newDetails()] });
+    expect(markdown).toContain("## 两档比较");
+    expect(markdown).toContain("| 兼容通过（旧字段） | 2/3 例 |");
+    expect(markdown).toContain("| 兼容档 | 1 | 1 | 1 |");
+    expect(markdown).toContain("| 严格一致档 | 0 | 2 | 1 |");
+    expect(markdown).toContain("| 完整输出 | 0 | 2 | 1 |");
+    expect(markdown).toContain("（严格一致不是旧 T3 全文比较）");
+    expect(html).toContain("<h2>两档比较</h2>");
+    expect(html).toContain("兼容档");
+  });
+
+  test("逐案展开等价码/严重级别/范围/文字/related/顺序/附加诊断，位置差异仍不兼容", () => {
+    const details = newDetails({
+      expected: [
+        { file: "a.ts", line: 0, col: 0, code: 2322, severity: "error", message: "expected" },
+        { file: "a.ts", line: 2, col: 4, code: 2322, severity: "error", message: "moved" },
+      ],
+      actual: [
+        { file: "a.ts", line: 0, col: 0, code: 2322, severity: "error", message: "actual" },
+        { file: "a.ts", line: 3, col: 4, code: 2322, severity: "error", message: "moved elsewhere" },
+      ],
+      comparison: comparisonOf({
+        compatibility: "fail",
+        strict: "fail",
+        fields: {
+          ...NEW_FIELDS,
+          code: "different",
+          severity: "different",
+          width: "different",
+          message: "different",
+          messageChain: "unavailable",
+          related: "different",
+          order: "different",
+          output: "different",
+          attributes: "unavailable",
+        },
+        matches: [{
+          expected: 0,
+          actual: 0,
+          fields: {
+            code: "different",
+            severity: "different",
+            location: "equal",
+            width: "different",
+            message: "different",
+            messageChain: "unavailable",
+            related: "different",
+            attributes: "unavailable",
+          },
+        }],
+        positionDifferences: [{
+          expected: 1,
+          actual: 1,
+          fields: {
+            code: "equal",
+            severity: "equal",
+            location: "different",
+            width: "equal",
+            message: "equal",
+            messageChain: "equal",
+            related: "equal",
+            attributes: "equal",
+          },
+        }],
+        missing: [1],
+        extraErrors: [2],
+        extraWarnings: [3],
+        unclassified: [4],
+        unresolved: { expected: [1], actual: [2] },
+      }),
+      expectedExitCode: 2,
+      actualExitCode: 1,
+    });
+    const { markdown, html } = generateReport({ metrics: metricsOf({ comparison: { compatibility: { pass: 0, fail: 1, unknown: 0 }, strict: { pass: 0, fail: 1, unknown: 0 }, fields: {} } }), details: [details] });
+    for (const text of ["诊断码（等价码差异）", "严重级别", "标记范围", "首行文字", "related 信息", "输出顺序", "其他诊断属性"]) {
+      expect(markdown).toContain(text);
+      expect(html).toContain(text);
+    }
+    expect(markdown).toContain("仅位置不同（仍判不兼容）");
+    expect(markdown).toContain("expected[1] ↔ actual[1]");
+    expect(markdown).toContain("TS2322 → TS2322");
+    expect(markdown).toContain("完整输出（参考）");
+    expect(markdown).toContain("完整输出（候选）");
+    expect(markdown).toContain("```\na.ts(1,1): error TS2322: expected\n```");
+    expect(markdown).toContain("未对应的参考诊断");
+    expect(markdown).toContain("未能唯一对应");
+    expect(markdown).toContain("1 条新增 warning");
+    expect(markdown).toContain("1 条未分类诊断");
+    expect(markdown).toContain("参考 2｜候选 1（不一致）");
+    expect(html).toContain("仅位置不同（仍判不兼容）");
+    expect(html).toContain("<pre><code>");
+    expect(html).toContain("参考 2｜候选 1（不一致）");
+  });
+
+  test("退出码、output/args/options 缺值明确标未提供，不伪造 0", () => {
+    const details = newDetails({
+      expectedExitCode: 0,
+      actualExitCode: null,
+      expectedOutput: null,
+      actualOutput: "",
+      expectedArgs: undefined,
+      actualArgs: [],
+      options: undefined,
+    });
+    const { markdown } = generateReport({ metrics: metricsOf({ comparison: { compatibility: { pass: 1, fail: 0, unknown: 0 }, strict: { pass: 1, fail: 0, unknown: 0 }, fields: {} } }), details: [details] });
+    expect(markdown).toContain("参考 0｜未提供");
+    expect(markdown).toContain("输出 未提供 / 已提供");
+    expect(markdown).toContain("参考 未提供；候选 `（无）`");
+  });
+
+  test("旧详情缺 comparison：两档保持未提供，不用 T3 反推严格一致", () => {
+    const { markdown, html } = generateReport({ metrics: metricsOf(), details: BASE_DETAILS });
+    expect(markdown).not.toContain("## 两档比较");
+    expect(markdown).not.toContain("严格一致档 通过");
+    expect(html).not.toContain("<h2>两档比较</h2>");
+    // 旧 T3 仍显示，但明确是过渡参考。
+    expect(markdown).toContain("旧 metrics.totals 的 T0–T3 阶梯");
+  });
+
+  test("meta 的可追溯信息：manifest/选项策略/参考与候选 provenance；默认与对齐可区分", () => {
+    const defaults = generateReport({
+      metrics: metricsOf({
+        meta: {
+          manifest: { path: "config/cases.json", sha256: "abc" },
+          options: { strategy: "defaults", referenceBaseArgs: ["--noEmit"], sharedArgs: [], candidateArgs: [], candidateEnvArgs: [], onlyClasses: [], excludeClasses: [] },
+          tools: {
+            runner: "Bun 1.4.5",
+            platform: "darwin/arm64",
+            reference: { path: "/ref/tsc", version: "6.0.3", sha256: "refhash" },
+            candidate: { path: "/impl/bin", version: "0.1.0", sha256: "implhash" },
+          },
+        },
+      }),
+      details: [],
+    }).markdown;
+    expect(defaults).toContain("默认设置（参考与候选各自使用默认值，未显式对齐）");
+    expect(defaults).toContain("`config/cases.json`");
+    expect(defaults).toContain("`/ref/tsc`");
+    expect(defaults).toContain("`implhash`");
+    const aligned = generateReport({
+      metrics: metricsOf({
+        meta: { options: { strategy: "aligned", referenceBaseArgs: ["--noEmit"], sharedArgs: ["--target", "es2022"], candidateArgs: ["--noEmit", "--target", "es2022"], candidateEnvArgs: [], onlyClasses: [], excludeClasses: [] } },
+      }),
+      details: [],
+    }).markdown;
+    expect(aligned).toContain("对齐设置（候选使用参考配置的基础参数）");
+    expect(aligned).toContain("参考基础参数");
+    expect(aligned).toContain("候选基础参数");
+  });
+
+  test("meta.tools 的候选工具标志：embeddedTypeScript 与原生 hash 明确展示", () => {
+    const { markdown, html } = generateReport({
+      metrics: metricsOf({
+        meta: {
+          tools: {
+            runner: "Bun 1.4.5",
+            platform: "darwin/arm64",
+            reference: { path: "/ref/tsc", version: "6.0.3", sha256: "refhash", native: { path: "/ref/native", sha256: "refnative" } },
+            candidate: { path: "/impl/bin", version: "bun 1.2", sha256: "implhash", embeddedTypeScript: "5.9.0", native: { path: "/impl/native", sha256: "implnative" } },
+          },
+        },
+      }),
+      details: [],
+    });
+    expect(markdown).toContain("内置 TypeScript `5.9.0`（Bun 内置版本，不是参考 tsc 版本）");
+    expect(markdown).toContain("原生 sha256 `implnative`");
+    expect(markdown).toContain("原生 sha256 `refnative`");
+    expect(html).toContain("内置 TypeScript");
+  });
+
+  test("metrics.perf 渲染：Check 口径、兼容通过子集、样本构成与 warnings", () => {
+    const perf = {
+      enabled: true,
+      sample: {
+        seed: "s1",
+        requested: 20,
+        size: 18,
+        referenceOk: 18,
+        referenceFailed: 2,
+        composition: {
+          suite: { compiler: 12, conformance: 6 },
+          lineBucket: { "<=50": 10, "51-200": 8 },
+          errorPresence: { errors: 15, clean: 3 },
+          order: { "ref-first": 9, "impl-first": 9 },
+        },
+      },
+      metric: "check",
+      impl: { sumWallMs: 100, meanWallMs: 5.5, emptyBaselineMs: 2, checkSumMs: 70 },
+      reference: { sumWallMs: 200, meanWallMs: 11.1, emptyBaselineMs: 3, checkSumMs: 100, parseSumMs: 20, bindSumMs: 10, counts: {} },
+      ratio: {
+        wallAdjusted: 0.94,
+        wall: 0.91,
+        check: 0.7,
+        agreementSubset: {
+          cases: 16, implWallMs: 160, referenceWallMs: 200, wall: 0.8, wallAdjusted: 0.9, check: 0.68,
+        },
+        perCase: {
+          check: { n: 18, median: 0.71, geomean: 0.7, p25: 0.6, p75: 0.8 },
+          wallAdjusted: null,
+        },
+      },
+      warnings: ["实现未自报 Check 相位；使用 wall − 空程序基线"],
+    };
+    const metrics = metricsOf({ comparison: { compatibility: { pass: 18, fail: 0, unknown: 0 }, strict: { pass: 17, fail: 1, unknown: 0 }, fields: {} } });
+    metrics.perf = perf;
+    const { markdown, html } = generateReport({ metrics, details: [] });
+    expect(markdown).toContain("## 性能附录");
+    expect(markdown).toContain("Check 相位累加（两侧都自报）");
+    expect(markdown).toContain("总比值（Check） | 0.700");
+    expect(markdown).toContain("总比值（原始实际耗时） | 0.910");
+    expect(markdown).toContain("兼容通过子集 | 16 例；原始实际耗时 0.800（160.0 / 200.0 ms）；Check 0.680");
+    expect(markdown).toContain("suite：compiler 12，conformance 6");
+    expect(markdown).toContain("实现未自报 Check 相位");
+    expect(markdown).toContain("性能比值");
+    expect(html).toContain("<h2>性能附录</h2>");
+    expect(html).toContain("Check 相位累加");
+    expect(html).toContain("实现未自报 Check 相位");
+  });
+});
+
+describe("meta.ratchet / meta.gate.reported", () => {
+  test("展示保护档、阻断回归、逐项回归与非阻断摘要；字段回归不阻断", () => {
+    const metrics = metricsOf({
+      meta: {
+        gate: {
+          passed: true,
+          thresholds: { maxFp: null, maxMiss: null, maxMisanchor: null, minCoverage: null },
+          checks: [{ name: "兼容", ok: true, detail: "无兼容回归" }],
+          reported: [{ name: "非阻断回归", detail: "1 项不在兼容保护档内" }],
+        },
+        ratchet: {
+          path: "config/ratchet/x.tsv",
+          impl: "x",
+          initialized: false,
+          wrote: false,
+          profile: "compatibility",
+          regressions: 2,
+          blockingRegressions: 0,
+          improvements: 1,
+          regressionDetails: [
+            { id: "a.ts", kind: "strict", was: "pass", now: "fail", reasonKind: "comparison", reason: "严格一致回退", blocking: false },
+            { id: "b.ts", kind: "field", field: "message", was: "equal", now: "different", reasonKind: "comparison", reason: "文案变化", blocking: false },
+          ],
+        },
+      },
+      comparison: { compatibility: { pass: 1, fail: 0, unknown: 0 }, strict: { pass: 0, fail: 1, unknown: 0 }, fields: {} },
+    });
+    const { markdown, html } = generateReport({ metrics, details: [newDetails({ comparison: comparisonOf({ strict: "fail" }) })] });
+    expect(markdown).toContain("| 回归保护档 | 兼容（阻断 0 项） |");
+    expect(markdown).toContain("| `a.ts` | 严格一致 | — | pass → fail | `comparison` | 严格一致回退 | 仅报告 |");
+    expect(markdown).toContain("| `b.ts` | 字段 | `message` | equal → different | `comparison` | 文案变化 | 仅报告 |");
+    expect(markdown).toContain("仅报告（不参与门禁）");
+    expect(markdown).toContain("本次没有阻断项");
+    expect(html).toContain("非阻断回归");
+    expect(html).toContain("严格一致回退");
+  });
+
+  test("旧 ratchet 结构标旧归档，不推断 profile；门槛不把比较失败当阻断", () => {
+    const metrics = metricsOf({
+      meta: { ratchet: { path: "config/ratchet-ts71-official.tsv", regressions: 1, improvements: 0, wrote: false, initialized: false } },
+      comparison: { compatibility: { pass: 0, fail: 1, unknown: 0 }, strict: { pass: 0, fail: 1, unknown: 0 }, fields: {} },
+    });
+    const { markdown } = generateReport({ metrics, details: [newDetails()] });
+    expect(markdown).toContain("回归记录（旧 T0–T3 归档）");
+    expect(markdown).toContain("没有 profile / regressionDetails / blocking 信息");
+    expect(markdown).toContain("旧记录未提供阻断信息");
+    expect(markdown).toContain("本次没有阻断项");
+  });
+});
+
+describe("报告数据逃逸", () => {
+  test("diagnostic/related/options/ratchet/gate 中的 HTML 与 Markdown 特殊字符全部惰性", () => {
+    const evil = '<img src=x onerror="alert(1)">';
+    const details = newDetails({
+      id: `evil"><script>alert("id")</script>`,
+      expected: [{ file: "a.ts", line: 0, col: 0, code: 2322, severity: "error", message: evil }],
+      actualOutput: `line\n${evil}\n| pipe`,
+      expectedArgs: [`--x=${evil}`, "a|b"],
+      options: [{ name: `<option>`, value: evil }],
+      comparison: comparisonOf({ fields: { ...NEW_FIELDS, message: "different" } }),
+    });
+    const detail = newDetails({
+      id: "escape.ts",
+      expectedArgs: [`--x=${evil}`, "a|b"],
+      actualArgs: [`--y=${evil}`],
+      options: [{ name: `<option>`, value: evil }],
+      expectedOutput: `line\n${evil}\n| pipe`,
+    });
+    const metrics = metricsOf({
+      meta: {
+        gate: { passed: true, thresholds: {}, checks: [{ name: evil, ok: true, detail: evil }], reported: [{ name: evil, detail: evil }] },
+        ratchet: {
+          path: evil,
+          impl: evil,
+          initialized: false,
+          wrote: false,
+          profile: "compatibility",
+          regressions: 1,
+          blockingRegressions: 1,
+          improvements: 0,
+          regressionDetails: [{ id: evil, kind: "field", field: evil, was: evil, now: evil, reasonKind: "comparison", reason: evil, blocking: true }],
+        },
+        manifest: { path: evil, sha256: evil },
+        options: { strategy: "aligned", referenceBaseArgs: [evil], sharedArgs: [evil], candidateArgs: [evil], candidateEnvArgs: [evil], onlyClasses: [evil], excludeClasses: [] },
+        tools: { runner: evil, platform: evil, reference: { path: evil, version: evil, sha256: evil }, candidate: { path: evil, version: evil, sha256: evil } },
+      },
+      comparison: { compatibility: { pass: 0, fail: 1, unknown: 0 }, strict: { pass: 0, fail: 1, unknown: 0 }, fields: {} },
+      skips: [[evil, 1]],
+      samples: { fp: [evil], miss: [], textDiff: [], messageDiff: [], t3: [] },
+    });
+    const { markdown, html } = generateReport({ metrics, details: [details, detail] }, { title: evil, notes: [evil], implName: evil });
+    expect(html).not.toContain(evil);
+    expect(html).not.toContain("<script>alert(\"id\")</script>");
+    expect(html).not.toContain('<img src=x onerror="alert(1)">');
+    expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
+    expect(html).not.toMatch(/<script\b/);
+    expect(html).not.toMatch(/<img\b/);
+    expect(markdown).not.toContain('\n<script>alert("id")</script>');
+    // 表格/正文路径会转义 `<`；行内代码路径不求转义，但反引号会被围栏包住，不会激活 HTML。
+    expect(markdown).not.toContain('<img src=x onerror="alert(1)">\n');
+    expect(markdown).toContain("`<img src=x onerror=\"alert(1)\">`");
+    expect(markdown).toContain("&lt;img src=x");
+    expect(markdown).toContain("`--x=<img src=x onerror=\"alert(1)\"> a\\|b`");
+  });
+});
+
 describe("报告 delta 与逐例回归", () => {
+  test("用例头部同时展示选中（配置）与实际（展开后）数量", () => {
+    const metrics = metricsOf({ meta: { selectedCases: 1 }, totals: { cases: 2, ran: 2 } });
+    const { markdown, html } = generateReport({ metrics, details: [newDetails(), newDetails({ id: "compiler/b.ts" })] });
+    expect(markdown).toContain("选中 1（源用例）/ 实际 2（展开后）");
+    expect(html).toContain("选中 1（源用例） / 实际 2（展开后）");
+  });
+
+  test("v2 delta：manifest 文件字节变化但选中用例集合相同时仍可比较", () => {
+    const previous = {
+      metrics: v2Metrics({
+        manifest: { ...SAME_V2_SCOPE, sha256: "manifest-before" },
+        optionStrategy: "defaults",
+      }),
+      details: [newDetails()],
+    };
+    const current = {
+      metrics: v2Metrics({
+        manifest: { ...SAME_V2_SCOPE, sha256: "manifest-after" },
+        optionStrategy: "defaults",
+      }),
+      details: [newDetails()],
+    };
+    const { markdown } = generateReport(current, { previous });
+    expect(markdown).not.toContain("范围提示");
+    expect(markdown).toContain("兼容档 · 通过 | 1 | 1 | 0");
+  });
+
+  test("v2 delta：manifest 列表变化且没有选择哈希时提示不可比，不报严格一致回归", () => {
+    const previous = {
+      metrics: v2Metrics({ strict: "fail", manifest: { path: "cases.json", sha256: "manifest-before" } }),
+      details: [newDetails({ comparison: comparisonOf({ strict: "fail", fields: { ...NEW_FIELDS, message: "different" } }) })],
+    };
+    const current = {
+      metrics: v2Metrics({ manifest: { path: "cases.json", sha256: "manifest-after" } }),
+      details: [newDetails()],
+    };
+    const { markdown, html } = generateReport(current, { previous });
+    expect(markdown).toContain("用例列表不同");
+    expect(html).toContain("用例列表不同");
+    expect(markdown).not.toContain("严格一致档：通过 → 失败");
+    expect(markdown).not.toContain("**逐例变化（1 例回归");
+  });
+
+  test("v2 delta：未知字段与移除/跳过只对既有 pass/equal 证据报回归", () => {
+    const previous = {
+      metrics: v2Metrics({ manifest: SAME_V2_SCOPE }),
+      details: [
+        newDetails({ id: "compiler/a.ts" }),
+        newDetails({ id: "compiler/b.ts" }),
+        newDetails({
+          id: "compiler/unverified.ts",
+          comparison: comparisonOf({ compatibility: "unknown", strict: "unknown", fields: Object.fromEntries(Object.keys(NEW_FIELDS).map((field) => [field, "unavailable"])) }),
+        }),
+      ],
+    };
+    const current = {
+      metrics: v2Metrics({ manifest: SAME_V2_SCOPE }),
+      details: [newDetails({ id: "compiler/b.ts", status: "skip", skipReason: "实现返回 timeout" })],
+    };
+    const { markdown } = generateReport(current, { previous });
+    expect(markdown).toContain("已从本次范围移除");
+    expect(markdown).toContain("不再运行：实现返回 timeout");
+    expect(markdown).toContain("2 例回归");
+    expect(markdown).not.toContain("compiler/unverified.ts");
+  });
+
   test("覆盖率/假阳性变化与档位回落在 Markdown 里对比出来", () => {
     const previous = {
       metrics: metricsOf({
@@ -292,6 +784,118 @@ describe("报告 delta 与逐例回归", () => {
     const { markdown } = generateReport(current, { previous });
     expect(markdown).toContain("不再运行：实现返回 timeout");
     expect(markdown).toContain("1 例回归");
+  });
+
+  test("v2 delta：严格一致 pass → 仅兼容是字段/逐例回归，不按 legacy T3 推断", () => {
+    const previous = {
+      metrics: v2Metrics({ strict: "pass", generatedAt: "2026-11-15T00:00:00.000Z", manifest: SAME_V2_SCOPE }),
+      details: [newDetails({ comparison: comparisonOf({ strict: "pass" }) })],
+    };
+    const current = {
+      metrics: v2Metrics({ strict: "fail", manifest: SAME_V2_SCOPE }),
+      details: [newDetails({ comparison: comparisonOf({ strict: "fail", fields: { ...NEW_FIELDS, message: "different" } }) })],
+    };
+    const { markdown, html } = generateReport(current, { previous });
+    expect(markdown).toContain("严格一致档：通过 → 失败");
+    expect(markdown).toContain("字段 首行文字：相同 → 不同");
+    expect(markdown).toContain("严格一致档 · 通过");
+    expect(html).toContain("严格一致档：通过 → 失败");
+  });
+
+  test("v2 delta：字段从 equal 变为 unknown 赋值给 unavailable；未验证项不补造回归", () => {
+    const previous = {
+      metrics: v2Metrics({ manifest: SAME_V2_SCOPE }),
+      details: [
+        newDetails({ comparison: comparisonOf({ fields: { ...NEW_FIELDS, related: "equal" } }) }),
+        newDetails({ id: "compiler/b.ts", comparison: comparisonOf({ fields: { ...NEW_FIELDS, related: "unavailable" } }) }),
+      ],
+    };
+    const current = {
+      metrics: v2Metrics({ manifest: SAME_V2_SCOPE }),
+      details: [
+        newDetails({ comparison: comparisonOf({ fields: { ...NEW_FIELDS, related: "unavailable" } }) }),
+        newDetails({ id: "compiler/b.ts", comparison: comparisonOf({ fields: { ...NEW_FIELDS, related: "different" } }) }),
+      ],
+    };
+    const { markdown } = generateReport(current, { previous });
+    expect(markdown).toContain("字段 related：相同 → 未提供");
+    // 字段汇总来自 metrics.comparison；fixture 的汇总仍是全部 equal，因此这里只
+    // 查逐例明细。b.ts 之前没有 related=equal 的验证证据，unavailable → different
+    // 是新差异，不算历史回归。
+    expect(markdown).toContain("- 字段差异：\n  - related 信息：不同");
+    expect(markdown).not.toContain("字段 related：未提供 → 不同");
+    // 只有 a.ts 从 equal 退步，故仅 1 例回归。
+    expect(markdown).toContain("1 例回归");
+  });
+
+  test("v2 delta：manifest/解析输入/期望源/选项策略不一致时，两档和字段只展示，不报回归", () => {
+    const previous = {
+      metrics: v2Metrics({
+        strict: "fail",
+        manifest: { ...SAME_V2_SCOPE, parsedInputsSha256: "parsed-old", officialInputsSha256: "official-old" },
+        expectationSource: "tsc",
+        optionStrategy: "defaults",
+      }),
+      details: [newDetails({ comparison: comparisonOf({ strict: "fail", fields: { ...NEW_FIELDS, message: "different" } }) })],
+    };
+    const current = {
+      metrics: v2Metrics({
+        strict: "pass",
+        manifest: SAME_V2_SCOPE,
+        expectationSource: "official-baseline",
+        optionStrategy: "aligned",
+      }),
+      details: [newDetails({ comparison: comparisonOf({ strict: "pass" }) })],
+    };
+    const { markdown, html } = generateReport(current, { previous });
+    expect(markdown).toContain("范围提示");
+    expect(markdown).toContain("解析后的用例输入不同");
+    expect(markdown).toContain("期望源不同");
+    expect(markdown).toContain("选项策略不同");
+    expect(markdown).toContain("n/a（范围不可比）");
+    expect(html).toContain("范围提示");
+    expect(html).toContain("n/a（范围不可比）");
+    expect(markdown).not.toContain("**逐例变化（1 例回归");
+  });
+
+  test("v2 delta：officialInputsSha256 不同也提示范围不可比", () => {
+    const previous = {
+      metrics: v2Metrics({ manifest: SAME_V2_SCOPE }),
+      details: [newDetails()],
+    };
+    const current = {
+      metrics: v2Metrics({ manifest: { ...SAME_V2_SCOPE, officialInputsSha256: "official-changed" } }),
+      details: [newDetails()],
+    };
+    const { markdown, html } = generateReport(current, { previous });
+    expect(markdown).toContain("官方基线输入不同");
+    expect(html).toContain("官方基线输入不同");
+  });
+
+  test("v2 delta：缺少可对照 input hash 时也警告，不推断字段/两档回归", () => {
+    const previous = {
+      metrics: v2Metrics({ manifest: { path: "cases.json", sha256: "manifest-same" } }),
+      details: [newDetails()],
+    };
+    const current = {
+      metrics: v2Metrics({ manifest: { path: "cases.json", sha256: "manifest-same", parsedInputsSha256: "parsed-only-current" } }),
+      details: [newDetails()],
+    };
+    const { markdown, html } = generateReport(current, { previous });
+    expect(markdown).toContain("解析后的用例输入缺少一侧记录，无法对照");
+    expect(html).toContain("解析后的用例输入缺少一侧记录，无法对照");
+    expect(markdown).toContain("n/a（范围不可比）");
+  });
+
+  test("旧版 T0–T3 产物仍保留原来的逐例 tier delta", () => {
+    const previous = { metrics: metricsOf(), details: detailsWithTier([["compiler/a.ts", "full"]]) };
+    const current = {
+      metrics: metricsOf(),
+      details: [{ id: "compiler/a.ts", status: "ran", expected: 1, actual: 1, hits: 1, fp: [], missed: [], misanchor: 0, tier: "text" }],
+    };
+    const { markdown } = generateReport(current, { previous });
+    expect(markdown).toContain("T3 全文 → T2 文案");
+    expect(markdown).toContain("逐例变化（1 例回归");
   });
 });
 
@@ -543,7 +1147,8 @@ describe("scripts/merge-reports.ts", () => {
         gate: { passed: false, thresholds: {}, checks: [{ name: "假阳性", ok: false, detail: "1 > 0" }] },
       },
     });
-    writeEntry(root, "report-7.1.0-beta-official", failedMetrics, "# 7.1 official\n\n假阳性 1\n", "<html>bad</html>");
+    const largeBody = "完整诊断正文\n".repeat(80_000);
+    writeEntry(root, "report-7.1.0-beta-official", failedMetrics, `# 7.1 official\n\n假阳性 1\n${largeBody}`, "<html>bad</html>");
     writeEntry(
       root,
       "report-7.1.0-beta-self",
@@ -556,10 +1161,11 @@ describe("scripts/merge-reports.ts", () => {
 
     const md = join(root, "summary.md");
     const html = join(root, "index.html");
-    const run = (): { status: number | null; stdout: string } => {
+    const stepSummary = join(root, "step-summary.md");
+    const run = (...extra: string[]): { status: number | null; stdout: string } => {
       const r = spawnSync(
         process.execPath,
-        ["scripts/merge-reports.ts", "--root", root, "--md", md, "--html", html, "--run-url", "https://ci.example/run/1"],
+        ["scripts/merge-reports.ts", "--root", root, "--md", md, "--html", html, "--run-url", "https://ci.example/run/1", ...extra],
         { cwd: REPO_ROOT, encoding: "utf8" },
       );
       return { status: r.status, stdout: r.stdout ?? "" };
@@ -571,17 +1177,31 @@ describe("scripts/merge-reports.ts", () => {
     expect(summary).toContain("**门禁失败档位（1）**：7.1.0-beta-official");
     expect(summary).toContain("| 6.0.3-self | 6.0.3 / official |");
     expect(summary).toContain("无 metrics（运行失败）");
-    expect(summary).toContain("| 7.1.0-beta-self | 7.1.0-beta / official | 3/3 | 75.0% | 1 例 / 1 条 | 1 | 0 | 0 | n/a | 未启用 |");
+    expect(summary).toContain("| 7.1.0-beta-self | 7.1.0-beta / official | 3/3 | 未提供 | 未提供 | 75.0% | 1 例 / 1 条 | 1 | 0 | 0 | n/a | 未启用 |");
     expect(summary).toContain("全部通过");
     expect(summary).toContain("假阳性 1");
     const index = readFileSync(html, "utf8");
     expect(index).toContain("tsc-compa 兼容性报告汇总");
     expect(index).toContain('href="report-6.0.3-self/report.html"');
     expect(index).toContain('class="status-bad"');
-    // 确定性：同输入再跑一次，字节一致。
-    const before = readFileSync(md, "utf8");
-    expect(run().status).toBe(0);
-    expect(readFileSync(md, "utf8")).toBe(before);
+    expect(Buffer.byteLength(summary, "utf8")).toBeGreaterThan(1024 * 1024);
+    expect(summary).toContain(largeBody.trimEnd());
+    expect(run("--step-summary", stepSummary).status).toBe(0);
+    // 请求预览不会改变完整产物；预览逐字节保留聚合表，但不嵌入逐档正文。
+    expect(readFileSync(md, "utf8")).toBe(summary);
+    expect(readFileSync(html, "utf8")).toBe(index);
+    const compact = readFileSync(stepSummary, "utf8");
+    expect(Buffer.byteLength(compact, "utf8")).toBeLessThan(1024 * 1024);
+    const table = (markdown: string): string[] => markdown.split("\n").filter((line) => line.startsWith("|"));
+    expect(table(compact)).toEqual(table(summary));
+    expect(compact).toContain("**门禁失败档位（1）**：7.1.0-beta-official");
+    expect(compact).toContain("无 metrics（运行失败）");
+    expect(compact).toContain("`report-summary`");
+    expect(compact).toContain("`summary.md` 或 `index.html`");
+    expect(compact).not.toContain("<details>");
+    expect(compact).not.toContain("完整诊断正文");
+    expect(run("--step-summary", stepSummary).status).toBe(0);
+    expect(readFileSync(stepSummary, "utf8")).toBe(compact);
   });
 
   test("root 不存在或没有任何档位 → 非零退出", () => {

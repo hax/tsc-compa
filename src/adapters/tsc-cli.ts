@@ -10,24 +10,28 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { materializeCase } from "../case.ts";
 import { parseExtendedDiagnostics } from "../perf.ts";
 import type { Adapter, CaseInput, CaseOutcome, Diagnostic } from "../types.ts";
-
-const CLI_DIAG = /^(.+?)\((\d+),(\d+)\):\s+(error|warning)\s+TS(\d+):\s?(.*)$/;
-
-/** 多行阐述/related 续行的形态：缩进开头（tsc 非 pretty 输出的续行都以空白开头）。 */
-const CONTINUATION = /^\s+\S/;
+import { containsOnlyKnownAuxiliaryLines, looksLikePrettyDiagnostics, parsePlainDiagnostics, rejectsCompilerOptions, unsupportedCliDiagnostics } from "./plain-diagnostics.ts";
 
 export interface ParsedTscOutput {
   diagnostics: Diagnostic[];
   /**
-   * 完整诊断摘要块（与官方 `.errors.txt` 摘要块同形）：每条诊断的首行 + 其缩进
-   * 续行，按实现输出顺序拼接；临时目录之外的文件（lib 等）整体剔除，连带其续行。
-   * T3「整份 .errors.txt 字节相等」直接比较这个字符串。
+   * 完整诊断摘要流（与官方 `.errors.txt` 摘要区同口径）：每条诊断的首行 + 其
+   * 缩进续行，按实现输出顺序拼接；临时目录之外的文件（lib 等）整体剔除，连带
+   * 其续行。空串 = 已成功输出且无诊断。
    */
   rendered: string;
+  /** 识别到的诊断首行数（含被剔除的 lib 诊断）。 */
+  headerLines: number;
+  /** 诊断存在但路径不在临时目录内、被剔除的数量。 */
+  outsideHeaders: number;
+  /** 没有文件位置的 TS 诊断。 */
+  unpositioned: { severity: "error" | "warning"; code: number; message?: string; text: string }[];
+  /** 是否含 TS1xxx / TS17006 / TS17007。 */
+  syntaxError: boolean;
 }
 
 /**
@@ -35,46 +39,18 @@ export interface ParsedTscOutput {
  *
  * 首行用「用例内相对路径 + 行列 + 码 + message」重建（实现可能打印临时目录的
  * 绝对路径，不能原样进基线比对）；续行原样保留缩进。临时目录之外的文件（lib
- * 等）不计，其续行一并丢弃。
+ * 等）不计，其续行一并丢弃。行列按 UTF-16 code unit 从 1-based 转 0-based。
  */
 export function parseTscOutputDetailed(tmp: string, text: string): ParsedTscOutput {
-  const diagnostics: Diagnostic[] = [];
-  const blocks: string[] = [];
-  let current: { diag: Diagnostic; lines: string[] } | null = null;
-
-  const flush = (): void => {
-    if (current === null) return;
-    const fullText = current.lines.join("\n");
-    current.diag.fullText = fullText;
-    diagnostics.push(current.diag);
-    blocks.push(fullText);
-    current = null;
+  const parsed = parsePlainDiagnostics(tmp, text);
+  return {
+    diagnostics: parsed.diagnostics,
+    rendered: parsed.rendered,
+    headerLines: parsed.headerLines,
+    outsideHeaders: parsed.outsideHeaders,
+    unpositioned: parsed.unpositioned,
+    syntaxError: parsed.syntaxError,
   };
-
-  for (const line of text.split(/\r?\n/)) {
-    const m = CLI_DIAG.exec(line);
-    if (m !== null) {
-      flush();
-      const abs = resolve(tmp, m[1]!);
-      const rel = abs.startsWith(`${tmp}/`) ? abs.slice(tmp.length + 1) : null;
-      if (rel === null) continue;
-      const message = m[6] !== undefined && m[6].length > 0 ? m[6] : undefined;
-      const diag: Diagnostic = {
-        file: rel,
-        line: Number(m[2]) - 1,
-        col: Number(m[3]) - 1,
-        code: Number(m[5]),
-        severity: m[4] === "warning" ? "warning" : "error",
-        message,
-      };
-      const firstLine = `${rel}(${m[2]},${m[3]}): ${m[4]} TS${m[5]}:${message === undefined ? "" : ` ${message}`}`;
-      current = { diag, lines: [firstLine] };
-      continue;
-    }
-    if (current !== null && CONTINUATION.test(line)) current.lines.push(line);
-  }
-  flush();
-  return { diagnostics, rendered: blocks.join("\n") };
 }
 
 /** 解析 tsc `--pretty false` 输出；临时目录之外的文件（lib 等）不计。 */
@@ -134,27 +110,99 @@ export class TscCliAdapter implements Adapter {
           diagnostics: [],
           skipReason: timeout ? "实现超时（30s）" : "实现崩溃",
           message: String(r.error),
+          exitCode: r.status,
+          rawOutput: { stdout: r.stdout ?? "", stderr: r.stderr ?? "" },
         };
       }
-      // tsc 的退出码：0 无错、2 有诊断；其余异常一律当 crash，避免把环境
-      // 问题误算成兼容性差异。
+      // tsc/tsrs 的退出码 0/1/2 都表示进程正常完成（1 常见于 noEmit + 诊断）；
+      // 3 及以上是 InvalidProject / NotImplemented 一类命令失败，不能当零诊断。
+      const text = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+      // 退出码 3+ 是 InvalidProject/NotImplemented/ProjectReferenceCycle 一类
+      // 命令失败；不是可比较诊断，也不能落成零诊断。
       if (r.status === null || r.status > 2) {
         return {
           id: input.id,
           status: "crash",
           diagnostics: [],
           skipReason: `实现异常退出（status=${r.status}）`,
-          message: `${r.stdout ?? ""}${r.stderr ?? ""}`.slice(0, 200),
+          message: text.slice(0, 200),
+          exitCode: r.status,
+          rawOutput: { stdout: r.stdout ?? "", stderr: r.stderr ?? "" },
         };
       }
-      const text = `${r.stdout ?? ""}${r.stderr ?? ""}`;
       const parsed = parseTscOutputDetailed(tmp, text);
+      const rawOutput = { stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+      const exitCode = r.status;
+
+      // pretty 诊断带有源码标注/ANSI，当前不能可靠恢复 UTF-16 位置、续行和顺序；
+      // 明确报告 unsupported，绝不把非空的 pretty 输出当成零诊断。
+      if (parsed.headerLines === 0 && parsed.diagnostics.length === 0 && looksLikePrettyDiagnostics(text)) {
+        return {
+          id: input.id,
+          status: "skip",
+          diagnostics: [],
+          skipReason: "实现输出为 pretty 诊断（暂不支持可靠解析）",
+          message: text.slice(0, 500),
+          exitCode,
+          rawOutput,
+        };
+      }
+
+      // 只有明确拒绝该配置时把无位置诊断记成 skip；命令失败仍要阻断。
+      if (parsed.unpositioned.length > 0) {
+        return {
+          id: input.id,
+          status: rejectsCompilerOptions(exitCode, parsed) ? "skip" : "crash",
+          diagnostics: [],
+          skipReason: "实现输出含无文件位置的诊断",
+          message: parsed.unpositioned.map((d) => d.text).join("\n").slice(0, 500),
+          exitCode,
+          rawOutput,
+        };
+      }
+
+      const unsupported = unsupportedCliDiagnostics(exitCode, parsed, text);
+      if (unsupported !== null) {
+        return { id: input.id, status: "skip", diagnostics: parsed.diagnostics, skipReason: unsupported, exitCode, rawOutput };
+      }
+
+      // 非零退出却没有可比较诊断：这是采集/命令失败，不是零诊断。
+      if (parsed.diagnostics.length === 0 && (exitCode === null || exitCode !== 0)) {
+        return {
+          id: input.id,
+          status: "crash",
+          diagnostics: [],
+          skipReason: `实现退出状态 ${exitCode} 且没有可比较诊断`,
+          message: text.slice(0, 500),
+          exitCode,
+          rawOutput,
+        };
+      }
+
+      // 正常退出且没有诊断时，`--extendedDiagnostics` 的计数/相位/明细统计
+      // 是已知辅助输出，绝不能因此判成解析失败。只有无法解释的残留文本才按
+      // 采集失败处理；fullText 只包含诊断摘要，不含这些统计。
+      const explained = parsed.headerLines > 0 || parsed.outsideHeaders > 0 ||
+        parsed.unpositioned.length > 0 || containsOnlyKnownAuxiliaryLines(text);
+      if (parsed.diagnostics.length === 0 && !explained && text.trim().length > 0) {
+        return {
+          id: input.id,
+          status: "crash",
+          diagnostics: [],
+          skipReason: "实现输出无法解析为诊断",
+          message: text.slice(0, 500),
+          exitCode,
+          rawOutput,
+        };
+      }
       return {
         id: input.id,
         status: "ok",
         diagnostics: parsed.diagnostics,
         fullText: parsed.rendered,
+        exitCode,
         checkMs: parseExtendedDiagnostics(text)?.checkMs,
+        rawOutput,
       };
     } finally {
       rmSync(tmp, { recursive: true, force: true });

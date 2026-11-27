@@ -7,6 +7,7 @@
   "license": "Apache-2.0",
   "scripts": {
     "test": "bun test ./test",
+    "typecheck": "node_modules/typescript-7-1/bin/tsc -p tsconfig.json",
     "smoke": "bun src/run.ts",
     "smoke:5.9": "bun src/run.ts --baseline 5.9.3 --adapter tsc-cli:node_modules/typescript-5-9/bin/tsc",
     "smoke:6.0": "bun src/run.ts --baseline 6.0.3 --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc",
@@ -16,6 +17,7 @@
     "smoke:7.1-official": "bun src/run.ts --baseline 7.1.0-beta-official --expectation-source official-baseline --cases config/smoke-cases-ts71-official.json --ratchet config/ratchet-ts71-official.tsv --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc"
   },
   "devDependencies": {
+    "@types/bun": "1.4.5",
     "typescript-5-9": "npm:typescript@5.9.3",
     "typescript-6-0": "npm:typescript@6.0.3",
     "typescript-7-1": "npm:typescript@7.1.0-beta"

@@ -34,6 +34,29 @@ describe("parseOfficialBaselineText", () => {
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
     expect(result.diagnostics.map((d) => `${d.line}:${d.col}:${d.code}`)).toEqual(["0:4:2322", "1:2:2554"]);
+    expect(result.original).toEqual(result.diagnostics);
+    // 摘要有 elaboration；A0 要求保留原文供完整输出比较。
+    expect(result.text).toContain("Type 'string' is not assignable to type 'number'.");
+  });
+
+  test("保留基线原始诊断顺序（不排序）", () => {
+    const text = [
+      "Foo.ts(3,1): error TS2554: later line",
+      "Foo.ts(1,1): error TS2322: earlier line",
+      "====",
+    ].join("\n");
+    const result = parseOfficialBaselineText(text);
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.diagnostics.map((d) => d.code)).toEqual([2554, 2322]);
+      expect(result.original.map((d) => d.code)).toEqual([2554, 2322]);
+    }
+  });
+
+  test("pretty 基线明确标为 unsupported，不当成零诊断", () => {
+    const result = parseOfficialBaselineText("\u001b[96mFoo.ts\u001b[0m:\u001b[93m1\u001b[0m:\u001b[93m5\u001b[0m - \u001b[91merror\u001b[0m TS2322: bad\n");
+    expect(result.status).toBe("unsupported");
+    if (result.status === "unsupported") expect(result.reason).toContain("pretty");
   });
 
   test("语法错误基线整体标为 unsupported（与期望源的语法即 SKIP 口径一致）", () => {

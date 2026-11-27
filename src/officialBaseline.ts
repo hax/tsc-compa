@@ -10,7 +10,7 @@
 // 整个语料都能进指标分母。
 //
 // 基线文件 = 官方 harness 的输出快照，只对满足下列条件的子集开放（v0）：
-// - 用例没有多值指令（多值会产生带 (key=value) 配置后缀的基线，见 DESIGN §3.3）；
+// - 多值指令按 (key=value) 配置后缀查找；此时缺 `.errors.txt` 需要其他同配置基线佐证；
 // - 用例不含绝对路径 @filename（官方虚拟 FS 根，磁盘物化不安全）；
 // - 基线摘要块只有带文件位置的 `file(line,col): error TSxxxx: ...` 行；
 //   配置错误（无位置）与语法错误（TS1xxx）整体跳过——它们和当前期望源的
@@ -20,14 +20,17 @@
 // 逐条一致（2026-11-15 的冒烟样本里 116 例中 111 例完全一致，5 例不同）。
 
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import type { ParsedCase } from "./case.ts";
+import { basename, extname, join } from "node:path";
+import type { CaseVariant, ParsedCase } from "./case.ts";
 import type { Diagnostic } from "./types.ts";
 
 export type OfficialBaselineOutcome =
   | {
       status: "ok";
+      /** 摘要块中的诊断，保持基线原顺序。 */
       diagnostics: Diagnostic[];
+      /** 与 diagnostics 同一顺序的显式原始顺序副本。 */
+      original: Diagnostic[];
       /**
        * 原始基线文件内容（含 `====` 正文块）；缺失基线（无错用例）时为 null。
        * T3「整份 .errors.txt 字节相等」需要它。
@@ -37,12 +40,15 @@ export type OfficialBaselineOutcome =
   | { status: "skip"; reason: string };
 
 export type ParsedOfficialBaseline =
-  | { status: "ok"; diagnostics: Diagnostic[]; text: string }
+  | { status: "ok"; diagnostics: Diagnostic[]; original: Diagnostic[]; text: string }
   | { status: "unsupported"; reason: string };
 
 const DIAG = /^(.+?)\((\d+),(\d+)\):\s+(error|warning)\s+TS(\d+):\s?(.*)$/;
-const CONFIG_ERROR = /^error TS\d+:/;
+const CONFIG_ERROR = /^(?:error|warning|message|suggestion) TS\d+:/;
+const OTHER_CATEGORY = /^.+?\(\d+,\d+\):\s+(?:message|suggestion)\s+TS\d+:/;
 const CASE_HEADER = /^====/;
+const ANSI = /\x1b\[[0-9;]*m/;
+const PRETTY_DIAGNOSTIC = /^\S+:\d+:\d+\s+-\s+(?:error|warning)\s+TS\d+:/m;
 
 /**
  * 语料目录（.../tests/cases）对应的官方基线目录。
@@ -74,6 +80,12 @@ export function summaryBlockOf(text: string): string {
 /** 解析基线文件的错误摘要块（第一个 `====` 之前的部分）。 */
 export function parseOfficialBaselineText(text: string): ParsedOfficialBaseline {
   const diagnostics: Diagnostic[] = [];
+  const summary = summaryBlockOf(text);
+  // pretty 基线包含 ANSI/源码标注；当前不能可靠恢复 UTF-16 位置和诊断顺序，
+  // 明确报 unsupported，不能把非空 pretty 摘要当成零诊断。
+  if (ANSI.test(summary) || PRETTY_DIAGNOSTIC.test(summary)) {
+    return { status: "unsupported", reason: "官方基线为 pretty 诊断（暂不支持可靠解析）" };
+  }
   for (const line of text.split(/\r\n|\r|\n/)) {
     if (CASE_HEADER.test(line)) break;
     if (line.trim().length === 0) continue;
@@ -91,13 +103,14 @@ export function parseOfficialBaselineText(text: string): ParsedOfficialBaseline 
     }
     // 无位置的配置错误无法映射到文件诊断，整个用例跳过。
     if (CONFIG_ERROR.test(line)) return { status: "unsupported", reason: "官方基线含配置错误（无文件位置）" };
+    if (OTHER_CATEGORY.test(line)) return { status: "unsupported", reason: "官方基线包含暂不支持的 message / suggestion 诊断" };
     // 其余是 elaboration 续行（tsc 多行错误说明），不是新诊断。
   }
   if (diagnostics.some((d) => (d.code >= 1000 && d.code < 2000) || d.code === 17006 || d.code === 17007)) {
     return { status: "unsupported", reason: "官方基线含语法错误" };
   }
-  diagnostics.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.col - b.col || a.code - b.code);
-  return { status: "ok", diagnostics, text };
+  // 必须保留基线中的诊断顺序：严格一致的诊断顺序比较依赖它。
+  return { status: "ok", diagnostics, original: diagnostics.slice(), text };
 }
 
 const errorsNameOf = (file: string): string => file.replace(/\.(tsx?|mts|cts)$/, ".errors.txt");
@@ -124,6 +137,35 @@ export function baselineFileOf(corpusDir: string, id: string): string | null {
   return null;
 }
 
+export type OfficialVariantBaselineLookup =
+  | { status: "found"; path: string }
+  | { status: "zero"; reason: string }
+  | { status: "unsupported"; reason: string };
+
+type VariantBaselineInput = Pick<CaseVariant, "caseId" | "fileName" | "configName">;
+
+export function lookupOfficialVariantBaseline(corpusDir: string, variant: VariantBaselineInput): OfficialVariantBaselineLookup {
+  const id = variant.caseId.slice(0, -basename(variant.caseId).length) + variant.fileName;
+  const path = baselineFileOf(corpusDir, id);
+  if (path !== null) return { status: "found", path };
+  if (variant.configName === "") return { status: "zero", reason: "无诊断基线" };
+  const stem = id.slice(0, -extname(id).length);
+  const dir = officialBaselineDirOf(corpusDir);
+  const slash = stem.indexOf("/");
+  const roots = [join(dir, stem), ...(slash > 0 ? [join(dir, stem.slice(0, slash), basename(stem))] : []), join(dir, basename(stem))];
+  const proof = roots.some((candidate) => [".types", ".symbols", ".js", ".d.ts"].some((suffix) => existsSync(candidate + suffix)));
+  return proof ? { status: "zero", reason: "同配置基线确认运行且无诊断文件" }
+    : { status: "unsupported", reason: `未找到配置 ${variant.configName} 的官方运行证据` };
+}
+
+export function expectationFromOfficialVariantBaseline(corpusDir: string, variant: VariantBaselineInput): OfficialBaselineOutcome {
+  const lookup = lookupOfficialVariantBaseline(corpusDir, variant);
+  if (lookup.status === "unsupported") return { status: "skip", reason: lookup.reason };
+  if (lookup.status === "zero") return { status: "ok", diagnostics: [], original: [], text: null };
+  const parsed = parseOfficialBaselineText(readFileSync(lookup.path, "utf8"));
+  return parsed.status === "unsupported" ? { status: "skip", reason: parsed.reason } : parsed;
+}
+
 /** 为一个已解析用例查找并读取官方基线。 */
 export function expectationFromOfficialBaseline(
   corpusDir: string,
@@ -142,10 +184,10 @@ export function expectationFromOfficialBaseline(
   const file = baselineFileOf(corpusDir, id);
   if (file === null) {
     // 官方只在有诊断时写 .errors.txt：缺基线 = 期望零错误。
-    return { status: "ok", diagnostics: [], text: null };
+    return { status: "ok", diagnostics: [], original: [], text: null };
   }
   const raw = readFileSync(file, "utf8");
   const parsedBaseline = parseOfficialBaselineText(raw);
   if (parsedBaseline.status === "unsupported") return { status: "skip", reason: parsedBaseline.reason };
-  return { status: "ok", diagnostics: parsedBaseline.diagnostics, text: raw };
+  return { status: "ok", diagnostics: parsedBaseline.diagnostics, original: parsedBaseline.original, text: raw };
 }

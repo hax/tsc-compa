@@ -3,15 +3,14 @@
 // 用法：bun scripts/select-official-baseline-cases.ts --corpus <repo>/tests/cases \
 //         [--out config/official-baseline-cases.json] [--limit 200]
 //
-// 条件（见 src/officialBaseline.ts 头注）：plain 基线、无多值指令、无绝对路径
-// @filename、基线摘要块可解析且不含配置错误/语法错误。
+// 条件：每个可执行配置的 plain 基线摘要都能解析，且没有绝对路径
+// @filename、配置错误或语法错误。带变体后缀的缺失基线必须有其他执行证据。
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, basename } from "node:path";
-import { parseCase } from "../src/case.ts";
-import { loadManifest, scanCorpus } from "../src/discover.ts";
-import { expectationFromOfficialBaseline, parseOfficialBaselineText, officialBaselineDirOf } from "../src/officialBaseline.ts";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { expandCaseVariants } from "../src/case.ts";
+import { readCase, scanCorpus } from "../src/discover.ts";
+import { expectationFromOfficialBaseline, expectationFromOfficialVariantBaseline, officialBaselineDirOf } from "../src/officialBaseline.ts";
 
 function argOf(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -23,20 +22,28 @@ if (corpus === undefined) throw new Error("需要 --corpus <repo>/tests/cases �
 const out = argOf("out") ?? "config/official-baseline-cases.json";
 const limit = Number(argOf("limit") ?? 200);
 const baselineDir = officialBaselineDirOf(corpus);
+if (!Number.isInteger(limit) || limit <= 0) throw new Error("--limit 需要正整数");
+if (!existsSync(baselineDir)) throw new Error(`官方基线目录不存在：${baselineDir}`);
 
 const reasons: Record<string, number> = {};
 const eligible: string[] = [];
 for (const id of scanCorpus(corpus).sort()) {
   if (id.endsWith(".d.ts")) continue;
-  const parsed = parseCase(readFileSync(join(corpus, id), "utf8"), id);
+  const parsed = readCase(corpus, id);
   if (parsed.skip !== null || parsed.unknown.length > 0) {
     const key = "用例本身不入选（指令跳过/未知）";
     reasons[key] = (reasons[key] ?? 0) + 1;
     continue;
   }
-  const outcome = expectationFromOfficialBaseline(corpus, id, parsed);
-  if (outcome.status === "skip") {
-    const key = outcome.reason.replace(/（.*$/, "");
+  const expanded = expandCaseVariants(parsed);
+  const reason = expanded.status === "unsupported" ? expanded.reason
+    : parsed.absoluteFiles.length > 0 ? "用例含绝对路径 @filename"
+    : expanded.variants.map((variant) => variant.configName === ""
+      ? expectationFromOfficialBaseline(corpus, id, parsed)
+      : expectationFromOfficialVariantBaseline(corpus, variant))
+      .find((outcome) => outcome.status === "skip")?.reason;
+  if (reason !== undefined) {
+    const key = reason.replace(/（.*$/, "");
     reasons[key] = (reasons[key] ?? 0) + 1;
     continue;
   }

@@ -1,12 +1,16 @@
-# 第三方实现冒烟：按 config/implementations.json 获取某个 TSC 兼容实现的可执行文件，
-# 用同一套 harness + 同一基线与期望跑冒烟集（T0–T3 / ratchet）。
+# 第三方实现冒烟：按 config/implementations.json 获取实现，用同一套 harness
+# 与同一基线跑冒烟集。
 #
-# 只手动触发。实现只通过公开 CLI 驱动（tsc-cli 适配器），不为任何实现写内部 adapter；
-# 获取方式（npm 预编译 / cargo 构建 / 本地二进制）登记在 config/implementations.json。
+# 两种运行语义：
+# 1. 官方基线的「实现清单」已入库，且跑全量（limit=0）：带 --gate，只读清单；
+#    回归或门禁不通过会真实失败，不会在 CI 检出里改写 tracked 清单。
+# 2. 官方基线但无清单，或只跑前 N 例：评估报告模式，不带 --ratchet/--gate，
+#    不写 tracked 清单；报告和指标作为 artifact 上传，供人工审阅后初始化清单。
+#    选取范围必须写进 metrics：--limit 会记录 selectedCases，details 里有逐案 ID。
 #
-# 获取方式（npm 预编译 / cargo 构建 / 本地二进制）登记在 config/implementations.json。
-# cargo 路径：workflow 按需安装 Rust 1.99.1，按 implementations.json 的 git pin 浅拉取源码，
-# 在外部 CARGO_TARGET_DIR 构建（不写入检出）；tsc-rs / tsz 等无 npm 包的实现走此路径。
+# 获取方式（npm 预编译 / cargo 构建 / 官方 release / 本地二进制）登记在
+# config/implementations.json。Bun 内置检查器走 bun-check 适配器；其它 TSC
+# 兼容实现仍走 tsc-cli，不为实现写内部 adapter。
 name: third-party-impl
 
 on:
@@ -21,7 +25,7 @@ on:
         options: ["7.1.0-beta-official", "7.1.0-beta"]
         default: "7.1.0-beta-official"
       limit:
-        description: "只跑前 N 例（0 = 全部）"
+        description: "只跑前 N 例（0 = 全量；非 0 强制评估报告模式）"
         default: "0"
 
 permissions:
@@ -30,7 +34,7 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       IN_IMPL: ${{ inputs.impl }}
       IN_BASELINE: ${{ inputs.baseline }}
@@ -42,7 +46,7 @@ jobs:
         with:
           bun-version: 1.4.4
 
-      - name: Resolve corpus ref and implementation plan
+      - name: Resolve baseline and implementation plan
         id: plan
         run: |
           bun -e '
@@ -50,6 +54,7 @@ jobs:
             const b = c.baselines.find((x) => x.id === process.env.IN_BASELINE);
             if (!b) { console.error("unknown baseline: " + process.env.IN_BASELINE); process.exit(1); }
             const corpus = c.corpora[b.corpus];
+            if (!corpus) { console.error("unknown corpus: " + b.corpus); process.exit(1); }
             console.log("ref=" + corpus.ref);
             console.log("corpus=" + (process.env.IN_BASELINE === "7.1.0-beta-official"
               ? "reference/corpus/tsc/testdata/tests/cases"
@@ -59,13 +64,32 @@ jobs:
           bun -e '
             const r = require("./config/implementations.json").implementations[process.env.IN_IMPL];
             if (!r) { console.error("unknown implementation: " + process.env.IN_IMPL); process.exit(1); }
-            console.log("cli_args=" + (r.cliArgs || []).join(" "));
             const acq = r.acquisition || {};
             const source = acq.localEnv && (process.env[acq.localEnv] || "").length > 0
-              ? "local" : acq.npm ? "npm" : "cargo";
+              ? "local" : acq.release ? "release" : acq.npm ? "npm" : "cargo";
+            console.log("adapter=" + (r.adapter || "tsc-cli"));
+            console.log("cli_args=" + (r.cliArgs || []).join(" "));
             console.log("source=" + source);
-            console.log("pin=" + ((acq.cargo && acq.cargo.git && acq.cargo.git.ref) || (acq.npm && acq.npm.version) || ""));
+            console.log("pin=" + ((acq.cargo && acq.cargo.git && acq.cargo.git.ref) || (acq.release && acq.release.version) || (acq.npm && acq.npm.version) || ""));
           ' >> "$GITHUB_OUTPUT"
+          # 回归清单按「实现 × 基线」分账；只有官方基线才有官方结果清单。
+          if [ "$IN_BASELINE" = "7.1.0-beta-official" ]; then
+            ENTRY="config/ratchet/$IN_IMPL-$IN_BASELINE.tsv"
+            if [ -f "$ENTRY" ]; then
+              echo "ratchet_mode=gate" >> "$GITHUB_OUTPUT"
+              echo "ratchet_path=$ENTRY" >> "$GITHUB_OUTPUT"
+            else
+              echo "ratchet_mode=report" >> "$GITHUB_OUTPUT"
+              echo "ratchet_path=" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "ratchet_mode=report" >> "$GITHUB_OUTPUT"
+            echo "ratchet_path=" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$IN_LIMIT" != "0" ] && [ -n "$IN_LIMIT" ]; then
+            echo "ratchet_mode=report" >> "$GITHUB_OUTPUT"
+            echo "ratchet_path=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Rust（cargo 获取路径）
         if: steps.plan.outputs.source == 'cargo'
@@ -96,11 +120,17 @@ jobs:
 
       - name: Fetch implementation（config/implementations.json）
         id: impl
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           BIN=$(bun scripts/install-impl.ts --name "$IN_IMPL" --dest .tools | tail -1)
           echo "bin=$BIN" >> "$GITHUB_OUTPUT"
           "$BIN" --version || true
+          if [ "${{ steps.plan.outputs.adapter }}" = "bun-check" ]; then
+            echo "BUN_CHECK_BIN=$BIN" >> "$GITHUB_ENV"
+            "$BIN" --revision
+            "$BIN" -p 'JSON.stringify({bun:Bun.version,revision:Bun.revision,typescript:process.versions.typescript})'
+            "$BIN" check --help >/dev/null
+          fi
 
       - name: Run third-party smoke
         env:
@@ -111,17 +141,23 @@ jobs:
           LIMIT_ARGS=""
           if [ -n "$IN_LIMIT" ] && [ "$IN_LIMIT" != "0" ]; then LIMIT_ARGS="--limit $IN_LIMIT"; fi
           RATCHET_ARGS=""
-          if [ "$IN_BASELINE" = "7.1.0-beta-official" ]; then
-            # 按「实现 × 基线」分账；首次接入的清单由 run.ts 自动初始化（只登记不回退）。
-            RATCHET_ARGS="--ratchet-impl $IN_IMPL"
+          GATE_ARGS=""
+          if [ "${{ steps.plan.outputs.ratchet_mode }}" = "gate" ]; then
+            RATCHET_ARGS="--ratchet ${{ steps.plan.outputs.ratchet_path }}"
+            GATE_ARGS="--gate"
+            echo "模式：已登记清单 + 全量，门禁只读"
+          else
+            echo "模式：评估报告，不写 tracked 清单"
           fi
           bun src/run.ts \
             --baseline "$IN_BASELINE" \
             --corpus "$CORPUS" \
-            --adapter "tsc-cli:${{ steps.impl.outputs.bin }}" \
+            --adapter "${{ steps.plan.outputs.adapter }}:${{ steps.impl.outputs.bin }}" \
             --mode official \
             --expectation-source "$EXPECT" \
-            $LIMIT_ARGS $RATCHET_ARGS \
+            --option-strategy aligned \
+            $LIMIT_ARGS $RATCHET_ARGS $GATE_ARGS \
+            --report-out out \
             --out out
 
       - name: Step summary
@@ -131,12 +167,18 @@ jobs:
             echo "## third-party: $IN_IMPL × $IN_BASELINE"
             echo ""
             echo "- implementation: $IN_IMPL（${{ steps.impl.outputs.bin }}）"
+            echo "- adapter: ${{ steps.plan.outputs.adapter }}"
+            echo "- 模式: ${{ steps.plan.outputs.ratchet_mode }}（limit=$IN_LIMIT）"
+            echo "- ratchet: ${{ steps.plan.outputs.ratchet_path }}"
             echo "- adapter args: ${{ steps.plan.outputs.cli_args }}"
             echo "- corpus: ${{ steps.plan.outputs.corpus }}"
             echo ""
             if [ -f out/metrics.json ]; then
+              echo "- 选中用例: $(jq -r '.meta.selectedCases' out/metrics.json)（逐案 ID 见 details.json）"
+              echo "- 跳过: $(jq -r '.totals.skipped' out/metrics.json)；$(jq -rc '.skips' out/metrics.json)"
+              echo ""
               echo '```json'
-              jq '{totals: .totals, byTier: .totals.byTier}' out/metrics.json 2>/dev/null || head -c 2000 out/metrics.json
+              jq '{meta: {verdictEligible: .meta.verdictEligible, executionFailures: .meta.executionFailures, options: .meta.options, tools: .meta.tools, selectedCases: .meta.selectedCases}, totals: .totals, comparison: .comparison, gate: (.meta.gate | {passed, thresholds, checks}), ratchet: (.meta.ratchet | if . == null then null else del(.regressionDetails) end)}' out/metrics.json 2>/dev/null || head -c 3000 out/metrics.json
               echo '```'
             else
               echo "没有产出 metrics.json"
@@ -147,6 +189,10 @@ jobs:
         if: always()
         with:
           name: metrics-${{ inputs.impl }}-${{ inputs.baseline }}
-          path: out/metrics.json
+          path: |
+            out/metrics.json
+            out/details.json
+            out/report.md
+            out/report.html
           if-no-files-found: ignore
           retention-days: 14

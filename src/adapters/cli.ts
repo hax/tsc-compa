@@ -10,6 +10,11 @@ import { join } from "node:path";
 import { materializeCase } from "../case.ts";
 import type { Adapter, CaseInput, CaseOutcome, CompilerOptions, Diagnostic } from "../types.ts";
 
+/** 已解析诊断的摘要流；空数组给出明确空串。 */
+export function renderDiagnostics(diagnostics: Diagnostic[]): string {
+  return diagnostics.map((d) => d.fullText ?? `${d.file}(${d.line + 1},${d.col + 1}): ${d.severity} TS${d.code}: ${d.message ?? ""}`).join("\n");
+}
+
 /** `--json` 诊断数组里单条诊断的形状。 */
 interface JsonDiagnostic {
   file: string;
@@ -17,11 +22,24 @@ interface JsonDiagnostic {
   end: number;
   line: number;
   col: number;
-  end_line: number;
-  end_col: number;
+  end_line?: number;
+  end_col?: number;
   severity: string;
   code: number;
   message: string;
+}
+
+/**
+ * JSON 接口的 `line/col/end_line/end_col` 是 1-based UTF-16 列；
+ * `start/end` 可能是字节偏移，不能直接相减得到 UTF-16 width。
+ * 跨行时没有单一列宽，留 undefined。
+ */
+export function utf16Width(item: JsonDiagnostic): number | undefined {
+  if (typeof item.end_line !== "number" || typeof item.end_col !== "number") return undefined;
+  if (!Number.isSafeInteger(item.line) || !Number.isSafeInteger(item.col) ||
+      !Number.isSafeInteger(item.end_line) || !Number.isSafeInteger(item.end_col)) return undefined;
+  if (item.line !== item.end_line || item.end_col < item.col) return undefined;
+  return item.end_col - item.col;
 }
 
 export interface CliAdapterOptions {
@@ -62,6 +80,8 @@ export class CliAdapter implements Adapter {
         maxBuffer: 1 << 28,
         timeout: this.timeoutMs,
       });
+      const rawOutput = { stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+      const exitCode = r.error === undefined ? r.status : null;
       if (r.error !== undefined) {
         const timeout = /ETIMEDOUT|timed out/i.test(String(r.error));
         return {
@@ -70,6 +90,8 @@ export class CliAdapter implements Adapter {
           diagnostics: [],
           skipReason: timeout ? "实现超时（30s）" : "实现崩溃",
           message: String(r.error),
+          exitCode,
+          rawOutput,
         };
       }
       if (r.status === null || r.status > 1) {
@@ -79,19 +101,34 @@ export class CliAdapter implements Adapter {
           diagnostics: [],
           skipReason: `实现异常退出（status=${r.status}）`,
           message: (r.stderr ?? "").slice(0, 200),
+          exitCode,
+          rawOutput,
         };
       }
-      const diagnostics = this.parseDiagnostics(tmp, r.stdout ?? "");
-      if (diagnostics === null) {
+      const parsed = this.parseDiagnostics(tmp, r.stdout ?? "");
+      if (parsed === null) {
         return {
           id: input.id,
           status: "crash",
           diagnostics: [],
           skipReason: "实现输出不是 JSON",
           message: (r.stdout ?? "").slice(0, 200),
+          exitCode,
+          rawOutput,
         };
       }
-      return { id: input.id, status: "ok", diagnostics };
+      if (parsed.length === 0 && r.status !== 0) {
+        return {
+          id: input.id,
+          status: "crash",
+          diagnostics: [],
+          skipReason: `实现退出状态 ${r.status} 且没有诊断`,
+          message: `stdout=${(r.stdout ?? "").slice(0, 200)} stderr=${(r.stderr ?? "").slice(0, 200)}`,
+          exitCode,
+          rawOutput,
+        };
+      }
+      return { id: input.id, status: "ok", diagnostics: parsed, fullText: renderDiagnostics(parsed), exitCode, rawOutput };
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -117,11 +154,9 @@ export class CliAdapter implements Adapter {
         col: item.col - 1,
         code: item.code,
         severity: item.severity === "error" ? "error" : "warning",
-        width:
-          typeof item.end === "number" && typeof item.start === "number"
-            ? item.end - item.start
-            : undefined,
+        width: utf16Width(item),
         message: item.message,
+        raw: item,
       });
     }
     return out;

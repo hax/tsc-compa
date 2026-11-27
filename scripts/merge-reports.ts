@@ -1,6 +1,6 @@
 // 合并各档兼容性报告：把 smoke matrix 每个档位产出的 metrics.json / report.md /
-// report.html 汇总成一份 Markdown 摘要（写进 $GITHUB_STEP_SUMMARY）与一份可下载的
-// 静态 HTML 索引（report/index.html，逐档链接到各自的 report.html）。
+// report.html 汇总成完整 Markdown 与可下载的 HTML 索引；可另写一份
+// 不含逐档正文的 Markdown，供 $GITHUB_STEP_SUMMARY 使用。
 //
 // 输入目录约定（CI 里由 actions/download-artifact 组装）：
 //   <root>/<档位目录>/{metrics.json, details.json, report.md, report.html}
@@ -9,7 +9,8 @@
 //
 // 用法：
 //   bun scripts/merge-reports.ts --root report \
-//     [--md report/summary.md] [--html report/index.html] [--run-url <CI run URL>]
+//     [--md report/summary.md] [--html report/index.html]
+//     [--step-summary <path>] [--run-url <CI run URL>]
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -37,6 +38,9 @@ interface Entry {
   misanchorTotal: number;
   skipped: number;
   t3Full: number | null;
+  /** metrics.comparison 的两档分布；旧报告缺字段时为 null。 */
+  compatibility: { pass: number; fail: number; unknown: number } | null;
+  strict: { pass: number; fail: number; unknown: number } | null;
   /** undefined = 没启用门禁；true/false = 门禁结论。 */
   gatePassed: boolean | undefined;
   reportMd: string | null;
@@ -79,6 +83,8 @@ function readEntry(root: string, slug: string): Entry {
       misanchorTotal: 0,
       skipped: 0,
       t3Full: null,
+      compatibility: null,
+      strict: null,
       gatePassed: undefined,
       reportMd,
       hasHtml,
@@ -90,6 +96,14 @@ function readEntry(root: string, slug: string): Entry {
   const byTier = obj(totals.byTier);
   const gate = obj(meta.gate);
   const adapter = text(meta.adapter);
+  const comparison = obj(metrics.comparison);
+  const verdicts = (value: unknown): { pass: number; fail: number; unknown: number } | null => {
+    const counts = obj(value);
+    const pass = num(counts.pass);
+    const fail = num(counts.fail);
+    const unknown = num(counts.unknown);
+    return pass === null || fail === null || unknown === null ? null : { pass, fail, unknown };
+  };
   return {
     slug,
     label: displayLabel(slug),
@@ -110,11 +124,16 @@ function readEntry(root: string, slug: string): Entry {
     skipped: int(totals.skipped),
     // T3 全文档只在期望源是官方 .errors.txt 基线时可比；其它口径显示 n/a。
     t3Full: text(meta.expectationSource) === "official-baseline" ? (num(byTier.full) ?? 0) : null,
+    compatibility: verdicts(comparison.compatibility),
+    strict: verdicts(comparison.strict),
     gatePassed: meta.gate === undefined || meta.gate === null ? undefined : gate.passed === true,
     reportMd,
     hasHtml,
   };
 }
+
+const verdictText = (counts: { pass: number; fail: number; unknown: number } | null): string =>
+  counts === null ? "未提供" : `${counts.pass}/${counts.fail}/${counts.unknown}`;
 
 function gateLabel(entry: Entry): string {
   if (!entry.metricsOk) return "—";
@@ -124,14 +143,15 @@ function gateLabel(entry: Entry): string {
 
 function summaryTable(entries: Entry[]): string[] {
   const lines = [
-    "| 档位 | 基线 / 模式 | 用例（跑/总） | 覆盖率 | 假阳性 | 漏报 | 错锚 | 跳过 | T3 全文 | 门禁 |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| 档位 | 基线 / 模式 | 用例（跑/总） | 兼容（通/败/未知） | 严格（通/败/未知） | 覆盖率 | 假阳性 | 漏报 | 错锚 | 跳过 | 旧 T3（仅参考） | 门禁 |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
   ];
   for (const entry of entries) {
     const title = entry.metricsOk ? `${entry.baseline ?? entry.suite ?? "n/a"} / ${entry.mode ?? "n/a"}` : "无 metrics（运行失败）";
     const t3 = entry.t3Full === null ? "n/a" : String(entry.t3Full);
     lines.push(
-      `| ${escapePipe(entry.label)} | ${escapePipe(title)} | ${entry.ran}/${entry.cases} | ${pct(entry.coverage)} | ` +
+      `| ${escapePipe(entry.label)} | ${escapePipe(title)} | ${entry.ran}/${entry.cases} | ` +
+        `${verdictText(entry.compatibility)} | ${verdictText(entry.strict)} | ${pct(entry.coverage)} | ` +
         `${entry.fpCases} 例 / ${entry.fpTotal} 条 | ${entry.missTotal} | ${entry.misanchorTotal} | ${entry.skipped} | ${t3} | ${gateLabel(entry)} |`,
     );
   }
@@ -140,9 +160,12 @@ function summaryTable(entries: Entry[]): string[] {
 
 const escapePipe = (value: string): string => escapeHtml(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 
-function renderMarkdown(entries: Entry[], runUrl: string | null, generatedFrom: string): string {
+function renderMarkdown(entries: Entry[], runUrl: string | null, generatedFrom: string, compact = false): string {
   const lines: string[] = ["# tsc-compa 兼容性报告汇总", ""];
-  if (runUrl !== null) {
+  if (compact) {
+    if (runUrl !== null) lines.push(`CI run：${runUrl}`, "");
+    lines.push("逐档详情请下载本次运行的 `report-summary` 产物，打开 `summary.md` 或 `index.html`。", "");
+  } else if (runUrl !== null) {
     lines.push(`CI run：${runUrl}（完整 HTML 报告在本次 run 的 Artifacts 里，下载 \`report-summary\` 打开 \`index.html\`）`);
     lines.push("");
   }
@@ -154,22 +177,24 @@ function renderMarkdown(entries: Entry[], runUrl: string | null, generatedFrom: 
   lines.push(`共 ${entries.length} 档报告（数据目录：\`${generatedFrom}\`）。`);
   lines.push("");
   lines.push(...summaryTable(entries));
-  for (const entry of entries) {
-    lines.push("");
-    lines.push("<details>");
-    lines.push(`<summary>${escapeHtml(entry.label)}：完整报告</summary>`);
-    lines.push("");
-    if (entry.reportMd !== null) {
-      lines.push(entry.reportMd.trimEnd());
-    } else {
-      lines.push(`本档位没有 report.md（没有 metrics.json，运行应该在写出结果前就失败了）。`);
+  if (!compact) {
+    for (const entry of entries) {
+      lines.push("");
+      lines.push("<details>");
+      lines.push(`<summary>${escapeHtml(entry.label)}：完整报告</summary>`);
+      lines.push("");
+      if (entry.reportMd !== null) {
+        lines.push(entry.reportMd.trimEnd());
+      } else {
+        lines.push(`本档位没有 report.md（没有 metrics.json，运行应该在写出结果前就失败了）。`);
+      }
+      lines.push("");
+      lines.push("</details>");
     }
-    lines.push("");
-    lines.push("</details>");
   }
   lines.push("");
   lines.push(
-    "说明：T3 全文用例数是 T0–T3 阶梯的最高档，只在期望源为官方 `.errors.txt` 基线的档位可比（其它档位记 n/a）；门禁只到 T0–T2（见 docs/CI.md）。",
+    "说明：兼容 ↔ 严格列是 `metrics.comparison` 的（通过/失败/无法确认）用例数；旧报告缺这两列时记「未提供」。T3 全文只是旧 T0–T3 阶梯的最高档，不能当作严格一致；是否阻断以门禁列为准。",
   );
   return `${lines.join("\n")}\n`;
 }
@@ -187,9 +212,15 @@ function renderHtml(entries: Entry[], runUrl: string | null): string {
         entry.gatePassed === undefined
           ? "未启用"
           : `<span class="${gateClass}">${entry.gatePassed ? "通过" : "失败"}</span>`;
+      const pairCell = (counts: { pass: number; fail: number; unknown: number } | null): string => {
+        if (counts === null) return "未提供";
+        const tone = counts.fail > 0 ? "status-bad" : counts.unknown > 0 ? "" : "status-ok";
+        return `<span class="${tone}">${escapeHtml(verdictText(counts))}</span>`;
+      };
       return (
         `<tr><td><code>${escapeHtml(entry.label)}</code></td><td>${escapeHtml(title)}</td>` +
-        `<td>${entry.ran}/${entry.cases}</td><td>${escapeHtml(pct(entry.coverage))}</td>` +
+        `<td>${entry.ran}/${entry.cases}</td><td>${pairCell(entry.compatibility)}</td><td>${pairCell(entry.strict)}</td>` +
+        `<td>${escapeHtml(pct(entry.coverage))}</td>` +
         `<td>${entry.fpCases} 例 / ${entry.fpTotal} 条</td><td>${entry.missTotal}</td>` +
         `<td>${entry.misanchorTotal}</td><td>${entry.skipped}</td>` +
         `<td>${gateCell}</td><td>${reportLink}</td></tr>`
@@ -211,9 +242,9 @@ function renderHtml(entries: Entry[], runUrl: string | null): string {
     "<main>",
     "<h1>tsc-compa 兼容性报告汇总</h1>",
     runNote,
-    `<p class="note">共 ${entries.length} 档。点每行的「HTML 报告」查看该档完整报告；门禁只到 T0–T2，T3 全文是报告档。</p>`,
+    `<p class="note">共 ${entries.length} 档。点每行的「HTML 报告」查看该档完整报告；兼容/严格两列是两档比较的用例数，旧 T3 只作过渡参考。</p>`,
     "<table>",
-    "<thead><tr><th>档位</th><th>基线 / 模式</th><th>用例（跑/总）</th><th>覆盖率</th><th>假阳性</th><th>漏报</th><th>错锚</th><th>跳过</th><th>门禁</th><th>报告</th></tr></thead>",
+    "<thead><tr><th>档位</th><th>基线 / 模式</th><th>用例（跑/总）</th><th>兼容（通/败/未知）</th><th>严格（通/败/未知）</th><th>覆盖率</th><th>假阳性</th><th>漏报</th><th>错锚</th><th>跳过</th><th>门禁</th><th>报告</th></tr></thead>",
     `<tbody>\n${rows}\n</tbody>`,
     "</table>",
     "</main>",
@@ -227,6 +258,7 @@ interface Args {
   root: string;
   md?: string;
   html?: string;
+  stepSummary?: string;
   runUrl?: string;
 }
 
@@ -249,13 +281,16 @@ function parseArgs(argv: string[]): Args {
       case "--html":
         args.html = next();
         break;
+      case "--step-summary":
+        args.stepSummary = next();
+        break;
       case "--run-url":
         args.runUrl = next();
         break;
       case "--help":
       case "-h":
         console.log(
-          "用法：bun scripts/merge-reports.ts [--root <目录>] [--md <path>] [--html <path>] [--run-url <URL>]；" +
+          "用法：bun scripts/merge-reports.ts [--root <目录>] [--md <path>] [--html <path>] [--step-summary <path>] [--run-url <URL>]；" +
             "root 下每个子目录是一档报告的 {metrics.json, report.md, report.html}。",
         );
         process.exit(0);
@@ -290,6 +325,10 @@ function main(): void {
   for (const target of [args.md!, args.html!]) mkdirSync(dirname(resolve(target)), { recursive: true });
   writeFileSync(args.md!, markdown);
   writeFileSync(args.html!, html);
+  if (args.stepSummary !== undefined) {
+    mkdirSync(dirname(resolve(args.stepSummary)), { recursive: true });
+    writeFileSync(args.stepSummary, renderMarkdown(entries, args.runUrl ?? null, args.root, true));
+  }
   const failed = entries.filter((entry) => entry.gatePassed === false).length;
   const missing = entries.filter((entry) => !entry.metricsOk).length;
   console.log(
