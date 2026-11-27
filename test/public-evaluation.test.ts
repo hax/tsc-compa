@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Plan } from "../scripts/full-compatibility.ts";
 import { cached, makeReport, planExecution, publicCatalog, reportHtml, saveReport, semanticFingerprint, shardReceipt, verifyPublic, verifyReport, type Request } from "../scripts/public-evaluation.ts";
+import { activePolicies } from "../scripts/public-evaluation-policy.ts";
 import { sha256 } from "../src/provenance.ts";
+import { createHash } from "node:crypto";
 import { distributionSha256, shardInputEvidence, verifyCorpus } from "../scripts/public-evaluation-inputs.ts";
 
-import { distributionContents, inspectDistribution } from "../scripts/public-evaluation-tools.ts";
+import { distributionContents, inspectDistribution, verifyNpmArchive } from "../scripts/public-evaluation-tools.ts";
 
 const hash = (value: unknown) => sha256(JSON.stringify(value));
 const write = (path: string, data: unknown) => writeFileSync(path, JSON.stringify(data));
@@ -333,14 +335,14 @@ test("source Markdown does not affect request identity, but harness code does", 
   expect(semanticFingerprint(root)).not.toBe(original);
 }));
 
-test("validates prepared compiler provenance and exact shard options without promoting local paths", () => fixture(({ root, request, plan, metrics }) => {
+test("validates prepared compiler provenance and exact shard options without promoting local paths", () => fixture(({ root, data, bundle, request, plan, metrics }) => {
   plan.candidates = ["tsc-rs"];
   const { version: _version, ...old } = request;
   const q: Request = { ...old, version: 3, candidate: "tsc-rs", candidateVersion: "2b006e0", planSha256: hash(plan),
     options: { ...old.options, candidateEnvArgs: ["--checkers", "1"] },
     candidateTool: { ...old.candidateTool, version: "Version 7.1.0-dev" },
     prepared: { source: { kind: "cargo", repository: "kazhiramatsu/tsc-rs", commit: "2b006e078d5b535185f5aeea04406eab7b8aee3c",
-      lockSha256: sha256("Cargo.lock"), rustc: "rustc 1.99.1 (58cf8f9c3 2026-10-13)", cargo: "cargo 1.99.1 (012345678 2026-10-13)",
+      lockSha256: "6e75654c5a4bef972e5ab10aff7cb2e65a6935a105817c357815a67b297c0be3", rustc: "rustc 1.99.1 (58cf8f9c3 2026-10-13)", cargo: "cargo 1.99.1 (012345678 2026-10-13)",
       linker: "13.3.0", buildImage: "20261127.1.1" }, runtimeLibrariesSha256: sha256("runtime"), environment: {} },
   };
   const oldDir = join(root, "full-typescript-01");
@@ -369,6 +371,37 @@ test("validates prepared compiler provenance and exact shard options without pro
     const id = hash(request);
     expect(() => verifyReport({ ...report, id, request, reportPath: `reports/${id}.html` }, id)).toThrow("Invalid or incomplete");
   }
+  write(join(bundle, `${report.id}.json`), report);
+  expect(saveReport(data, bundle, report.id)).toBe("stored");
+  // Run a fresh copy of the actual Pages staging CLI with a new active pin
+  // and arguments appended. Do not mutate the running validator or registry.
+  const checkout = join(root, "next-generation");
+  for (const path of ["scripts", "config", "src"]) cpSync(path, join(checkout, path), { recursive: true });
+  const policyPath = join(checkout, "scripts/public-evaluation-policy.ts");
+  const policy = readFileSync(policyPath, "utf8");
+  const oldPolicy = activePolicies["tsc-rs"];
+  const nextPin = "a".repeat(40);
+  const next = { ...oldPolicy, candidate: { ...oldPolicy.candidate, version: nextPin.slice(0, 7) }, cliArgs: ["--checkers", "2"],
+    source: { ...oldPolicy.source, commit: nextPin } };
+  writeFileSync(policyPath, policy.replace('];\nexport const activePolicies', `];\n(policyGenerations as Generation[]).push({ policies: { ...policyGenerations[0]!.policies, "tsc-rs": ${JSON.stringify(next)} } });\nexport const activePolicies`));
+  const registryPath = join(checkout, "config/implementations.json");
+  const registry = JSON.parse(readFileSync(registryPath, "utf8"));
+  registry.implementations["tsc-rs"].acquisition.cargo.git.ref = nextPin;
+  registry.implementations["tsc-rs"].cliArgs = next.cliArgs;
+  write(registryPath, registry);
+  const stage = join(root, "staged");
+  const stageCommand = join(checkout, "scripts/stage-public-reports.ts");
+  execFileSync(process.execPath, [stageCommand, data, stage]);
+  expect(readFileSync(join(stage, `${report.id}.html`), "utf8")).toBe(reportHtml(report));
+  expect(JSON.parse(readFileSync(join(stage, "catalog.json"), "utf8")).combinations.at(-2).candidate.version).toBe("aaaaaaa");
+  // A report relabeled to the new tuple but holding the old source/args is
+  // still rejected even when its own ID is recomputed.
+  const relabeledRequest = { ...q, candidateVersion: next.candidate.version };
+  const relabeledId = hash(relabeledRequest);
+  write(join(bundle, `${relabeledId}.json`), { ...report, id: relabeledId, candidate: next.candidate,
+    request: relabeledRequest, reportPath: `reports/${relabeledId}.html` });
+  expect(() => execFileSync(process.execPath, [join(checkout, "scripts/public-evaluation.ts"), "save", data, bundle, relabeledId],
+    { stdio: "pipe" })).toThrow("Invalid or incomplete public report");
   write(receipt, { ...shardReceipt(q, hash(q), "01"), candidateDistributionSha256: sha256("wrong distribution") });
   expect(() => makeReport(q, plan, root, run)).toThrow("not bound to this public request");
 }));
@@ -390,3 +423,13 @@ test("prepared distributions reject extra files, symlinks and changed compiler b
   symlinkSync("tsz", extra);
   expect(() => distributionContents("tsz", dist)).toThrow("Non-regular public input");
 }));
+
+
+test("npm acquisition requires both SHA-256 and npm SHA-512 integrity", () => {
+  const bytes = Buffer.from("pinned archive fixture");
+  const digest = sha256(bytes);
+  const integrity = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+  expect(() => verifyNpmArchive(bytes, digest, integrity)).not.toThrow();
+  expect(() => verifyNpmArchive(bytes, digest, `${integrity}bad`)).toThrow("integrity mismatch");
+  expect(() => verifyNpmArchive(bytes, sha256("other"), integrity)).toThrow("integrity mismatch");
+});

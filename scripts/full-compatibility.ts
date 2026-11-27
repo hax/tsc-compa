@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "../src/baselines.ts";
 import { expandCaseVariants } from "../src/case.ts";
 import { isValidCaseId, readCase } from "../src/discover.ts";
+import { activePolicies, isAddedCandidate } from "./public-evaluation-policy.ts";
 import { identifyTool, sha256 } from "../src/provenance.ts";
 import type { Metrics, ToolIdentity } from "../src/compare.ts";
 
@@ -83,8 +84,7 @@ export function verifyVersion(candidate: Candidate, bin: string): void {
   const result = spawnSync(bin, ["--version"], { encoding: "utf8", timeout: 10_000 });
   const expected = candidate === "typescript" ? "Version 7.1.0-beta"
     : candidate === "tsrs" ? "Version 7.1.0-beta (tsrs 0.25.0-ts7.1.0-beta, microsoft/TypeScript@3e9236361fa9)"
-    : candidate === "ts-rust" || candidate === "tsc-rs" ? "Version 7.1.0-dev"
-    : candidate === "tsz" ? "Version 7.0.2" : candidate.slice(4);
+    : isAddedCandidate(candidate) ? activePolicies[candidate].selfReport : candidate.slice(4);
   if (result.status !== 0 || result.stdout?.trim() !== expected) throw new Error(`${candidate}: expected ${expected}, got ${result.stdout || result.stderr || result.error}`);
 }
 

@@ -7,7 +7,8 @@ import { corpusRefOf, findBaseline, loadBaselines, REPO_ROOT, resolveBaselineTsc
 import type { CaseRecord, Metrics, ToolIdentity } from "../src/compare.ts";
 import { isValidCaseId, loadManifest } from "../src/discover.ts";
 import { identifyTool, sha256 } from "../src/provenance.ts";
-import { addedCandidate, addedCandidates, inspectDistribution, isAddedCandidate, prepareDistribution, probeDistribution, validPrepared, type PreparedEvidence } from "./public-evaluation-tools.ts";
+import { inspectDistribution, prepareDistribution, probeDistribution } from "./public-evaluation-tools.ts";
+import { activePolicies, addedCandidates, isAddedCandidate, policyGenerations, validPrepared, type PreparedEvidence } from "./public-evaluation-policy.ts";
 import { distributionSha256, shardInputEvidence, verifyCorpus, type ShardInputEvidence } from "./public-evaluation-inputs.ts";
 
 const legacyCandidates = {
@@ -16,7 +17,7 @@ const legacyCandidates = {
   "bun-1.4.5": { id: "bun", name: "Bun", version: "1.4.5" },
   tsrs: { id: "tsrs", name: "tsrs", version: "0.25.0-ts7.1.0-beta" },
 } as const;
-const candidates = { ...legacyCandidates, "ts-rust": addedCandidate("ts-rust"), "tsc-rs": addedCandidate("tsc-rs"), tsz: addedCandidate("tsz") } satisfies Record<Candidate, { id: string; name: string; version: string }>;
+const candidates = { ...legacyCandidates, "ts-rust": activePolicies["ts-rust"].candidate, "tsc-rs": activePolicies["tsc-rs"].candidate, tsz: activePolicies.tsz.candidate } satisfies Record<Candidate, { id: string; name: string; version: string }>;
 const suites = {
   "fixed-120": { id: "fixed-120", label: "固定诊断样本（120 例）" },
   full: { id: "full", label: "全量类型检查测试集（compiler / conformance）" },
@@ -60,7 +61,7 @@ const command = (program: string, args: string[]): string => {
 
 export function semanticFingerprint(root = REPO_ROOT): string {
   const files = [manifest, "config/baselines.json", "config/implementations.json", "package.json", "bun.lock",
-    "scripts/full-compatibility.ts", "scripts/public-evaluation.ts", "scripts/public-evaluation-inputs.ts", "scripts/public-evaluation-tools.ts", "scripts/install-impl.ts", ".npmrc", ".github/workflows/public-evaluation.yml"];
+    "scripts/full-compatibility.ts", "scripts/public-evaluation.ts", "scripts/public-evaluation-inputs.ts", "scripts/public-evaluation-tools.ts", "scripts/public-evaluation-policy.ts", "scripts/install-impl.ts", ".npmrc", ".github/workflows/public-evaluation.yml"];
   const list = (dir: string) => {
     for (const item of readdirSync(join(root, dir), { withFileTypes: true })) {
       const path = `${dir}/${item.name}`;
@@ -75,10 +76,10 @@ export function semanticFingerprint(root = REPO_ROOT): string {
 const supportsSuite = (candidate: Candidate, suite: keyof typeof suites) => !isAddedCandidate(candidate) || suite === "full";
 const legacyCatalog = () => ({ schemaVersion: 1, combinations: Object.values(legacyCandidates).flatMap((candidate) =>
   Object.values(suites).map((suite) => ({ candidate, reference, suite }))) });
-export function publicCatalog() {
-  return { schemaVersion: 1, combinations: [...legacyCatalog().combinations,
-    ...addedCandidates.map((id) => ({ candidate: candidates[id], reference, suite: suites.full }))] };
-}
+const catalogFor = (policies: typeof activePolicies) => ({ schemaVersion: 1, combinations: [...legacyCatalog().combinations,
+  ...addedCandidates.map((id) => ({ candidate: policies[id].candidate, reference, suite: suites.full }))] });
+export const publicCatalog = () => catalogFor(activePolicies);
+const supportedCatalogs = [legacyCatalog(), ...policyGenerations.map(({ policies }) => catalogFor(policies))];
 
 // Store no local paths in public provenance. A wrapper-only fingerprint is not
 // sufficient for npm TS7 or tsrs; identifyTool resolves their platform binaries.
@@ -105,7 +106,7 @@ function installTools(candidate: Candidate, dest: string, requestDir: string, re
   const referenceTool = toolEvidence(identifyTool(tsc, "7.1.0-beta"));
   if (isAddedCandidate(candidate)) {
     const dir = resolve(requestDir, "compiler");
-    if (request && (request.version !== 3 || !validPrepared(candidate, request.prepared, request.options.candidateEnvArgs) || !request.distributions.candidate)) {
+    if (request && (request.version !== 3 || !validPrepared(candidate, request.candidateVersion, request.prepared, request.options.candidateEnvArgs, request.candidateTool) || !request.distributions.candidate)) {
       throw new Error("Invalid prepared compiler request");
     }
     const preparedRequest = request?.version === 3 ? request : undefined;
@@ -292,7 +293,7 @@ const sameCombination = (row: IndexEntry, candidate: IndexEntry["candidate"], re
 const validEntry = (entry: IndexEntry) => exactKeys(entry, "id candidate reference suite generatedAt reportPath runUrl summary") &&
   isHash(entry.id) && entry.reportPath === `reports/${entry.id}.html` && isString(entry.runUrl) && runUrlPattern.test(entry.runUrl) &&
   isDate(entry.generatedAt) && validSummary(entry.summary) &&
-  publicCatalog().combinations.some(({ candidate, reference, suite }) => sameCombination(entry, candidate, reference, suite));
+  supportedCatalogs.some(({ combinations }) => combinations.some(({ candidate, reference, suite }) => sameCombination(entry, candidate, reference, suite)));
 
 export function readIndex(data: string): { schemaVersion: 1; reports: IndexEntry[] } {
   const path = join(data, "reports/index.json");
@@ -320,7 +321,9 @@ export function verifyReport(value: unknown, id: string): asserts value is Repor
       !exactKeys(q, `version candidate candidateVersion reference source suite corpus planSha256 planCounts manifestSha256 harnessSha256 runner platform runnerImage node locale timezone adapter options referenceTool candidateTool distributions inputs${prepared ? " prepared" : ""}`) ||
       (q.version !== 2 && q.version !== 3) || !isString(q.candidate) || !Object.hasOwn(candidates, q.candidate) ||
       prepared !== isAddedCandidate(q.candidate) || q.candidateVersion !== r.candidate.version ||
-      q.source !== source || q.reference !== baseline || q.suite !== r.suite.id || !sameCombination(indexEntry(r), candidates[q.candidate], reference, suites[q.suite]) ||
+      q.source !== source || q.reference !== baseline || q.suite !== r.suite.id ||
+      (isAddedCandidate(q.candidate) ? q.suite !== "full" || q.candidate !== r.candidate.id
+        : !sameCombination(indexEntry(r), legacyCandidates[q.candidate], reference, suites[q.suite])) ||
       !isString(q.corpus) || !/^microsoft\/TypeScript@[a-f0-9]{40}$/.test(q.corpus) || !isHash(q.planSha256) || !isHash(q.harnessSha256) ||
       !(q.suite === "fixed-120" ? isHash(q.manifestSha256) : q.manifestSha256 === null) ||
       q.adapter !== (q.candidate.startsWith("bun-") ? "bun-check" : "tsc-cli") ||
@@ -330,8 +333,7 @@ export function verifyReport(value: unknown, id: string): asserts value is Repor
       !Array.isArray(q.options.referenceBaseArgs) || !q.options.referenceBaseArgs.every((v) => isString(v) && /^[\w.+-]{1,80}$/.test(v)) ||
       !validTool(q.candidateTool) || !validTool(q.referenceTool) ||
       (q.version === 3 && (!isAddedCandidate(q.candidate) || q.platform !== "linux/x64" || q.runnerImage !== "ubuntu24" ||
-        q.candidateTool.version !== (q.candidate === "tsz" ? "Version 7.0.2" : "Version 7.1.0-dev") ||
-        !validPrepared(q.candidate, q.prepared, q.options.candidateEnvArgs))) ||
+        !validPrepared(q.candidate, q.candidateVersion, q.prepared, q.options.candidateEnvArgs, q.candidateTool, true))) ||
       !exactKeys(q.distributions, "reference candidate") || !isHash(q.distributions.reference) ||
       !(q.candidate.startsWith("bun-") ? q.distributions.candidate === null : isHash(q.distributions.candidate)) ||
       !validCounts(q.planCounts) || q.planCounts.shards !== r.summary.shards ||
@@ -350,9 +352,7 @@ function validCatalog(data: string): boolean {
   try {
     if (!lstatSync(path, { throwIfNoEntry: false })?.isFile()) return false;
     const digest = hash(readJson<unknown>(path));
-    // Older deployments have exactly the original eight entries. Accept
-    // that known catalog without accepting arbitrary subsets or new fields.
-    return digest === hash(publicCatalog()) || digest === hash(legacyCatalog());
+    return supportedCatalogs.some((catalog) => digest === hash(catalog));
   }
   catch { return false; }
 }
