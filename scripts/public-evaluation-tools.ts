@@ -195,7 +195,7 @@ export function inspectDistribution(id: AddedCandidate, dir: string, source: Pre
   implementation(id);
   const environment = activePolicies[id].environment;
   verifyVersion(id, files.bin);
-  return { ...files, prepared: { source, runtimeLibrariesSha256: libraries, environment }, cliArgs: [...activePolicies[id].cliArgs], invocation: activePolicies[id].invocation };
+  return { ...files, prepared: { source, runtimeLibrariesSha256: libraries, environment }, cliArgs: [...activePolicies[id].cliArgs], invocation: activePolicies[id].invocation, stackBytes: activePolicies[id].stackBytes };
 }
 
 export function probeDistribution(id: AddedCandidate, tools: ReturnType<typeof inspectDistribution>) {

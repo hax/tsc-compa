@@ -91,7 +91,7 @@ function toolEvidence(tool: ToolIdentity | null | undefined) {
 type Tools = {
   bin: string; reference: ReturnType<typeof toolEvidence>; candidate: ReturnType<typeof toolEvidence>;
   distributions: { reference: string; candidate: string | null };
-} & ({ prepared: PreparedEvidence; cliArgs: string[]; invocation?: "project" } | { prepared?: undefined; cliArgs?: undefined; invocation?: undefined });
+} & ({ prepared: PreparedEvidence; cliArgs: string[]; invocation?: "project"; stackBytes?: number } | { prepared?: undefined; cliArgs?: undefined; invocation?: undefined; stackBytes?: undefined });
 
 function installTools(candidate: Candidate, dest: string, requestDir: string, request?: Request): Tools {
   // Never use local or environment-selected binaries in the public workflow.
@@ -106,7 +106,7 @@ function installTools(candidate: Candidate, dest: string, requestDir: string, re
   const referenceTool = toolEvidence(identifyTool(tsc, "7.1.0-beta"));
   if (isAddedCandidate(candidate)) {
     const dir = resolve(requestDir, "compiler");
-    if (request && (request.version !== 3 || !validPrepared(candidate, request.candidateVersion, request.prepared, request.options.candidateEnvArgs, request.candidateTool, request.options.invocation) || !request.distributions.candidate)) {
+    if (request && (request.version !== 3 || !validPrepared(candidate, request.candidateVersion, request.prepared, request.options.candidateEnvArgs, request.candidateTool, request.options.invocation, request.options.stackBytes) || !request.distributions.candidate)) {
       throw new Error("Invalid prepared compiler request");
     }
     const preparedRequest = request?.version === 3 ? request : undefined;
@@ -117,7 +117,7 @@ function installTools(candidate: Candidate, dest: string, requestDir: string, re
     });
     probeDistribution(candidate, compiler);
     return { bin: compiler.bin, reference: referenceTool, candidate: toolEvidence(identifyTool(compiler.bin)),
-      distributions: { reference: officialDist, candidate: compiler.distribution }, prepared: compiler.prepared, cliArgs: compiler.cliArgs, invocation: compiler.invocation };
+      distributions: { reference: officialDist, candidate: compiler.distribution }, prepared: compiler.prepared, cliArgs: compiler.cliArgs, invocation: compiler.invocation, stackBytes: compiler.stackBytes };
   }
   const isBun = candidate.startsWith("bun-");
   const bin = candidate === "typescript" ? tsc : command(process.execPath, ["scripts/install-impl.ts", "--name",
@@ -161,7 +161,7 @@ function makeRequest(plan: Plan, suiteId: keyof typeof suites, tools: Tools, inp
     referenceTool: tools.reference, candidateTool: tools.candidate, distributions: tools.distributions, inputs,
   } as const;
   return tools.prepared
-    ? { ...common, version: 3 as const, options: { ...common.options, candidateEnvArgs: tools.cliArgs, ...(tools.invocation && { invocation: tools.invocation }) }, prepared: tools.prepared }
+    ? { ...common, version: 3 as const, options: { ...common.options, candidateEnvArgs: tools.cliArgs, ...(tools.invocation && { invocation: tools.invocation }), ...(tools.stackBytes && { stackBytes: tools.stackBytes }) }, prepared: tools.prepared }
     : { version: 2 as const, ...common };
 }
 export type Request = ReturnType<typeof makeRequest>;
@@ -192,6 +192,7 @@ export function shardReceipt(request: Request, id: string, shard: string) {
     candidateDistributionSha256: request.distributions.candidate, runtimeLibrariesSha256: request.prepared.runtimeLibrariesSha256,
     candidateEnvironment: request.prepared.environment,
     ...(request.options.invocation && { invocation: request.options.invocation }),
+    ...(request.options.stackBytes && { stackBytes: request.options.stackBytes }),
   }) };
 }
 
@@ -240,6 +241,7 @@ function preparedHtml(tool: PreparedEvidence, request: Extract<Request, { versio
   return `
 <li>候选来源：<code>${escapeHtml(recorded)}</code></li><li>CLI 自报版本：<code>${escapeHtml(request.candidateTool.version)}</code></li>
 ${request.options.invocation === "project" ? "<li>跨版本对照：候选通过生成的 tsconfig 接收原配置；不支持的选项单独记为跳过。</li>" : ""}
+${request.options.stackBytes ? `<li>检查进程栈软上限：${request.options.stackBytes / 1024 / 1024} MiB。</li>` : ""}
 <li>发行目录 SHA-256：<code>${request.distributions.candidate}</code></li><li>动态库 SHA-256 清单摘要：<code>${tool.runtimeLibrariesSha256}</code></li>`;
 }
 
@@ -332,11 +334,11 @@ export function verifyReport(value: unknown, id: string): asserts value is Repor
       q.adapter !== (q.candidate.startsWith("bun-") ? "bun-check" : "tsc-cli") ||
       ![q.runner, q.platform, q.runnerImage, q.node].every((v) => isString(v) && /^[\w ()./+-]{1,120}$/.test(v)) ||
       ![q.locale, q.timezone].every((v) => v === null || (isString(v) && /^[\w.+-]{1,64}$/.test(v))) ||
-      !exactKeys(q.options, `mode strategy referenceBaseArgs${prepared ? " candidateEnvArgs" : ""}${q.options && Object.hasOwn(q.options, "invocation") ? " invocation" : ""}`) || q.options.mode !== "official" || q.options.strategy !== "aligned" ||
+      !exactKeys(q.options, `mode strategy referenceBaseArgs${prepared ? " candidateEnvArgs" : ""}${prepared && q.options && Object.hasOwn(q.options, "invocation") ? " invocation" : ""}${prepared && q.options && Object.hasOwn(q.options, "stackBytes") ? " stackBytes" : ""}`) || q.options.mode !== "official" || q.options.strategy !== "aligned" ||
       !Array.isArray(q.options.referenceBaseArgs) || !q.options.referenceBaseArgs.every((v) => isString(v) && /^[\w.+-]{1,80}$/.test(v)) ||
       !validTool(q.candidateTool) || !validTool(q.referenceTool) ||
       (q.version === 3 && (!isAddedCandidate(q.candidate) || q.platform !== "linux/x64" || q.runnerImage !== "ubuntu24" ||
-        !validPrepared(q.candidate, q.candidateVersion, q.prepared, q.options.candidateEnvArgs, q.candidateTool, q.options.invocation, true))) ||
+        !validPrepared(q.candidate, q.candidateVersion, q.prepared, q.options.candidateEnvArgs, q.candidateTool, q.options.invocation, q.options.stackBytes, true))) ||
       !exactKeys(q.distributions, "reference candidate") || !isHash(q.distributions.reference) ||
       !(q.candidate.startsWith("bun-") ? q.distributions.candidate === null : isHash(q.distributions.candidate)) ||
       !validCounts(q.planCounts) || q.planCounts.shards !== r.summary.shards ||
@@ -472,7 +474,7 @@ function main() {
     const corpus = verifyCorpus(checkout, configuration().ref);
     if (hash(makeRequest(plan, asSuite(request.suite), tools, request.inputs)) !== id) throw new Error("Evaluation inputs changed after planning");
     verifyShardInputs(request, shard.id, shardInputEvidence(corpus, shard.id, shard.units.map((unit) => unit.id)));
-    runShard(plan, shard, request.candidate, corpus, resolve(out), tools.bin, tools.cliArgs, tools.prepared?.environment, tools.invocation);
+    runShard(plan, shard, request.candidate, corpus, resolve(out), tools.bin, tools.cliArgs, tools.prepared?.environment, tools.invocation, tools.stackBytes);
     if (request.version === 3 && isAddedCandidate(request.candidate)) {
       inspectDistribution(request.candidate, join(dir, "compiler"), request.prepared.source, {
         executable: request.candidateTool.sha256, distribution: request.distributions.candidate!, runtimeLibrariesSha256: request.prepared.runtimeLibrariesSha256,

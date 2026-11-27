@@ -338,7 +338,7 @@ TS7／tsrs 的原生发行包（包含声明库）指纹。无论是否勾选 `f
 
 1. `ts-rust`（pingdotgg）：npm `tsc-rs@0.8.0`，校验启动器包和 Linux x64 平台包的 SHA-256 与 npm SHA-512 完整性值，
    用包自己的路径解析器确认原生 CLI，保留平台包和声明库的目录结构。自报 `7.1.0-dev` 不是 npm 版本。
-2. `tsc-rs`（kazhiramatsu）：正式发行 `v0.1.0`（`ed173ea`），按发行说明用 Cargo 和上游固定的 Rust 1.93.0 构建，自报 TypeScript `6.0.3`。这是与 TS7 官方结果的**跨版本对照**。候选用 `TSRS_CHECKERS=1`，通过生成的 `tsconfig` 接收用例选项；不把不支持的 `es2026` 换成其他值。
+2. `tsc-rs`（kazhiramatsu）：正式发行 `v0.1.0`（`ed173ea`），按发行说明用 Cargo 和上游固定的 Rust 1.93.0 构建，自报 TypeScript `6.0.3`。这是与 TS7 官方结果的**跨版本对照**。候选用 `TSRS_CHECKERS=1`，通过生成的 `tsconfig` 接收用例选项；不把不支持的 `es2026` 换成其他值。检查进程的栈软上限固定为 32 MiB 并记入请求；崩溃仍阻断报告。
 3. `tsz`：正式发行 `v0.1.75`（`0c0e53f`），校验发布的 `SHA256SUMS` 与 Linux x64 GNU 归档。只提取 `tsz` CLI（不运行同包的 LSP），强制使用二进制内置的声明库。
 
 以上按顺序选择 `full`。合并前可在分支上用 `preview=true` 验证；合并后由有权限的维护者在

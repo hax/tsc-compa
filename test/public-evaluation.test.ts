@@ -341,7 +341,7 @@ test("validates prepared compiler provenance and exact shard options without pro
   const policyAtRun = activePolicies["tsc-rs"];
   if (policyAtRun.source.kind !== "cargo" || !("cargoVersion" in policyAtRun)) throw new Error("Missing fixture policy");
   const q = { ...old, version: 3 as const, candidate: "tsc-rs" as const, candidateVersion: policyAtRun.candidate.version, planSha256: hash(plan),
-    options: { ...old.options, invocation: "project" as const, candidateEnvArgs: [] },
+    options: { ...old.options, invocation: "project" as const, stackBytes: policyAtRun.stackBytes, candidateEnvArgs: [] },
     candidateTool: { ...old.candidateTool, version: policyAtRun.selfReport },
     prepared: { source: { ...policyAtRun.source, cargo: policyAtRun.cargoVersion, linker: "13.3.0", buildImage: "20261127.1.1" },
       runtimeLibrariesSha256: sha256("runtime"), environment: policyAtRun.environment },
