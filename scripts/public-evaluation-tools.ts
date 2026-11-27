@@ -110,13 +110,15 @@ function buildCargo(id: Exclude<AddedCandidate, "ts-rust">, root: string, distri
   if (exec("git", ["rev-parse", "HEAD"], source, env) !== git.ref || exec("git", ["status", "--porcelain"], source, env)) throw new Error("Cargo checkout does not match the pinned source");
   const rustup = Bun.which("rustup");
   if (!rustup) throw new Error("Install the pinned Rust toolchain before planning");
-  const rustc = exec(rustup, ["run", rustToolchain, "rustc", "--version"], source, env);
-  const cargo = exec(rustup, ["run", rustToolchain, "cargo", "--version"], source, env);
+  const rustcPath = exec(rustup, ["which", "--toolchain", rustToolchain, "rustc"], source, env);
+  const cargoPath = exec(rustup, ["which", "--toolchain", rustToolchain, "cargo"], source, env);
+  const rustc = exec(rustcPath, ["--version"], source, env);
+  const cargo = exec(cargoPath, ["--version"], source, env);
   if (rustc !== rustcVersion || !/^cargo 1\.99\.1 \([a-f0-9]+ \d{4}-\d\d-\d\d\)$/.test(cargo)) throw new Error("Unexpected Rust build toolchain");
   const linker = exec("cc", ["-dumpfullversion"], source, env);
   const lockPath = join(source, "Cargo.lock");
   const lockSha256 = digestFile(lockPath);
-  const build = spawnSync(rustup, ["run", rustToolchain, ...words], { cwd: source, env, stdio: "inherit", timeout: 25 * 60_000 });
+  const build = spawnSync(cargoPath, words.slice(1), { cwd: source, env: { ...env, RUSTC: rustcPath }, stdio: "inherit", timeout: 25 * 60_000 });
   if (build.status !== 0 || digestFile(lockPath) !== lockSha256) throw new Error(`Pinned Cargo build failed: ${build.error ?? build.status}`);
   mkdirSync(distribution);
   // Both pinned Cargo checkers embed their declaration bytes. tsz can also
