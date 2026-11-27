@@ -102,6 +102,7 @@ export class TscCliAdapter implements Adapter {
       const paths = materializeCase(tmp, input.files);
       // extraArgs 放在用例参数之前：它们只提供「版本默认值」，case 指令优先。
       let invocation = [...this.extraArgs, ...input.args, ...paths];
+      let generatedConfig: string | undefined;
       if (this.project) {
         // The v0.1.0 direct CLI does not expose the full compiler option
         // catalog or timing switch. Keep effective option values in an
@@ -109,6 +110,7 @@ export class TscCliAdapter implements Adapter {
         const compilerOptions = { ...compilerOptionsFromArgs(input.args), noEmit: true };
         const config = join(mkdtempSync(join(tmp, "tsc-compa-project-")), "tsconfig.json");
         writeFileSync(config, JSON.stringify({ compilerOptions, files: paths.map((path) => relative(join(config, ".."), path)) }));
+        generatedConfig = relative(tmp, config);
         invocation = ["--noEmit", "--pretty", "false", ...this.extraArgs.slice(4), "-p", config];
       }
       const r = spawnSync(this.bin, invocation, {
@@ -163,11 +165,13 @@ export class TscCliAdapter implements Adapter {
         };
       }
 
-      if (this.project && (exitCode === 1 || exitCode === 2) && parsed.headerLines > 0 &&
-          parsed.headerLines === parsed.diagnostics.length && parsed.unpositioned.length === 0 &&
-          parsed.diagnostics.every((d) => /^tsc-compa-project-[^/]+\/tsconfig\.json$/.test(d.file) &&
-            rejectsCompilerOptions(exitCode, { ...parsed, headerLines: 0, unpositioned: [{ severity: "error", code: d.code, text: "" }] }))) {
-        return { id: input.id, status: "skip", diagnostics: [], skipReason: "候选拒绝生成的 tsconfig 编译选项", exitCode, rawOutput };
+      if (generatedConfig && parsed.diagnostics.some((d) => d.file === generatedConfig)) {
+        const rejectedOptions = parsed.headerLines === parsed.diagnostics.length && parsed.unpositioned.length === 0 &&
+          parsed.diagnostics.every((d) => d.file === generatedConfig) && rejectsCompilerOptions(exitCode, {
+            ...parsed, headerLines: 0, unpositioned: parsed.diagnostics.map((d) => ({ severity: "error", code: d.code, text: "" })),
+          });
+        return { id: input.id, status: rejectedOptions ? "skip" : "crash", diagnostics: [],
+          skipReason: rejectedOptions ? "候选拒绝生成的 tsconfig 编译选项" : "候选未能读取或执行生成的 tsconfig", exitCode, rawOutput };
       }
 
       // 只有明确拒绝该配置时把无位置诊断记成 skip；命令失败仍要阻断。

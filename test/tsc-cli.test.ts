@@ -249,3 +249,31 @@ describe("TscCliAdapter 输出分类", () => {
     ].join("\n"));
   });
 });
+
+test("project CLI passes aligned values, including ES2026, and only skips recognized config rejections", async () => {
+  const root = mkdtempSync(join(tmpdir(), "tsc-project-cli-test-"));
+  const bin = join(root, "checker");
+  writeFileSync(bin, `#!/bin/sh
+[ "$1 $2 $3 $4" = '--noEmit --pretty false -p' ] || exit 7
+config="$5"
+if grep -q '"target":"es2026"' "$config"; then
+  printf '%s(1,1): error TS6046: Unsupported target\n' "$config"
+  exit 1
+fi
+if grep -q '"target":"es2022"' "$config" && grep -q '"strict":false' "$config" && grep -Fq '"files":["../a.ts"]' "$config"; then
+  printf 'a.ts(1,1): error TS2322: example\n'
+  exit 2
+fi
+printf '%s(1,1): error TS6053: File missing\n' "$config"
+exit 1
+`);
+  chmodSync(bin, 0o755);
+  try {
+    const adapter = new TscCliAdapter({ bin, project: true });
+    const run = (...args: string[]) => adapter.check({ id: "a.ts", files: [{ path: "a.ts", text: "const x: number = '';" }], options: [], args });
+    expect(await run("--target", "es2026")).toMatchObject({ status: "skip", diagnostics: [] });
+    expect(await run("--ignoreConfig", "--target", "es2026", "--target", "es2022", "--strict", "true", "--strict", "false"))
+      .toMatchObject({ status: "ok", diagnostics: [{ file: "a.ts", code: 2322 }] });
+    expect(await run("--target", "es2022")).toMatchObject({ status: "crash" });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
