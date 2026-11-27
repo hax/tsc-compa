@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "id": "5f8b32b11e506848c69740d62ce22c4ac9f541f75f57b0804b0b69d0b27eac4e",
+  "request": {
+    "version": 2,
+    "candidate": "bun-1.4.5",
+    "candidateVersion": "1.4.5",
+    "reference": "7.1.0-beta-official",
+    "source": "official-baseline",
+    "suite": "fixed-120",
+    "corpus": "microsoft/TypeScript@3e9236361fa97a9e6c685f4833ac457ae2d8c50a",
+    "planSha256": "2ecfa01a0b140ab5b06a1c36994e4e9d4b4afd2b7effb9e9963ad094c563fa37",
+    "planCounts": {
+      "shards": 1,
+      "sourceFiles": 120,
+      "records": 120
+    },
+    "manifestSha256": "53cf43329af9b662d5e9fad3a6f95a6d4fca37bcf08d0743f16ba07eb3320005",
+    "harnessSha256": "12a2ea8c937cfb4c7450a44394d340bdaf283d7dd483e93a3b5de9f52bf60792",
+    "runner": "Bun 1.4.5 (a7733435cf40429e3b35c36072769df2052b80f1)",
+    "platform": "linux/x64",
+    "runnerImage": "ubuntu24",
+    "node": "v22.18.0",
+    "locale": "C.UTF-8",
+    "timezone": "UTC",
+    "adapter": "bun-check",
+    "options": {
+      "mode": "official",
+      "strategy": "aligned",
+      "referenceBaseArgs": [
+        "--noEmit",
+        "--ignoreConfig",
+        "--pretty",
+        "false",
+        "--target",
+        "es2026",
+        "--module",
+        "es2022",
+        "--moduleResolution",
+        "bundler",
+        "--strict",
+        "true",
+        "--skipDefaultLibCheck",
+        "--noErrorTruncation"
+      ]
+    },
+    "referenceTool": {
+      "version": "7.1.0-beta",
+      "sha256": "a183b1956edbe7e7d98f2249858eedf2d8a9790809cc4909db1276e202faaa70",
+      "nativeSha256": null,
+      "embeddedTypeScript": null
+    },
+    "candidateTool": {
+      "version": "Bun 1.4.5 (a7733435cf40429e3b35c36072769df2052b80f1)",
+      "sha256": "f05d28a3862f4b84395c7fa32480b835dd47482e80b7e7a49a115227f0c06083",
+      "nativeSha256": null,
+      "embeddedTypeScript": "7.0.2"
+    },
+    "distributions": {
+      "reference": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4",
+      "candidate": null
+    },
+    "inputs": [
+      {
+        "shard": "01",
+        "parsedInputsSha256": "6a90ec9b10c9c87ebe2b402e88d090bb47df8dc64dd0565d89d0cb558d462cb7",
+        "officialInputsSha256": "52d4171ec92d0c99540bf647225b945042318e2ec7be88ea66691539dc0621d4"
+      }
+    ]
+  },
+  "candidate": {
+    "id": "bun",
+    "name": "Bun",
+    "version": "1.4.5"
+  },
+  "reference": {
+    "id": "7.1.0-beta-official",
+    "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+  },
+  "suite": {
+    "id": "fixed-120",
+    "label": "固定诊断样本（120 例）"
+  },
+  "generatedAt": "2026-11-27T08:55:53.159Z",
+  "reportPath": "reports/5f8b32b11e506848c69740d62ce22c4ac9f541f75f57b0804b0b69d0b27eac4e.html",
+  "runUrl": "https://github.com/hax/tsc-compa/actions/runs/45969343455",
+  "summary": {
+    "complete": true,
+    "shards": 1,
+    "sourceFiles": 120,
+    "records": 120,
+    "ran": 120,
+    "skipped": 0,
+    "coverage": 1,
+    "hits": 385,
+    "expected": 385,
+    "fp": 0,
+    "missed": 0,
+    "misanchor": 0,
+    "compatibility": {
+      "pass": 120,
+      "fail": 0,
+      "unknown": 0
+    },
+    "strict": {
+      "pass": 0,
+      "fail": 0,
+      "unknown": 120
+    }
+  },
+  "evidence": [
+    {
+      "shard": "01",
+      "parsedInputsSha256": "6a90ec9b10c9c87ebe2b402e88d090bb47df8dc64dd0565d89d0cb558d462cb7",
+      "officialInputsSha256": "52d4171ec92d0c99540bf647225b945042318e2ec7be88ea66691539dc0621d4"
+    }
+  ],
+  "differences": []
+}
