@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Plan } from "../scripts/full-compatibility.ts";
-import { cached, makeReport, publicCatalog, reportHtml, saveReport, verifyPublic, verifyReport, type Request } from "../scripts/public-evaluation.ts";
+import { cached, makeReport, planExecution, publicCatalog, reportHtml, saveReport, verifyPublic, verifyReport, type Request } from "../scripts/public-evaluation.ts";
 import { sha256 } from "../src/provenance.ts";
 import { distributionSha256, shardInputEvidence, verifyCorpus } from "../scripts/public-evaluation-inputs.ts";
 
@@ -98,6 +98,104 @@ test("verified compact evidence is reusable, and distinct request fingerprints p
   expect(() => saveReport(data, bundle, first.id)).toThrow("Invalid or incomplete");
   expect(readFileSync(indexPath, "utf8")).toBe(snapshot);
 }));
+
+test("force changes the execution decision and refreshes only the same canonical request", () => fixture(({ data, bundle, root, request, plan, receipt }) => {
+  const original = makeReport(request, plan, root, run, "2026-10-30T00:00:00Z", { number: 10, attempt: 1 });
+  const path = join(bundle, `${original.id}.json`);
+  const readReport = () => JSON.parse(readFileSync(join(data, `reports/${original.id}.json`), "utf8"));
+  expect(planExecution(data, original.id)).toEqual({ cacheHit: false, shouldRun: true });
+  expect(planExecution(data, original.id, true)).toEqual({ cacheHit: false, shouldRun: true });
+  write(path, original);
+  expect(saveReport(data, bundle, original.id)).toBe("stored");
+  expect(planExecution(data, original.id)).toEqual({ cacheHit: true, shouldRun: false });
+  expect(planExecution(data, original.id, true)).toEqual({ cacheHit: true, shouldRun: true });
+
+  const otherRequest = { ...request, harnessSha256: sha256("another harness") };
+  write(receipt, { id: hash(otherRequest), shard: "01" });
+  const other = makeReport(otherRequest, plan, root, run, "2026-10-31T00:00:00Z");
+  write(join(bundle, `${other.id}.json`), other);
+  saveReport(data, bundle, other.id);
+  const otherHtml = readFileSync(join(data, other.reportPath), "utf8");
+  write(receipt, { id: original.id, shard: "01" });
+
+  const refreshed = makeReport(request, plan, root, `${run}9`, "2026-11-01T00:00:00Z", { number: 11, attempt: 1 });
+  expect(refreshed.id).toBe(original.id);
+  expect(refreshed.request).toEqual(original.request);
+  write(path, refreshed);
+  expect(saveReport(data, bundle, original.id)).toBe("already-stored");
+  expect(readReport()).toEqual(original);
+  expect(saveReport(data, bundle, original.id, true)).toBe("refreshed");
+  expect(readReport()).toEqual(refreshed);
+  expect(readFileSync(join(data, refreshed.reportPath), "utf8")).toBe(reportHtml(refreshed));
+  expect(readFileSync(join(data, other.reportPath), "utf8")).toBe(otherHtml);
+  const index = join(data, "reports/index.json");
+  const snapshot = readFileSync(index, "utf8");
+  expect(JSON.parse(snapshot).reports).toMatchObject([{ id: original.id, runUrl: refreshed.runUrl }, { id: other.id }]);
+  expect(planExecution(data, original.id)).toEqual({ cacheHit: true, shouldRun: false });
+
+  const late = { ...original, workflowRun: { number: 10, attempt: 3 }, generatedAt: "2026-11-02T00:00:00Z" };
+  write(path, late);
+  expect(saveReport(data, bundle, original.id, true)).toBe("superseded");
+  expect(saveReport(data, bundle, original.id)).toBe("already-stored");
+  write(path, { ...refreshed, generatedAt: late.generatedAt });
+  expect(saveReport(data, bundle, original.id, true)).toBe("already-stored");
+  for (const invalid of [
+    { ...refreshed, workflowRun: undefined },
+    { ...refreshed, workflowRun: { number: 12, attempt: 0 } },
+    { ...refreshed, workflowRun: { number: 12, attempt: 1 }, summary: { ...refreshed.summary, complete: false } },
+  ]) {
+    write(path, invalid);
+    expect(() => saveReport(data, bundle, original.id, true)).toThrow();
+  }
+  expect(readReport()).toEqual(refreshed);
+  expect(readFileSync(index, "utf8")).toBe(snapshot);
+
+  const retry = { ...refreshed, workflowRun: { number: 11, attempt: 2 }, generatedAt: late.generatedAt };
+  write(path, retry);
+  expect(saveReport(data, bundle, original.id, true)).toBe("refreshed");
+  expect(readReport()).toEqual(retry);
+  expect(() => verifyPublic(data)).not.toThrow();
+}));
+
+test("a rejected push retries against the newer same-request evidence without changing the remote", () => fixture(({ root, bundle, data, request, plan }) => {
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const repo = join(root, "repo.git");
+  const ref = "refs/heads/public-report-data";
+  git(root, "init", "--bare", "-q", repo);
+  git(repo, "config", "core.hooksPath", join(repo, "hooks"));
+  git(data, "init", "-q");
+  const original = makeReport(request, plan, root, run, "2026-10-30T00:00:00Z", { number: 10, attempt: 1 });
+  const path = join(bundle, `${original.id}.json`);
+  const stage = () => {
+    git(data, "add", "reports");
+    git(data, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "test evidence");
+  };
+  const persist = (...flags: string[]) => execFileSync("bash", ["scripts/persist-public-evaluation.sh", bundle, original.id, ...flags], {
+    env: { ...env, PUSH_TOKEN: "fixture", GITHUB_SERVER_URL: root, GITHUB_REPOSITORY: "repo", GITHUB_STEP_SUMMARY: join(root, "summary") },
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+  });
+  write(path, original);
+  expect(persist()).toContain(`Stored ${original.id}`);
+  git(data, "pull", "-q", repo, ref);
+  const newer = { ...original, runUrl: `${run}9`, workflowRun: { number: 12, attempt: 1 } };
+  write(path, newer);
+  saveReport(data, bundle, original.id, true);
+  stage();
+  const winner = git(data, "rev-parse", "HEAD");
+  git(data, "push", "-q", repo, "HEAD:refs/heads/test-winner");
+  // Advance the remote after the stale attempt reads it, but before its
+  // push can update the ref. The real Git ref update must reject that push.
+  writeFileSync(join(repo, "hooks/pre-receive"), `#!/bin/sh
+unset GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+git update-ref '${ref}' '${winner}'
+`, { mode: 0o755 });
+  write(path, { ...original, generatedAt: "2026-11-01T00:00:00Z", workflowRun: { number: 11, attempt: 1 } });
+  expect(persist("--force")).toContain("newer evidence is already stored");
+  expect(git(repo, "rev-parse", ref)).toBe(winner);
+  expect(JSON.parse(git(repo, "show", `${ref}:reports/${original.id}.json`))).toEqual(newer);
+  expect(persist()).toContain("already stored; no public data changed");
+}), 30_000);
 
 test("missing shards, execution failures and wrong tools or option strategies cannot produce a report", () => fixture(({ root, request, plan, metricsFile, metrics }) => {
   expect(() => makeReport(request, { ...plan, shards: [] }, root, run)).toThrow("Invalid public evaluation plan");

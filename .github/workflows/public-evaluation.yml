@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/public-evaluation.yml
       - scripts/public-evaluation*.ts
+      - scripts/persist-public-evaluation.sh
       - test/public-evaluation*.test.ts
   workflow_dispatch:
     inputs:
@@ -22,6 +23,10 @@ on:
         description: Read-only preview (never write to the public data branch)
         type: boolean
         default: false
+      force:
+        description: Re-run cases even if this exact request already has a completed report
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,7 +41,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       id: ${{ steps.plan.outputs.id }}
-      cached: ${{ steps.plan.outputs.cached }}
+      should-run: ${{ steps.plan.outputs.should-run }}
       matrix: ${{ steps.plan.outputs.matrix }}
       corpus-repo: ${{ steps.pin.outputs.repo }}
       corpus-ref: ${{ steps.pin.outputs.ref }}
@@ -87,14 +92,37 @@ jobs:
         env:
           CANDIDATE: ${{ inputs.candidate || 'typescript' }}
           SUITE: ${{ inputs.suite || 'fixed-120' }}
-        run: bun scripts/public-evaluation.ts plan "$CANDIDATE" "$SUITE" reference/corpus .cache/public-tools request public-data
-      - name: Report cache hit
-        if: steps.plan.outputs.cached == 'true'
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+        run: |
+          flags=()
+          if [[ "$FORCE" == true ]]; then flags+=(--force); fi
+          bun scripts/public-evaluation.ts plan "$CANDIDATE" "$SUITE" reference/corpus .cache/public-tools request public-data "${flags[@]}"
+      - name: Summarize execution decision
         env:
           ID: ${{ steps.plan.outputs.id }}
-        run: printf 'Exact public report `%s` already exists; no cases will be re-run.\n' "$ID" >> "$GITHUB_STEP_SUMMARY"
+          CACHE_HIT: ${{ steps.plan.outputs.cache-hit }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+          PREVIEW: ${{ inputs.preview }}
+        run: |
+          {
+            printf 'Request: `%s`\n\n' "$ID"
+            if [[ "$FORCE" == true ]]; then
+              if [[ "$CACHE_HIT" == true ]]; then
+                echo 'Force enabled: bypassing the exact report cache and re-running cases.'
+              else
+                echo 'Force enabled: no exact completed report exists; running cases.'
+              fi
+            elif [[ "$CACHE_HIT" == true ]]; then
+              echo 'Force disabled (default): exact report already exists; skipping cases and publication.'
+            else
+              echo 'Force disabled (default): no exact completed report found; running cases.'
+            fi
+            if [[ "$GITHUB_EVENT_NAME" == pull_request || "$PREVIEW" == true ]]; then
+              echo 'Read-only run: public report data will not be written.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
-        if: steps.plan.outputs.cached != 'true'
+        if: steps.plan.outputs.should-run == 'true'
         with:
           name: public-evaluation-request
           path: request/
@@ -104,7 +132,7 @@ jobs:
 
   evaluate:
     needs: plan
-    if: needs.plan.outputs.cached == 'false'
+    if: needs.plan.outputs.should-run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -153,7 +181,7 @@ jobs:
 
   report:
     needs: [plan, evaluate]
-    if: always() && needs.plan.result == 'success' && needs.plan.outputs.cached == 'false'
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.should-run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -180,7 +208,7 @@ jobs:
             echo 'The execution matrix did not complete successfully; no public report will be created.' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          bun scripts/public-evaluation.ts report request "$REQUEST_ID" shard-results bundle "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          bun scripts/public-evaluation.ts report request "$REQUEST_ID" shard-results bundle "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_ATTEMPT"
       - uses: actions/upload-artifact@v4
         with:
           name: public-evaluation-report
@@ -209,8 +237,12 @@ jobs:
         with:
           name: public-evaluation-report
           path: bundle
-      - name: Append verified result to public-report-data
+      - name: Store verified result on public-report-data
         env:
           PUSH_TOKEN: ${{ github.token }}
           REQUEST_ID: ${{ needs.plan.outputs.id }}
-        run: bash scripts/persist-public-evaluation.sh bundle "$REQUEST_ID"
+          FORCE: ${{ inputs.force }}
+        run: |
+          flags=()
+          if [[ "$FORCE" == true ]]; then flags+=(--force); fi
+          bash scripts/persist-public-evaluation.sh bundle "$REQUEST_ID" "${flags[@]}"
