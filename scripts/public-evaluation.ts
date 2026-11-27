@@ -399,7 +399,7 @@ export function verifyReport(value: unknown, id: string): asserts value is Repor
         r.differences.reduce((n, row) => n + row.extra, 0) > r.summary.fp ||
         r.differences.reduce((n, row) => n + row.missed, 0) > r.summary.missed ||
         r.differences.reduce((n, row) => n + row.misanchor, 0) > r.summary.misanchor)) ||
-      (q.suite === curatedSuite.id && !validCuratedRecordIds(r.differences, current ? r.candidateFailures : [])) || hash(q) !== id) {
+      (q.suite === curatedSuite.id && (!current || !validCuratedRecordIds(r.differences, r.candidateFailures))) || hash(q) !== id) {
     throw new Error("Invalid or incomplete public report");
   }
 }

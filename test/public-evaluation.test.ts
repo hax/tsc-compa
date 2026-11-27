@@ -151,6 +151,32 @@ test("curated reports bind the exact configurations for differences and candidat
   const { resultPolicy: _policy, ...withoutPolicy } = curated.request;
   const missingPolicyId = hash(withoutPolicy);
   expect(() => verifyReport({ ...curated, request: withoutPolicy, id: missingPolicyId, reportPath: `reports/${missingPolicyId}.html` }, missingPolicyId)).toThrow("Invalid or incomplete");
+  // A pre-policy curated result had its own valid request ID and no failure fields.
+  const { candidateFailures: _failures, summary: { executionFailures: _counts, ...oldSummary }, ...fields } = curated;
+  const oldCurated = { ...fields, schemaVersion: 1 as const, id: missingPolicyId, request: withoutPolicy,
+    reportPath: `reports/${missingPolicyId}.html`, summary: { ...oldSummary, ran: 32,
+      compatibility: { pass: 31, fail: 1, unknown: 0 }, strict: { pass: 0, fail: 0, unknown: 32 } } };
+  const indexPath = join(data, "reports", "index.json");
+  const indexBefore = readFileSync(indexPath, "utf8");
+  write(join(bundle, `${oldCurated.id}.json`), oldCurated);
+  expect(() => saveReport(data, bundle, oldCurated.id)).toThrow("Invalid or incomplete public report");
+  expect(readFileSync(indexPath, "utf8")).toBe(indexBefore);
+  expect(cached(data, oldId)).toBe(true);
+  verifyPublic(data); // Also rejects any unexpected report files left by the failed save.
+
+  const oldCache = join(root, "old-curated-cache");
+  cpSync(data, oldCache, { recursive: true });
+  const { candidate, reference, suite, generatedAt, reportPath, runUrl, summary } = oldCurated;
+  const index = JSON.parse(indexBefore);
+  index.reports.push({ id: oldCurated.id, candidate, reference, suite, generatedAt, reportPath, runUrl, summary });
+  write(join(oldCache, "reports", "index.json"), index);
+  write(join(oldCache, "reports", `${oldCurated.id}.json`), oldCurated);
+  // The renderer does not display resultPolicy; use the typed request for the HTML fixture.
+  writeFileSync(join(oldCache, reportPath), reportHtml({ ...oldCurated, request: curated.request }));
+  expect(planExecution(oldCache, oldCurated.id)).toEqual({ cacheHit: false, shouldRun: true });
+  expect(() => verifyPublic(oldCache)).toThrow("Invalid or incomplete public report");
+  expect(cached(oldCache, oldId)).toBe(true);
+
   const siblingPlan = structuredClone(pinnedPlan);
   siblingPlan.shards[0]!.units[0]!.records = ["compiler/sibling.ts"];
   expect(() => makeReport({ ...pinned, planSha256: hash(siblingPlan) }, siblingPlan, root, run)).toThrow("Invalid curated v1 plan");
