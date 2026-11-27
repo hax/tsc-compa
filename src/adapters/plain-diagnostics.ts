@@ -54,7 +54,7 @@ export function rejectsCompilerOptions(exitCode: number | null, parsed: ParsedPl
 }
 
 /**
- * tsc/tsrs 的 `--extendedDiagnostics` 与统计输出版式。
+ * tsc/tsrs/tsz 的 `--extendedDiagnostics` 与统计输出版式。
  * 这不是诊断；clean 用例只输出这些行时，fullText 必须是明确的空串。
  */
 const KNOWN_AUXILIARY_LINES: RegExp[] = [
@@ -63,6 +63,22 @@ const KNOWN_AUXILIARY_LINES: RegExp[] = [
   /^\s*[A-Za-z][\w /&-]*\s*time:\s*\d+(?:\.\d+)?\s*s\s*$/,
   // 计数行（含 Lines of Library/Definitions、* cache size）。
   /^\s*(?:Files|Lines(?: of [A-Za-z]+)?|Identifiers|Symbols|Types|Instantiations|Memory used|Memory allocs|(?:Assignability|Identity|Subtype|Strict subtype) cache size):\s*[0-9]+(?:\s*K)?\s*$/,
+  // tsz --extendedDiagnostics：保留固定字段名和值的格式，不能把任意日志当成统计。
+  // 若 tsz 自报非零诊断但没有解析到诊断，则不能把结果当作 clean。
+  /^\s*(?:Errors|Total diagnostics):\s*0\s*$/,
+  /^\s*(?:I\/O Read|Parse & Bind|Check):\s*\d+(?:\.\d+)?s\s*$/,
+  /^\s*(?:Emitted files|Request cache hits|Request cache misses|Contextual cache bypasses|clear_type_cache_recursive|Interned types|Eval cache|Property cache|Variance cache|Module files|Dependency edges|Import cycles):\s*\d+\s*$/,
+  /^\s*Request cache hit rate:\s*\d+(?:\.\d+)?%\s*$/,
+  /^\s*Access request-cache hit rate:\s*\d+(?:\.\d+)?% \(\d+\/\d+\)\s*$/,
+  /^\s*(?:Subtype|Assignability|Application eval|Instantiation) cache:\s*\d+ entries \(\d+ hits, \d+ misses, \d+(?:\.\d+)?%\)\s*$/,
+  /^\s*Definitions:\s*\d+ total \(\d+ aliases, \d+ interfaces, \d+ classes, \d+ enums\)\s*$/,
+  /^\s*Def indices:\s*type_to_def=\d+, symbol_def=\d+, body_to_alias=\d+, shape_to_def=\d+\s*$/,
+  /^\s*Type interner memory:\s*\d+(?:\.\d+)?K \(\d+ types\)\s*$/,
+  /^\s*(?:Query cache memory|Definition store memory|Solver total memory|Retained file state|Pre-merge bind data):\s*\d+(?:\.\d+)?K\s*$/,
+  /^\s*AST arenas:\s*\d+ unique \(\d+(?:\.\d+)?K\)\s*$/,
+  /^\s*Bound files:\s*\d+ \(\d+(?:\.\d+)?K\)\s*$/,
+  /^\s*Retained residency pressure:\s*low\s*$/,
+  /^\s*Skeleton index:\s*\d+ symbols, \d+ merge candidates \(\d+(?:\.\d+)?K\)\s*$/,
   // tsrs 的 Program/Checkers/Diagnostics 明细与汇总。
   /^\s*(?:Program|Checkers|Diagnostics|Emit|List files|Error summary|Statistics):\s*.+$/,
   /^\s*(?:Found|No)\s+\d+\s+errors?\b.*$/,
@@ -70,7 +86,7 @@ const KNOWN_AUXILIARY_LINES: RegExp[] = [
   /^\s*$/,
 ];
 
-/** 是否为已知的诊断辅助输出（计时、计数、tsrs 明细统计）。 */
+/** 是否为已知的诊断辅助输出（计时、计数、检查器明细统计）。 */
 export function isKnownAuxiliaryLine(line: string): boolean {
   return KNOWN_AUXILIARY_LINES.some((pattern) => pattern.test(line));
 }

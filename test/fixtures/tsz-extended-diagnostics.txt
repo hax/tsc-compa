@@ -1,0 +1,46 @@
+
+Files:                         20
+Lines of Library:              52730
+Lines of Definitions:          0
+Lines of TypeScript:           15
+Lines of JavaScript:           0
+Lines of JSON:                 0
+Lines of Other:                0
+Errors:                        0
+I/O Read:                      0.00s
+Parse & Bind:                  0.07s
+Check:                         0.01s
+Emit:                          0.00s
+Total time:                    0.09s
+Emitted files:                 0
+Total diagnostics:             0
+Request cache hits:            0
+Request cache misses:          3
+Request cache hit rate:        0.0%
+Contextual cache bypasses:     25
+clear_type_cache_recursive:    187
+Access request-cache hit rate: 0.0% (0/1)
+Interned types:                663
+Subtype cache:                 5 entries (6 hits, 6 misses, 50.0%)
+Assignability cache:           2 entries (34 hits, 2 misses, 94.4%)
+Eval cache:                    29
+Application eval cache:        0 entries (0 hits, 0 misses, 0.0%)
+Instantiation cache:           5 entries (0 hits, 5 misses, 0.0%)
+Property cache:                8
+Variance cache:                0
+Definitions:                   2477 total (416 aliases, 1636 interfaces, 5 classes, 0 enums)
+Def indices:                   type_to_def=28, symbol_def=2472, body_to_alias=4, shape_to_def=0
+Type interner memory:          247.0K (663 types)
+Query cache memory:            4.6K
+Definition store memory:       1222.8K
+Solver total memory:           1474.4K
+AST arenas:                    17 unique (22530.5K)
+Bound files:                   1 (123.5K)
+Retained file state:           22653.9K
+Retained residency pressure:   low
+Pre-merge bind data:           188.8K
+Skeleton index:                3 symbols, 0 merge candidates (0.4K)
+Module files:                  1
+Dependency edges:              0
+Import cycles:                 0
+Memory used:                   145984K

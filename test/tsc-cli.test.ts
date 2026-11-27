@@ -1,7 +1,7 @@
 // tsc-cli 参考适配器：输出解析与端到端（用假 tsc 脚本）测试。
 
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseTscOutput, parseTscOutputDetailed, TscCliAdapter } from "../src/adapters/tsc-cli.ts";
@@ -159,6 +159,35 @@ describe("TscCliAdapter 输出分类", () => {
     expect(outcome.fullText).toBe("");
     expect(outcome.checkMs).toBe(2);
     expect(outcome.rawOutput?.stdout).toContain("Check time");
+  });
+
+  // PR #18, run 45957130563: adapter-smoke-tsz / compiler/2dArrays.ts 的完整 stdout。
+  const tszTiming = readFileSync(new URL("./fixtures/tsz-extended-diagnostics.txt", import.meta.url), "utf8");
+  const withTszOutput = (stdout: string, exitCode = 0) =>
+    withFake(`#!/bin/sh\ncat <<'TSZ_STDOUT'\n${stdout}TSZ_STDOUT\nexit ${exitCode}\n`);
+
+  test("tsz 以 0 退出且仅输出已知统计 → 明确零诊断", async () => {
+    const outcome = await withTszOutput(tszTiming);
+    expect(outcome).toMatchObject({
+      status: "ok",
+      exitCode: 0,
+      diagnostics: [],
+      fullText: "",
+      rawOutput: { stdout: tszTiming, stderr: "" },
+    });
+  });
+
+  test("tsz 统计与未知行、格式错误或非零诊断计数混合时不得判为零诊断", async () => {
+    for (const stdout of [
+      tszTiming + "Request cache corruption: 1\n",
+      tszTiming.replace("0.07s", "unexpected"),
+      tszTiming.replace(/Errors:( +)0/, (_line, space: string) => `Errors:${space}1`),
+      tszTiming.replace(/Total diagnostics:( +)0/, (_line, space: string) => `Total diagnostics:${space}1`),
+    ]) {
+      const outcome = await withTszOutput(stdout);
+      expect(outcome).toMatchObject({ status: "crash", exitCode: 0, rawOutput: { stdout } });
+    }
+    expect(await withTszOutput(tszTiming, 1)).toMatchObject({ status: "crash", exitCode: 1 });
   });
 
   test("诊断超出协议类别或文件范围时保留原文并跳过，不误判为崩溃或零诊断", async () => {
