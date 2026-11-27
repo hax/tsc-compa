@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'"><title>tsz v0.1.75 · 全量类型检查测试集（compiler / conformance） · tsc-compa</title></head>
+<body><main><p><a href="../">返回报告目录</a></p><h1>tsz v0.1.75 · 全量类型检查测试集（compiler / conformance）</h1>
+<p>对照：TypeScript 7.1.0-beta 官方 .errors.txt。生成时间：2026-11-27T12:53:39.574Z。</p>
+<h2>比较结果</h2>
+<ul><li>运行完整性：8 个分片已核对。计划 12974 个源文件、14346 条配置记录；完成 8954，跳过 5392。</li>
+<li>兼容（通过 / 失败 / 未确认）：8665 / 289 / 0。</li><li>严格一致（通过 / 失败 / 未确认）：4609 / 802 / 3543。</li>
+<li>诊断命中：23284 / 23933（97.29%）；多报 827，漏报 638，错锚 11。</li></ul>
+<p>分片齐全不代表每条配置都能比较；诊断命中率只按实际比较的记录计算。</p>
+<h2>差异示例（最多 8 条）</h2><ul><li><code>compiler/chainedCallsWithTypeParameterConstrainedToOtherTypeParameter2.ts</code>：多报 0，漏报 4，错锚 0</li><li><code>compiler/classStaticPropertyAccess(target=es2015).ts</code>：多报 2，漏报 2，错锚 0</li><li><code>compiler/classUsedBeforeInitializedVariables(target=es2015).ts</code>：多报 2，漏报 5，错锚 0</li><li><code>compiler/declFileExportImportChain.ts</code>：多报 3，漏报 0，错锚 0</li><li><code>compiler/dynamicDeclarationDefault.ts</code>：多报 1，漏报 0，错锚 0</li><li><code>compiler/es6ExportEqualsInterop.ts</code>：多报 7，漏报 12，错锚 0</li><li><code>compiler/exportAssignmentImportMergeNoCrash.ts</code>：多报 0，漏报 3，错锚 0</li><li><code>compiler/exportAssignmentOfGenericType1.ts</code>：多报 0，漏报 1，错锚 0</li></ul>
+<h2>运行条件与证据</h2><ul><li>语料：<code>microsoft/TypeScript@3e9236361fa97a9e6c685f4833ac457ae2d8c50a</code></li><li>适配器：<code>tsc-cli</code></li>
+<li>候选可执行文件 SHA-256：<code>6fa687b52f59f49000f9bf3d403b9bd65c5c9dc394d41351b02bff853a0bdf1c</code></li>
+<li>候选来源：<code>GitHub Release · tsz-org/tsz v0.1.75@0c0e53f96bfd64be253cdd8c53e2853fd5cfdadb · tsz-v0.1.75-x86_64-unknown-linux-gnu.tar.gz</code></li><li>CLI 自报版本：<code>Version 7.0.2</code></li>
+<li>发行目录 SHA-256：<code>aba4f86749401145722e5d71d685c37ec6820c809dcf45335abafc7cde99d2f4</code></li><li>动态库 SHA-256 清单摘要：<code>8d85dec9de8c0cdbe31744ecdb3109882887f7a9831cd8de1f09b80cc64df967</code></li>
+<li>测试集计划 SHA-256：<code>58dbdcb9b86b693df53172e6a2a8807aa279dfeb3951e75de155d8d928cb452f</code></li><li>执行器 SHA-256：<code>04ca9633c5530dc9dcbe3a63913d3e9017a6e85f2147e5c31114c5d7541519ef</code></li></ul>
+<p><a href="34c83c8c40ae8a119fcff029dc2876d39391df8a0a72c14daa04802aaff32ef5.json">精简 JSON</a> · <a href="https://github.com/hax/tsc-compa/actions/runs/46002154546">GitHub Actions 运行（原始产物有保留期限）</a> · 运行编号 44，第 1 次尝试</p>
+</main></body></html>
