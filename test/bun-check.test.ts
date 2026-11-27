@@ -59,6 +59,11 @@ describe("planBunCheck", () => {
     expect(planBunCheck(input(["--baseUrl", "."])).skipReason).toContain("baseUrl");
   });
 
+  test("登记的 bun check CLI 开关不写进 compilerOptions", () => {
+    const plan = planBunCheck(input(["--strict", "true"]), ["--no-script", "--no-pretty", "--all", "--timing"]);
+    expect(plan.tsconfig.compilerOptions).toEqual({ strict: true });
+  });
+
   test("普通选项生成独立 tsconfig 与文件列表", () => {
     const plan = planBunCheck(input(["--strict", "true", "--target", "es2022"]), []);
     expect(plan.skipReason).toBeNull();

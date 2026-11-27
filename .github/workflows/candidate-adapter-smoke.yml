@@ -1,0 +1,141 @@
+name: candidate-adapter-smoke
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/candidate-adapter-smoke.yml
+      - config/baselines.json
+      - config/implementations.json
+      - config/smoke-cases-ts71-official.json
+      - scripts/install-impl.ts
+      - src/**
+      - package.json
+      - bun.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-adapter-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      repository: ${{ steps.plan.outputs.repository }}
+      ref: ${{ steps.plan.outputs.ref }}
+      cases: ${{ steps.plan.outputs.cases }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read candidate and reference pins
+        id: plan
+        env:
+          BASELINE: 7.1.0-beta-official
+        run: |
+          set -euo pipefail
+          BASE=$(jq -ce --arg id "$BASELINE" '.baselines[] | select(.id == $id)' config/baselines.json)
+          CORPUS=$(jq -ce --arg key "$(jq -r .corpus <<< "$BASE")" '.corpora[$key]' config/baselines.json)
+          MATRIX=$(jq -ce --arg baseline "$BASELINE" '{include: [.implementations | to_entries[] |
+            select(.value.baselines | index($baseline)) |
+            .value.acquisition as $a |
+            { id: .key, adapter: .value.adapter, args: ((.value.cliArgs // []) | join(" ")),
+              source: (if $a.release then "release" elif $a.npm then "npm" elif $a.cargo.git then "cargo"
+                else error("no pinned CI acquisition for " + .key) end),
+              pin: ($a.release.version // $a.npm.version // $a.cargo.git.ref) }]}
+            | select(.include | length > 0)' config/implementations.json)
+          {
+            echo "matrix=$MATRIX"
+            echo "repository=$(jq -r .repo <<< "$CORPUS")"
+            echo "ref=$(jq -r .ref <<< "$CORPUS")"
+            echo "cases=$(jq -r .manifest <<< "$BASE")"
+          } >> "$GITHUB_OUTPUT"
+
+  adapter:
+    needs: plan
+    name: ${{ matrix.id }} / ${{ matrix.adapter }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      IMPL: ${{ matrix.id }}
+      ADAPTER: ${{ matrix.adapter }}
+      SOURCE: ${{ matrix.source }}
+      PIN: ${{ matrix.pin }}
+      CASES: ${{ needs.plan.outputs.cases }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.source == 'cargo'
+        with:
+          toolchain: '1.99.1'
+      - uses: actions/cache@v4
+        if: matrix.source == 'cargo'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .tools/target
+          key: adapter-smoke-${{ runner.os }}-${{ runner.arch }}-rust1.99.1-${{ matrix.id }}-${{ matrix.pin }}-${{ hashFiles('config/implementations.json', 'scripts/install-impl.ts') }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.plan.outputs.repository }}
+          ref: ${{ needs.plan.outputs.ref }}
+          path: reference/corpus
+          sparse-checkout: |
+            tsc/testdata/tests/cases
+            tsc/testdata/baselines/reference
+          persist-credentials: false
+      - run: bun install --frozen-lockfile
+      - name: Run the shared TS7 smoke list against the pinned checker
+        env:
+          TSC_COMPA_ADAPTER_ARGS: ${{ matrix.args }}
+        run: |
+          set -euo pipefail
+          BIN=$(bun scripts/install-impl.ts --name "$IMPL" --source "$SOURCE" --dest .tools | tail -n 1)
+          test -x "$BIN"
+          bun src/run.ts \
+            --baseline 7.1.0-beta-official \
+            --corpus reference/corpus/tsc/testdata/tests/cases \
+            --cases "$CASES" --expectation-source official-baseline \
+            --mode official --option-strategy aligned --adapter "$ADAPTER:$BIN" \
+            --out out --report-out out --report-impl-name "$IMPL"
+          # Compare diagnostics for the report; do not make agreement a condition of adapter health.
+          jq -e --argjson selected "$(jq length "$CASES")" '
+            .meta.selectedCases == $selected and .meta.verdictEligible == true and
+            (.meta.executionFailures | type == "array" and length == 0) and .totals.ran > 0
+          ' out/metrics.json >/dev/null || {
+            echo '::error::Adapter smoke could not execute the sample reliably; see metrics.json and details.json.'
+            exit 1
+          }
+      - name: Summarize adapter execution and diagnostic differences separately
+        if: always()
+        run: |
+          {
+            printf '### %s / %s\n\nPinned source: `%s:%s`\n\n' "$IMPL" "$ADAPTER" "$SOURCE" "$PIN"
+            if [ -f out/metrics.json ]; then
+              echo '```json'
+              jq '{version: .meta.tools.candidate.version, selected: .meta.selectedCases,
+                completed: .totals.ran, skipped: .totals.skipped, skipReasons: .skips,
+                executionFailures: .meta.executionFailures, compatibility: .comparison.compatibility,
+                strict: .comparison.strict}' out/metrics.json
+              echo '```'
+            else
+              echo 'No metrics were produced; check the job log for acquisition or execution errors.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adapter-smoke-${{ matrix.id }}
+          path: out/
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 14
