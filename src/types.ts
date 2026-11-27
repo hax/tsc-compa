@@ -93,6 +93,12 @@ export interface CaseInput {
   args: string[];
 }
 
+export type CandidateProcessFailure =
+  | { kind: "deadline"; errorCode: "ETIMEDOUT"; signal: "SIGTERM" | "SIGKILL" }
+  | { kind: "deadline"; errorCode: "ETIMEDOUT"; signal: null; exitCode: number }
+  | { kind: "signal"; signal: string }
+  | { kind: "exit"; exitCode: number };
+
 export type OutcomeStatus = "ok" | "skip" | "crash" | "timeout";
 
 /** 适配器对一个用例的答复。非 ok 状态按 SKIP 分类统计，不进入兼容性分母。 */
@@ -102,6 +108,8 @@ export interface CaseOutcome {
   diagnostics: Diagnostic[];
   skipReason?: string;
   message?: string;
+  /** Evidence from the per-case subprocess, not inferred from diagnostic text. */
+  processFailure?: CandidateProcessFailure;
   /**
    * 完整诊断输出流（严格比较的 output 字段）：
    * - 与 official `.errors.txt` 摘要区同口径：按输出顺序拼接每条诊断的

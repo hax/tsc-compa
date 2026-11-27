@@ -4,11 +4,13 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFile
 import { dirname, join, resolve } from "node:path";
 import { baseline, aggregate, buildPlan, buildPlanForIds, runShard, verifyShard, verifyVersion, type Candidate, type Plan } from "./full-compatibility.ts";
 import { corpusRefOf, findBaseline, loadBaselines, REPO_ROOT, resolveBaselineTsc } from "../src/baselines.ts";
-import type { CaseRecord, Metrics, ToolIdentity } from "../src/compare.ts";
+import type { Metrics, ToolIdentity } from "../src/compare.ts";
 import { isValidCaseId, loadManifest } from "../src/discover.ts";
 import { identifyTool, sha256 } from "../src/provenance.ts";
 import { inspectDistribution, prepareDistribution, probeDistribution } from "./public-evaluation-tools.ts";
 import { activePolicies, addedCandidates, isAddedCandidate, policyGenerations, validPrepared, type PreparedEvidence } from "./public-evaluation-policy.ts";
+import { count, exactKeys, validFailureCounts, validPublicExecutionFailure, verifyPublicShardCases,
+  type FailureCounts, type PublicExecutionFailure } from "./public-evaluation-failures.ts";
 import { distributionSha256, shardInputEvidence, verifyCorpus, type ShardInputEvidence } from "./public-evaluation-inputs.ts";
 
 const legacyCandidates = {
@@ -61,7 +63,7 @@ const command = (program: string, args: string[]): string => {
 
 export function semanticFingerprint(root = REPO_ROOT): string {
   const files = [manifest, "config/baselines.json", "config/implementations.json", "package.json", "bun.lock",
-    "scripts/full-compatibility.ts", "scripts/public-evaluation.ts", "scripts/public-evaluation-inputs.ts", "scripts/public-evaluation-tools.ts", "scripts/public-evaluation-policy.ts", "scripts/install-impl.ts", ".npmrc", ".github/workflows/public-evaluation.yml"];
+    "scripts/full-compatibility.ts", "scripts/public-evaluation.ts", "scripts/public-evaluation-failures.ts", "scripts/public-evaluation-inputs.ts", "scripts/public-evaluation-tools.ts", "scripts/public-evaluation-policy.ts", "scripts/install-impl.ts", ".npmrc", ".github/workflows/public-evaluation.yml"];
   const list = (dir: string) => {
     for (const item of readdirSync(join(root, dir), { withFileTypes: true })) {
       const path = `${dir}/${item.name}`;
@@ -146,11 +148,13 @@ const planCounts = (plan: Plan) => ({
   records: plan.shards.reduce((n, shard) => n + shard.units.reduce((m, unit) => m + unit.records.length, 0), 0),
 });
 
+export const resultPolicy = "candidate-execution-failures-v1" as const;
+
 function makeRequest(plan: Plan, suiteId: keyof typeof suites, tools: Tools, inputs: ShardInputEvidence[]) {
   const candidate = plan.candidates[0]!;
   const { definition } = configuration();
   const common = {
-    candidate, candidateVersion: candidates[candidate].version, reference: baseline, source,
+    resultPolicy, candidate, candidateVersion: candidates[candidate].version, reference: baseline, source,
     suite: suiteId, corpus: plan.corpusRef, planSha256: hash(plan), planCounts: planCounts(plan),
     manifestSha256: suiteId === "fixed-120" ? sha256(readFileSync(join(REPO_ROOT, manifest))) : null,
     harnessSha256: semanticFingerprint(), runner: `Bun ${Bun.version} (${Bun.revision})`,
@@ -164,7 +168,9 @@ function makeRequest(plan: Plan, suiteId: keyof typeof suites, tools: Tools, inp
     ? { ...common, version: 3 as const, options: { ...common.options, candidateEnvArgs: tools.cliArgs }, prepared: tools.prepared }
     : { version: 2 as const, ...common };
 }
-export type Request = ReturnType<typeof makeRequest>;
+type CurrentRequest = ReturnType<typeof makeRequest>;
+type WithoutResultPolicy<R> = R extends CurrentRequest ? Omit<R, "resultPolicy"> & { resultPolicy?: never } : never;
+export type Request = CurrentRequest | WithoutResultPolicy<CurrentRequest>;
 
 export function verifyRunIdentity(request: Request, tools: Metrics["meta"]["tools"], options: Metrics["meta"]["options"], mode: Metrics["meta"]["mode"]) {
   if (request.runner !== tools?.runner || request.platform !== tools.platform ||
@@ -194,18 +200,19 @@ export function shardReceipt(request: Request, id: string, shard: string) {
   }) };
 }
 
-const noDifferences = (r: CaseRecord) => r.fp.length === 0 && r.missed.length === 0 && r.misanchor === 0;
 export function makeReport(request: Request, plan: Plan, root: string, runUrl: string, generatedAt = new Date().toISOString(), workflowRun?: WorkflowRun) {
-  if (!runUrlPattern.test(runUrl) || !Number.isFinite(Date.parse(generatedAt)) || request.planSha256 !== hash(plan) ||
+  if (request.resultPolicy !== resultPolicy || !runUrlPattern.test(runUrl) || !Number.isFinite(Date.parse(generatedAt)) || request.planSha256 !== hash(plan) ||
       hash(request.planCounts) !== hash(planCounts(plan)) || plan.candidates.length !== 1 || request.candidate !== plan.candidates[0] || plan.source !== source || request.corpus !== plan.corpusRef) {
     throw new Error("Invalid public evaluation plan or run provenance");
   }
-  const summary = aggregate(plan, root);
+  const summary = aggregate(plan, root, true);
   if (!summary.complete) throw new Error(`Evaluation incomplete; no public entry created:\n${summary.issues.join("\n")}`);
   const row = summary.candidates[0]!;
   const { sourceFiles, records, ran, skipped, coverage, hits, expected, fp, missed, misanchor, compatibility, strict } = row;
   const id = hash(request);
-  const differences: { id: string; extra: number; missed: number; misanchor: number }[] = [];
+  const { differences, candidateFailures } = row;
+  const executionFailures: FailureCounts = { crash: 0, timeout: 0 };
+  for (const failure of candidateFailures) executionFailures[failure.status]++;
   const evidence = [];
   for (const shard of plan.shards) {
     const dir = join(root, `full-${request.candidate}-${shard.id}`);
@@ -214,18 +221,18 @@ export function makeReport(request: Request, plan: Plan, root: string, runUrl: s
     const metrics = verifyShard(plan, shard, dir, request.candidate);
     verifyRunIdentity(request, metrics.meta.tools, metrics.meta.options, metrics.meta.mode);
     evidence.push(verifyShardInputs(request, shard.id, metrics.meta.manifest));
-    for (const record of readJson<CaseRecord[]>(join(dir, "details.json"))) {
-      if (differences.length >= 8) break;
-      if (record.status !== "ran" || noDifferences(record)) continue;
-      differences.push({ id: record.id, extra: record.fp.length, missed: record.missed.length, misanchor: record.misanchor });
-    }
   }
-  return { schemaVersion: 1, id, request, candidate: candidates[request.candidate], reference, suite: suites[request.suite],
+  return { schemaVersion: 2 as const, id, request, candidate: candidates[request.candidate], reference, suite: suites[request.suite],
     generatedAt, reportPath: `reports/${id}.html`, runUrl, ...(workflowRun && { workflowRun }),
-    summary: { complete: true, shards: summary.shards, sourceFiles, records, ran, skipped, coverage, hits, expected, fp, missed, misanchor,
-      compatibility, strict }, evidence, differences };
+    summary: { complete: true as const, shards: summary.shards, sourceFiles, records, ran, skipped, coverage, hits, expected, fp, missed, misanchor,
+      compatibility, strict, executionFailures }, evidence, differences, candidateFailures };
 }
-export type Report = ReturnType<typeof makeReport>;
+type CurrentReport = ReturnType<typeof makeReport>;
+type LegacyReport = Omit<CurrentReport, "schemaVersion" | "summary" | "candidateFailures"> & {
+  schemaVersion: 1;
+  summary: Omit<CurrentReport["summary"], "executionFailures">;
+};
+export type Report = CurrentReport | LegacyReport;
 type IndexEntry = Pick<Report, "id" | "candidate" | "reference" | "suite" | "generatedAt" | "reportPath" | "runUrl" | "summary">;
 const indexEntry = ({ id, candidate, reference, suite, generatedAt, reportPath, runUrl, summary }: Report): IndexEntry =>
   ({ id, candidate, reference, suite, generatedAt, reportPath, runUrl, summary });
@@ -243,6 +250,10 @@ function preparedHtml(tool: PreparedEvidence, request: Extract<Request, { versio
 export function reportHtml(r: Report): string {
   const { candidate, reference, suite, summary: s, request } = r;
   const verdict = (v: typeof s.compatibility) => `${v.pass} / ${v.fail} / ${v.unknown}`;
+  // Pages revalidates stored HTML byte-for-byte; leave the v1 renderer unchanged.
+  const execution = r.schemaVersion === 2 ? r.summary.executionFailures : null;
+  const compared = execution ? `比较 ${s.ran}，跳过 ${s.skipped}；候选崩溃 ${execution.crash}，候选超时 ${execution.timeout}。`
+    : `完成 ${s.ran}，跳过 ${s.skipped}。`;
   const title = escapeHtml(`${candidate.name} ${candidate.version} · ${suite.label}`);
   return `<!doctype html>
 <html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -250,11 +261,11 @@ export function reportHtml(r: Report): string {
 <body><main><p><a href="../">返回报告目录</a></p><h1>${title}</h1>
 <p>对照：${escapeHtml(reference.label)}。生成时间：${escapeHtml(r.generatedAt)}。</p>
 <h2>比较结果</h2>
-<ul><li>运行完整性：${s.shards} 个分片已核对。计划 ${s.sourceFiles} 个源文件、${s.records} 条配置记录；完成 ${s.ran}，跳过 ${s.skipped}。</li>
+<ul><li>运行完整性：${s.shards} 个分片已核对。计划 ${s.sourceFiles} 个源文件、${s.records} 条配置记录；${compared}</li>
 <li>兼容（通过 / 失败 / 未确认）：${verdict(s.compatibility)}。</li><li>严格一致（通过 / 失败 / 未确认）：${verdict(s.strict)}。</li>
 <li>诊断命中：${s.hits} / ${s.expected}（${s.coverage === null ? "无期望诊断" : `${(s.coverage * 100).toFixed(2)}%`}）；多报 ${s.fp}，漏报 ${s.missed}，错锚 ${s.misanchor}。</li></ul>
 <p>${suite.id === "fixed-120" ? "本测试集是固定诊断样本，不代表全量覆盖。" : "分片齐全不代表每条配置都能比较；诊断命中率只按实际比较的记录计算。"}</p>
-${r.differences.length ? `<h2>差异示例（最多 8 条）</h2><ul>${r.differences.map((d) => `<li><code>${escapeHtml(d.id)}</code>：多报 ${d.extra}，漏报 ${d.missed}，错锚 ${d.misanchor}</li>`).join("")}</ul>` : ""}
+${execution ? `<p>兼容和严格一致的失败数均包含候选执行失败；普通诊断比较的兼容失败 ${s.compatibility.fail - execution.crash - execution.timeout} 条。诊断命中率只按实际比较的配置计算。</p>\n${r.schemaVersion === 2 && r.candidateFailures.length ? `<h2>候选执行失败的配置</h2><ul>${r.candidateFailures.map((f) => `<li><code>${escapeHtml(f.id)}</code>：${f.status === "crash" ? "崩溃" : "超时"}</li>`).join("")}</ul>\n` : ""}` : ""}${r.differences.length ? `<h2>差异示例（最多 8 条）</h2><ul>${r.differences.map((d) => `<li><code>${escapeHtml(d.id)}</code>：多报 ${d.extra}，漏报 ${d.missed}，错锚 ${d.misanchor}</li>`).join("")}</ul>` : ""}
 <h2>运行条件与证据</h2><ul><li>语料：<code>${escapeHtml(request.corpus)}</code></li><li>适配器：<code>${escapeHtml(request.adapter)}</code></li>
 <li>候选可执行文件 SHA-256：<code>${escapeHtml(request.candidateTool.nativeSha256 ?? request.candidateTool.sha256)}</code></li>${request.version === 3 ? preparedHtml(request.prepared, request) : ""}
 <li>测试集计划 SHA-256：<code>${escapeHtml(request.planSha256)}</code></li><li>执行器 SHA-256：<code>${escapeHtml(request.harnessSha256)}</code></li></ul>
@@ -262,12 +273,6 @@ ${r.differences.length ? `<h2>差异示例（最多 8 条）</h2><ul>${r.differe
 </main></body></html>\n`;
 }
 
-const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-const exactKeys = (value: unknown, keys: string) => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const expected = keys.split(" ");
-  return Object.keys(value).length === expected.length && expected.every((key) => Object.hasOwn(value, key));
-};
 const isString = (value: unknown) => typeof value === "string";
 const validWorkflowRun = (run: WorkflowRun) => exactKeys(run, "number attempt") &&
   [run.number, run.attempt].every((n) => count(n) && n > 0);
@@ -275,11 +280,24 @@ const digestOrNull = (value: unknown) => value === null || isHash(value);
 const isDate = (value: unknown) => isString(value) && /^\d{4}-\d\d-\d\dT/.test(value) && Number.isFinite(Date.parse(value));
 const validCounts = (s: Request["planCounts"]) => exactKeys(s, "shards sourceFiles records") && [s.shards, s.sourceFiles, s.records].every(count);
 function validSummary(s: Report["summary"]) {
-  if (!exactKeys(s, "complete shards sourceFiles records ran skipped coverage hits expected fp missed misanchor compatibility strict") ||
+  const execution = s != null && Object.hasOwn(s, "executionFailures");
+  if (!exactKeys(s, `complete shards sourceFiles records ran skipped coverage hits expected fp missed misanchor compatibility strict${execution ? " executionFailures" : ""}`) ||
       s.complete !== true || ![s.shards, s.sourceFiles, s.records, s.ran, s.skipped, s.hits, s.expected, s.fp, s.missed, s.misanchor].every(count)) return false;
-  return s.shards > 0 && s.ran > 0 && s.sourceFiles > 0 && s.records >= s.sourceFiles && s.ran + s.skipped === s.records && s.hits <= s.expected &&
+  const failures = execution && "executionFailures" in s ? s.executionFailures : { crash: 0, timeout: 0 };
+  if (!validFailureCounts(failures)) return false;
+  const failed = failures.crash + failures.timeout;
+  const eligible = s.ran + failed;
+  return s.shards > 0 && count(eligible) && eligible > 0 && s.sourceFiles > 0 && s.records >= s.sourceFiles && eligible + s.skipped === s.records && s.hits <= s.expected &&
+    (!execution || s.hits + s.missed + s.misanchor <= s.expected) &&
+    (s.ran > 0 || (s.hits === 0 && s.expected === 0 && s.fp === 0 && s.missed === 0 && s.misanchor === 0)) &&
     s.coverage === (s.expected === 0 ? null : s.hits / s.expected) && [s.compatibility, s.strict].every((v) =>
-      exactKeys(v, "pass fail unknown") && [v.pass, v.fail, v.unknown].every(count) && v.pass + v.fail + v.unknown === s.ran);
+      exactKeys(v, "pass fail unknown") && [v.pass, v.fail, v.unknown].every(count) && v.pass + v.fail + v.unknown === eligible && v.fail >= failed);
+}
+function validCandidateFailures(failures: PublicExecutionFailure[], summary: CurrentReport["summary"], adapter: string) {
+  if (!Array.isArray(failures) || failures.length !== summary.executionFailures.crash + summary.executionFailures.timeout ||
+      !failures.every((row) => validPublicExecutionFailure(row, adapter))) return false;
+  return new Set(failures.map((row) => row.id)).size === failures.length &&
+    failures.filter(({ status }) => status === "crash").length === summary.executionFailures.crash;
 }
 const validTool = (t: Request["candidateTool"]) => exactKeys(t, "version sha256 nativeSha256 embeddedTypeScript") &&
   isString(t.version) && t.version.length <= 150 && isHash(t.sha256) && digestOrNull(t.nativeSha256) &&
@@ -314,11 +332,14 @@ export function verifyReport(value: unknown, id: string): asserts value is Repor
   const r = value as Report;
   const q = r?.request;
   const prepared = q?.version === 3;
+  const current = r?.schemaVersion === 2;
   const hasWorkflowRun = r != null && Object.hasOwn(r, "workflowRun");
-  if (!exactKeys(r, `schemaVersion id request candidate reference suite generatedAt reportPath runUrl summary evidence differences${hasWorkflowRun ? " workflowRun" : ""}`) ||
+  if (!exactKeys(r, `schemaVersion id request candidate reference suite generatedAt reportPath runUrl summary evidence differences${current ? " candidateFailures" : ""}${hasWorkflowRun ? " workflowRun" : ""}`) ||
       (hasWorkflowRun && !validWorkflowRun(r.workflowRun!)) ||
-      r.schemaVersion !== 1 || r.id !== id || !validEntry(indexEntry(r)) ||
-      !exactKeys(q, `version candidate candidateVersion reference source suite corpus planSha256 planCounts manifestSha256 harnessSha256 runner platform runnerImage node locale timezone adapter options referenceTool candidateTool distributions inputs${prepared ? " prepared" : ""}`) ||
+      (!current && r.schemaVersion !== 1) || r.id !== id || !validEntry(indexEntry(r)) ||
+      current !== Object.hasOwn(r.summary, "executionFailures") ||
+      !exactKeys(q, `version candidate candidateVersion reference source suite corpus planSha256 planCounts manifestSha256 harnessSha256 runner platform runnerImage node locale timezone adapter options referenceTool candidateTool distributions inputs${prepared ? " prepared" : ""}${current ? " resultPolicy" : ""}`) ||
+      (current && q.resultPolicy !== resultPolicy) ||
       (q.version !== 2 && q.version !== 3) || !isString(q.candidate) || !Object.hasOwn(candidates, q.candidate) ||
       prepared !== isAddedCandidate(q.candidate) || q.candidateVersion !== r.candidate.version ||
       q.source !== source || q.reference !== baseline || q.suite !== r.suite.id ||
@@ -342,7 +363,12 @@ export function verifyReport(value: unknown, id: string): asserts value is Repor
       new Set(q.inputs.map((e) => e.shard)).size !== q.inputs.length || !Array.isArray(r.evidence) || !r.evidence.every(validInputEvidence) ||
       hash(q.inputs) !== hash(r.evidence) || !Array.isArray(r.differences) || r.differences.length > 8 ||
       !r.differences.every((d) => exactKeys(d, "id extra missed misanchor") && isString(d.id) && isValidCaseId(d.id) &&
-        [d.extra, d.missed, d.misanchor].every(count)) || hash(q) !== id) {
+        [d.extra, d.missed, d.misanchor].every(count)) ||
+      (current && (!validCandidateFailures(r.candidateFailures, r.summary, q.adapter) || r.differences.length > r.summary.ran ||
+        r.differences.some(({ id }) => r.candidateFailures.some((failure) => failure.id === id)) ||
+        r.differences.reduce((n, row) => n + row.extra, 0) > r.summary.fp ||
+        r.differences.reduce((n, row) => n + row.missed, 0) > r.summary.missed ||
+        r.differences.reduce((n, row) => n + row.misanchor, 0) > r.summary.misanchor)) || hash(q) !== id) {
     throw new Error("Invalid or incomplete public report");
   }
 }
@@ -478,7 +504,7 @@ function main() {
     const metrics = verifyShard(plan, shard, out, request.candidate);
     verifyRunIdentity(request, metrics.meta.tools, metrics.meta.options, metrics.meta.mode);
     verifyShardInputs(request, shard.id, metrics.meta.manifest);
-    if (metrics.meta.executionFailures!.length) throw new Error(`${metrics.meta.executionFailures!.length} execution failures; see shard artifact`);
+    verifyPublicShardCases(metrics, out);
     writeJson(join(out, "public-request.json"), shardReceipt(request, id, shard.id));
   } else if (cmd === "report" && (args.length === 5 || args.length === 7)) {
     const [dir, id, root, bundle, runUrl, runNumber, runAttempt] = args as [string, string, string, string, string, string?, string?];
@@ -490,7 +516,7 @@ function main() {
     mkdirSync(bundle, { recursive: true });
     writeJson(join(bundle, `${id}.json`), report);
     writeFileSync(join(bundle, `${id}.html`), reportHtml(report));
-    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Public evaluation · complete\n\n- Request: \`${id}\`\n- Compared: ${report.summary.ran}/${report.summary.records}; skipped: ${report.summary.skipped}\n`);
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Public evaluation · complete\n\n- Request: \`${id}\`\n- Compared: ${report.summary.ran}/${report.summary.records}; skipped: ${report.summary.skipped}; candidate crashes: ${report.summary.executionFailures.crash}; candidate timeouts: ${report.summary.executionFailures.timeout}\n`);
   } else if (cmd === "save" && (args.length === 3 || (args.length === 4 && args[3] === "--force"))) {
     console.log(saveReport(args[0]!, args[1]!, args[2]!, args[3] === "--force"));
   } else if (cmd === "verify-public" && args.length === 1) {

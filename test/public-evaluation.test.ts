@@ -4,12 +4,13 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Plan } from "../scripts/full-compatibility.ts";
-import { cached, makeReport, planExecution, publicCatalog, reportHtml, saveReport, semanticFingerprint, shardReceipt, verifyPublic, verifyReport, type Request } from "../scripts/public-evaluation.ts";
+import { cached, makeReport, planExecution, publicCatalog, reportHtml, resultPolicy, saveReport, semanticFingerprint, shardReceipt, verifyPublic, verifyReport, type Request } from "../scripts/public-evaluation.ts";
 import { activePolicies } from "../scripts/public-evaluation-policy.ts";
 import { sha256 } from "../src/provenance.ts";
 import { createHash } from "node:crypto";
 import { distributionSha256, shardInputEvidence, verifyCorpus } from "../scripts/public-evaluation-inputs.ts";
 
+import { stagePublicReports } from "../scripts/stage-public-reports.ts";
 import { distributionContents, inspectDistribution, verifyNpmArchive } from "../scripts/public-evaluation-tools.ts";
 
 const hash = (value: unknown) => sha256(JSON.stringify(value));
@@ -29,7 +30,7 @@ function createFixture(root: string) {
   const plan: Plan = { version: 1, corpusRef: `microsoft/TypeScript@${"a".repeat(40)}`, source: "official-baseline", candidates: ["typescript"], shards: [{
     id: "01", units: [{ id: "compiler/<fixture>.ts", records: ["compiler/<fixture>.ts"] }, { id: "compiler/skip.ts", records: ["compiler/skip.ts"] }], estimatedCost: 1,
   }] };
-  const request: Request = { version: 2, candidate: "typescript", candidateVersion: "7.1.0-beta", reference: "7.1.0-beta-official", source: "official-baseline",
+  const request: Request = { version: 2, resultPolicy, candidate: "typescript", candidateVersion: "7.1.0-beta", reference: "7.1.0-beta-official", source: "official-baseline",
     suite: "full", corpus: plan.corpusRef, planSha256: hash(plan), planCounts: { shards: 1, sourceFiles: 2, records: 2 }, manifestSha256: null, harnessSha256: sha256("harness"), runner,
     platform, runnerImage: "ubuntu24", node: "v22.18.0", locale: "C.UTF-8", timezone: "UTC", adapter: "tsc-cli",
     options: { mode: "official", strategy: "aligned", referenceBaseArgs: [] }, referenceTool: tool, candidateTool,
@@ -42,7 +43,12 @@ function createFixture(root: string) {
   for (const dir of [shardRoot, bundle, data]) mkdirSync(dir);
   const ids = plan.shards[0]!.units.map((u) => u.id);
   write(join(shardRoot, "cases.json"), ids);
-  write(join(shardRoot, "details.json"), [{ id: ids[0], status: "ran", missed: [{}], fp: [], misanchor: 0, actualRawOutput: "/tmp/private-file" }, { id: ids[1], status: "skip" }]);
+  const detailsFile = join(shardRoot, "details.json");
+  const details = [{ id: ids[0], status: "ran", expected: [{}], actual: [], hits: 0, missed: ["a.ts:1:1 TS9999"], fp: [], misanchor: 0,
+    comparison: { compatibility: "fail", strict: "unknown" }, actualRawOutput: "/tmp/private-file" },
+  { id: ids[1], status: "skip", expected: [], actual: [], hits: 0, missed: [], fp: [], misanchor: 0, comparison: null,
+    skipReason: "private raw skip reason /tmp/private-file" }];
+  write(detailsFile, details);
   const metrics = {
     meta: { manifest: { selectedIdsSha256: hash(ids), parsedInputsSha256: sha256("parsed"), officialInputsSha256: sha256("official") },
       selectedCases: ids.length, baseline: request.reference, corpusRef: request.corpus, expectationSource: "official-baseline", mode: "official",
@@ -58,7 +64,7 @@ function createFixture(root: string) {
   write(receipt, { id: hash(request), shard: "01" });
   const metricsFile = join(shardRoot, "metrics.json");
   write(metricsFile, metrics);
-  return { root, data, bundle, metrics, metricsFile, plan, request, receipt };
+  return { root, data, bundle, metrics, metricsFile, plan, request, receipt, detailsFile, details, shardRoot };
 }
 
 test("adds two full-only combinations in rollout order without implying they have run", () => {
@@ -435,3 +441,144 @@ test("npm acquisition requires both SHA-256 and npm SHA-512 integrity", () => {
   expect(() => verifyNpmArchive(bytes, digest, `${integrity}bad`)).toThrow("integrity mismatch");
   expect(() => verifyNpmArchive(bytes, sha256("other"), integrity)).toThrow("integrity mismatch");
 });
+
+function failureFixture({ details, detailsFile, metrics, metricsFile, plan, request, receipt, shardRoot }: ReturnType<typeof createFixture>, allFailures = false) {
+  const clean = { ...details[0]!, id: "compiler/after.ts", expected: [], missed: [], comparison: { compatibility: "pass", strict: "pass" } };
+  const failed = [
+    { id: "compiler/<crash>.ts", status: "crash", process: { kind: "signal", signal: "SIGABRT" } },
+    { id: "compiler/timeout.ts", status: "timeout", process: { kind: "deadline", errorCode: "ETIMEDOUT", signal: "SIGTERM" } },
+  ] as const;
+  const failureRows = failed.map((f) => {
+    const { process, ...result } = f;
+    const entry = { ...result, side: "candidate", reason: `synthetic ${f.status} at /tmp/private-file` };
+    metrics.meta.executionFailures.push(entry);
+    return { ...details[1]!, id: f.id, skipReason: entry.reason, expected: [{}], actualOutput: null,
+      actualExitCode: null, actualRawOutput: { stdout: "", stderr: "/tmp/private-file" }, executionFailure: { ...entry, process } };
+  });
+  const records = allFailures ? [...failureRows] : [details[0]!, failureRows[0]!, failureRows[1]!, details[1]!, clean];
+  const ids = records.map(({ id }) => id);
+  plan.shards[0]!.units = ids.map((id) => ({ id, records: [id] }));
+  request.planSha256 = hash(plan);
+  request.planCounts.sourceFiles = request.planCounts.records = ids.length;
+  metrics.meta.manifest.selectedIdsSha256 = hash(ids);
+  metrics.meta.selectedCases = ids.length;
+  Object.assign(metrics.totals, { cases: ids.length, ran: allFailures ? 0 : 2, skipped: allFailures ? 2 : 3 });
+  if (allFailures) Object.assign(metrics.totals, { expectTotal: 0, missTotal: 0 });
+  metrics.comparison = allFailures ? { compatibility: { pass: 0, fail: 0, unknown: 0 }, strict: { pass: 0, fail: 0, unknown: 0 } }
+    : { compatibility: { pass: 1, fail: 1, unknown: 0 }, strict: { pass: 1, fail: 0, unknown: 1 } };
+  metrics.skips = [...(allFailures ? [] : metrics.skips), ...failureRows.map((r) => [r.skipReason, 1])];
+  write(join(shardRoot, "cases.json"), ids);
+  write(detailsFile, records);
+  write(metricsFile, metrics);
+  write(receipt, { id: hash(request), shard: "01" });
+  return { records, failed };
+}
+
+test("publishes a complete mixed shard, counts executions once, and preserves and stages legacy cache entries", () => fixture((f) => {
+  const { data, bundle, root, request, plan } = f;
+  const { summary: { executionFailures: _counts, ...oldSummary }, candidateFailures: _failures, ...fields } = makeReport(request, plan, root, run);
+  const { resultPolicy: _policy, ...legacyRequest } = fields.request;
+  const oldId = hash(legacyRequest);
+  const old = { ...fields, schemaVersion: 1 as const, id: oldId, request: legacyRequest, reportPath: `reports/${oldId}.html`, summary: oldSummary };
+  const downgraded = { ...old, ...{ id: fields.id, reportPath: fields.reportPath, request: fields.request } };
+  expect(() => verifyReport(downgraded, fields.id)).toThrow("Invalid or incomplete");
+  expect(() => verifyReport({ ...old, id: fields.id, reportPath: fields.reportPath }, fields.id)).toThrow("Invalid or incomplete");
+  write(join(bundle, `${old.id}.json`), old);
+  saveReport(data, bundle, old.id);
+  const oldHtml = readFileSync(join(data, old.reportPath), "utf8");
+  const { failed } = failureFixture(f);
+  const report = makeReport(request, plan, root, run);
+  expect(report.schemaVersion).toBe(2);
+  expect(report.candidateFailures).toEqual([...failed]);
+  expect(report.summary).toMatchObject({ records: 5, ran: 2, skipped: 1, hits: 0, expected: 1, missed: 1, coverage: 0,
+    executionFailures: { crash: 1, timeout: 1 }, compatibility: { pass: 1, fail: 3, unknown: 0 }, strict: { pass: 1, fail: 2, unknown: 1 } });
+  expect(report.differences).toEqual([{ id: "compiler/<fixture>.ts", extra: 0, missed: 1, misanchor: 0 }]);
+  expect(reportHtml(report)).toContain("compiler/&lt;crash&gt;.ts</code>：崩溃");
+  expect(reportHtml(report)).toContain("候选崩溃 1，候选超时 1");
+  expect(JSON.stringify(report)).not.toContain("/tmp/private");
+  write(join(bundle, `${report.id}.json`), report);
+  saveReport(data, bundle, report.id);
+  expect(cached(data, report.id)).toBe(true);
+  expect(cached(data, old.id)).toBe(true);
+  expect(readFileSync(join(data, old.reportPath), "utf8")).toBe(oldHtml);
+  expect(JSON.parse(readFileSync(join(data, "reports/index.json"), "utf8")).reports).toContainEqual(expect.objectContaining({ id: report.id, summary: report.summary }));
+  verifyPublic(data);
+  const staged = join(root, "staged");
+  stagePublicReports(data, staged);
+  expect(readFileSync(join(staged, `${old.id}.html`), "utf8")).toBe(oldHtml);
+  expect(readFileSync(join(staged, `${report.id}.html`), "utf8")).toBe(reportHtml(report));
+  for (const malformed of [
+    { ...report, candidateFailures: [failed[0], failed[0]] },
+    { ...report, candidateFailures: [failed[0], { ...failed[1], process: { ...failed[1].process, stderr: "hidden" } }] },
+    { ...report, summary: { ...report.summary, skipped: 3, ran: 0 } },
+    { ...report, summary: { ...report.summary, compatibility: { pass: 4, fail: 0, unknown: 0 } } },
+    { ...report, summary: { ...report.summary, executionFailures: { crash: -1, timeout: 3 } } },
+    { ...report, candidateFailures: [failed[0], { ...failed[1], id: report.differences[0]!.id }] },
+    { ...report, schemaVersion: 1 },
+  ]) expect(() => verifyReport(malformed, report.id)).toThrow("Invalid or incomplete");
+}));
+
+test("all verified candidate failures can publish without diagnostic comparisons; all skips still cannot", () => fixture((f) => {
+  const { records } = failureFixture(f, true);
+  const report = makeReport(f.request, f.plan, f.root, run);
+  expect(report.summary).toMatchObject({ records: 2, ran: 0, skipped: 0, expected: 0, coverage: null,
+    compatibility: { pass: 0, fail: 2, unknown: 0 }, strict: { pass: 0, fail: 2, unknown: 0 } });
+  verifyReport(report, report.id);
+  write(f.detailsFile, records.map((record) => {
+    if (!("executionFailure" in record)) return record;
+    const { executionFailure: _executionFailure, ...rest } = record;
+    return rest;
+  }));
+  f.metrics.meta.executionFailures = [];
+  write(f.metricsFile, f.metrics);
+  expect(() => makeReport(f.request, f.plan, f.root, run)).toThrow("no comparable records");
+}));
+
+test("strictly rejects missing, contradictory, misplaced, or non-process failure evidence and forged totals", () => fixture((f) => {
+  const { records } = failureFixture(f);
+  const detail = records[1]!;
+  const execution = "executionFailure" in detail ? detail.executionFailure! : undefined!;
+  const [a, b] = f.metrics.meta.executionFailures as Record<string, unknown>[];
+  const reject = (message: string, changed: unknown[] = records) => {
+    write(f.detailsFile, changed);
+    write(f.metricsFile, f.metrics);
+    expect(() => makeReport(f.request, f.plan, f.root, run)).toThrow(message);
+  };
+  f.metrics.meta.executionFailures = [{ ...a, side: "reference" }, b];
+  reject("Unverified execution failures");
+  f.metrics.meta.executionFailures = [a, b, b];
+  reject("Unverified execution failures");
+  f.metrics.meta.executionFailures = [b];
+  reject("Unverified execution failures");
+  f.metrics.meta.executionFailures = [a, b];
+  for (const patch of [
+    { executionFailure: undefined }, { actualRawOutput: undefined }, { actualExitCode: 0 },
+    { executionFailure: { ...execution, status: "timeout" } }, { executionFailure: { ...execution, process: undefined } },
+    { executionFailure: { ...execution, process: { kind: "signal", signal: "SIGKILL" } } },
+  ]) reject("execution failures", records.map((r, i) => i === 1 ? { ...r, ...patch } : r));
+  f.metrics.comparison.compatibility = { pass: 2, fail: 0, unknown: 0 };
+  reject("Invalid per-case counts");
+  f.metrics.comparison.compatibility = { pass: 1, fail: 1, unknown: 0 };
+  f.metrics.totals.hitTotal = -1;
+  reject("Invalid per-case counts");
+  f.metrics.totals.hitTotal = 0;
+  f.metrics.skips[0]![1] = 2;
+  reject("case plan");
+}));
+
+
+test("a deadline racing with child exit 0 counts as a timeout, not as a pass or incomplete report", () => fixture((f) => {
+  const { records } = failureFixture(f);
+  const timeout = records[2]!;
+  if (!("executionFailure" in timeout)) throw new Error("Expected timeout fixture");
+  const process = { kind: "deadline", errorCode: "ETIMEDOUT", signal: null, exitCode: 0 } as const;
+  const raced = { ...timeout, actualExitCode: 0, executionFailure: { ...timeout.executionFailure, process } };
+  write(f.detailsFile, records.map((record) => record === timeout ? raced : record));
+  const report = makeReport(f.request, f.plan, f.root, run);
+  expect(report.candidateFailures).toContainEqual({ id: timeout.id, status: "timeout", process });
+  expect(report.summary).toMatchObject({ ran: 2, skipped: 1, compatibility: { pass: 1, fail: 3, unknown: 0 },
+    executionFailures: { crash: 1, timeout: 1 } });
+  verifyReport(report, report.id);
+  write(f.detailsFile, records.map((record) => record === timeout ? { ...raced, actualExitCode: 3 } : record));
+  expect(() => makeReport(f.request, f.plan, f.root, run)).toThrow("Unverified execution failures");
+}));
