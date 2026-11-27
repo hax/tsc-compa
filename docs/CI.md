@@ -1,6 +1,7 @@
 # 持续集成与兼容性报告
 
-本文说明如何运行门禁、查看公开评测和发布报告。通过受控 Release 接入自有检查器的流程见
+按用途选择任务见[工作流索引](../.github/workflows/README.md)。本文说明如何运行门禁、查看公开评测和发布报告。
+通过受控 Release 接入自有检查器的流程见
 [接入自有检查器](NATIVE-CHECKERS.md)；该入口不参与公开报告部署。
 设计与术语见 [DESIGN.md](DESIGN.md)，参数和比较规则见 [REFERENCE.md](REFERENCE.md)。
 
@@ -113,14 +114,6 @@ required status check（它汇总 `detect` / `unit` / `smoke` / `report` 的结�
 # 自比 + 零差异门禁
 bun src/run.ts --baseline 6.0.3 --corpus /path/to/strada/tests/cases \
   --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc --gate
-
-# TS7 官方结果文件 + ratchet 门禁
-bun src/run.ts --baseline 7.1.0-beta-official \
-  --corpus /path/to/typescript/tsc/testdata/tests/cases \
-  --expectation-source official-baseline \
-  --cases config/smoke-cases-ts71-official.json \
-  --ratchet config/ratchet-ts71-official.tsv \
-  --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc --gate
 ```
 
 ## 适配器
@@ -142,37 +135,53 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 
 ## 当前限制
 
-- `smoke.yml` 的六档运行纳入 `compat-gate`。手动任务中，`ts7-official.yml` 在不限制
-  用例数时启用兼容档门禁；`third-party.yml` 仅在官方结果对照已有「实现 × 参考配置」
-  回归记录且 `limit=0` 时启用门禁。
+- `smoke.yml` 的六档运行纳入 `compat-gate`。手动运行 `third-party.yml` 时，仅在官方结果对照已有
+  「实现 × 参考配置」回归记录且 `limit=0` 时启用门禁。
 - 每日 cron 的变化检测只覆盖上表列出的输入：范围版本、非 GitHub 获取源、无网络/API
   限流时按「未变化」处理；上游发了新版本但 pin 未改不会触发重跑（需要人工改 pin，
   走推送门禁）。无变化时当天不产出新的兼容性指标，历史指标以最近一次运行为准。
-- 本地实测不等于远端 CI 通过。当前仓库记录没有证明 GitHub Actions 上已经跑过
-  `smoke.yml` 的六档、`ts7-official.yml` 或 `third-party.yml`；远端状态需以对应 run
-  的 Summary 与 artifact 为准。
+- 本地实测不等于远端 CI 通过。远端结果以对应运行的 Summary 和 artifact 为准。
 
-## TS7 官方结果文件对照（`ts7-official.yml`）
+## 本地 TS7 官方结果文件对照
 
-该任务手动触发，直接读取 TS7 官方仓库的 errors 结果文件：
+要在 GitHub Actions 重跑默认的 28 例官方结果文件门禁，手动运行 [`smoke`](../.github/workflows/smoke.yml)
+并勾选 `force`；该档的报告产物是 `report-7.1.0-beta-official`。只想跑这一档、限制用例数或换适配器时，
+在仓库根目录安装依赖，并检出 [`config/baselines.json`](../config/baselines.json) 中 `ts71-official` 固定提交的
+测试集。下面的命令只取用例和对应的官方结果文件；后续两组命令均使用 `TS71_CASES`：
 
-- 测试集提交：`config/baselines.json` 的 `ts71-official` 配置（当前 `3e92363`，= npm
-  `typescript@7.1.0-beta` 的 gitHead；workflow 现场解析 ref，不硬编码）。Go 布局：cases 在
-  `tsc/testdata/tests/cases`，基线在 `tsc/testdata/baselines/reference`；
-- 参考结果来源：`--expectation-source official-baseline`。具名配置没有 `.errors.txt` 时，
-  必须有同配置的 `.types`、`.symbols`、`.js` 等产物佐证才记为零诊断；否则跳过，而非借用其他配置的结果；
-- 报告分别统计兼容和严格一致结果，保留逐案诊断及字段差异；
-- 门禁：`limit=0` 时用 `--ratchet config/ratchet-ts71-official.tsv` + `--gate`，
-  采用默认兼容保护档。门禁不初始化、不写回；改善由维护者本地运行、审阅后提交；
-- `limit` 非 0 时只传 `--limit`，不传 `--ratchet` / `--gate`。它限制展开前的源文件数
-  （`meta.selectedCases`），不是展开后的记录数（`totals.cases`）；具名记录可用
-  `details.json` 的 `caseId` 与 `configuration` 追到源文件和配置；
-- 报告：跑完（含门禁红）生成 `out/report.md` / `out/report.html`，job summary 贴出
-  Markdown 全文，`ts7-official-metrics` artifact 里可直接打开 HTML；没有 metrics 时
-  由 `src/report.ts` 出失败占位报告；
-- 首次使用时先手动触发并检查结果，再决定是否单独配置定时任务；
-  `smoke.yml` 的每日变化检测在判「有变化」时会覆盖同一组 28 例官方结果文件对照测试。
-  两个 workflow 的远端执行都尚未从现有记录得到证明。
+```sh
+bun install --frozen-lockfile
+TS71_CORPUS="$PWD/.cache/ts71-corpus"
+TS71_REF=$(bun -e 'console.log(require("./config/baselines.json").corpora["ts71-official"].ref)')
+mkdir -p "$TS71_CORPUS"
+curl -fsSL "https://codeload.github.com/microsoft/TypeScript/tar.gz/$TS71_REF" |
+  tar -xz -C "$TS71_CORPUS" --strip-components=1 \
+    "TypeScript-$TS71_REF/tsc/testdata/tests/cases" \
+    "TypeScript-$TS71_REF/tsc/testdata/baselines/reference"
+TS71_CASES="$TS71_CORPUS/tsc/testdata/tests/cases"
+```
+
+```sh
+# 只复现 smoke 的 TS7 官方结果文件门禁；读取已入库的回归记录，不写回
+OUT=.cache/ts71-official/gate
+bun src/run.ts --baseline 7.1.0-beta-official --corpus "$TS71_CASES" \
+  --cases config/smoke-cases-ts71-official.json --expectation-source official-baseline \
+  --mode official --option-strategy aligned --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc \
+  --ratchet config/ratchet-ts71-official.tsv --gate --out "$OUT" --report-out "$OUT"
+
+# 自选适配器和源用例数；仅出报告，不读写回归记录或启用门禁
+ADAPTER=tsc-cli:node_modules/typescript-7-1/bin/tsc  # 可改为 tsc-cli:<二进制路径> 或其他已支持的适配器
+LIMIT=5
+OUT=.cache/ts71-official/preview
+bun src/run.ts --baseline 7.1.0-beta-official --corpus "$TS71_CASES" \
+  --cases config/smoke-cases-ts71-official.json --expectation-source official-baseline \
+  --mode official --option-strategy aligned --adapter "$ADAPTER" \
+  --limit "$LIMIT" --out "$OUT" --report-out "$OUT"
+```
+
+`--limit` 截取展开前的源用例（`meta.selectedCases`），不是展开后的配置数（`totals.cases`）。
+要用自选适配器预览全部 28 例，去掉 `--limit` 即可。已登记实现也可用后面的手动第三方任务，按实现读取独立回归记录。
+查看 `report.md`／`report.html` 和 `details.json`；运行提前失败时，可按上文的报告命令补生成失败占位报告。
 
 ## 第三方实现冒烟（`third-party.yml`）
 
@@ -210,26 +219,34 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 `metrics.json`、`details.json` 和 Markdown／HTML 报告。需要评估候选兼容性时，
 看后文的全量报告而不是这 28 例。
 
-## 固定版本兼容性报告（`compatibility-reports.yml`）
+## 本地固定版本双来源对照
 
-手动运行。矩阵分别执行 TypeScript 7.1.0-beta、`bun check` 1.4.4 和 1.4.5、`oxc-project/tsrs`。
-每项使用 `config/official-baseline-cases-ts71.json` 的 120 例列表，分别与现场生成的
-tsc 结果和官方 `.errors.txt` 对照。诊断差异用于评估，不作为门禁；没有完成任何比较、
-执行失败或适配器不能接受用例选项则任务失败。
+[`scripts/validate-compatibility.ts`](../scripts/validate-compatibility.ts) 在同一份
+[固定 120 例列表](../config/official-baseline-cases-ts71.json)上，分别用现场生成的 tsc 诊断和官方
+`.errors.txt` 作参考。先按[本地 TS7 官方结果文件对照](#本地-ts7-官方结果文件对照)安装依赖、获取固定测试集并设置
+`TS71_CASES`。以下命令每次运行一个候选；使用有对应固定版本二进制的 Linux 或 macOS 环境：
 
-`scripts/validate-compatibility.ts` 从 manifest 读取固定样本数，并要求
-`meta.verdictEligible === true`、`totals.ran === 用例总数` 且没有执行失败；120 例
-运行必须全部完成，少跑或跳过不会静默通过。每项上传 Markdown、HTML 和两份 JSON，
-供逐案复核。脚本在本地按同一候选逐次执行，避免多个候选并行影响性能样本。
-手动 workflow 的远端运行同样需要查看实际 artifact，不能仅凭 YAML 判定已通过。
+```sh
+OUT=.cache/compatibility
+bun scripts/validate-compatibility.ts "$TS71_CASES" "$OUT/typescript" typescript
 
-Bun 1.4.4／1.4.5 的 `bun check` 拒绝 `target=es2026`；当前 120 例都显式覆盖
-target，因此不能把通过率外推到 Bun 默认 target 或项目配置。`bun-check` 对启用
-`declaration`、`emitDeclarationOnly` 或 `composite` 的配置显式跳过，不用普通类型检查
-代替声明生成阶段的诊断。两个 Bun 的
-`process.versions.typescript` 都是 `7.0.2`，不是参考 tsc 版本。`tsrs` 的二进制
-自报 TypeScript pin `3e9236361fa9`，这是它跟踪的上游提交，不是 tsrs 自身源码提交；
-报告需同时保留 npm provenance 和二进制 sha256。
+# Bun：改成 1.4.4 或 1.4.5，分别运行
+V=1.4.4
+BIN=$(bun scripts/install-impl.ts --name "bun-check-$V" --source release --dest .cache/checkers) &&
+  bun scripts/validate-compatibility.ts "$TS71_CASES" "$OUT/bun-$V" "bun-$V" "$BIN"
+
+# tsrs：安装器最后一行是二进制路径
+TSRS=$(bun scripts/install-impl.ts --name tsrs --source npm --dest .cache/checkers | tail -n 1)
+test -x "$TSRS" && bun scripts/validate-compatibility.ts "$TS71_CASES" "$OUT/tsrs" tsrs "$TSRS"
+```
+
+每个候选在 `tsc/` 和 `official-baseline/` 分别写出 `report.md`、`report.html`、`metrics.json`
+和 `details.json`。诊断差异不作为门禁，但两次运行都必须完成清单中的全部比较：版本不符、选项不支持、
+跳过或执行失败都不会被当作成功。120 例都显式指定 `target`，不能据此推断 Bun 对默认 `target=es2026`
+或声明生成配置的支持。平台会影响二进制指纹和耗时；历史实测及其条件见 [RESULTS.md](RESULTS.md)。
+
+要生成可发布的固定样本报告，使用[公开评测](#公开评测与报告目录public-evaluationyml)的 `fixed-120`；
+它只对照官方结果文件。已发布结果见 [公开报告目录](https://johnhax.net/tsc-compa/)。
 
 ## TS7 全量类型检查对照（`full-compatibility.yml`）
 
