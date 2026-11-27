@@ -148,6 +148,9 @@ test("a clean sparse checkout missing tracked baselines is rejected before cache
   expect(() => verifyCorpus(root, ref)).toThrow("Missing tracked corpus input");
   writeFileSync(join(root, errorsPath), errors.replace("string", "unknown"));
   expect(() => verifyCorpus(root, ref)).toThrow("differs from pinned bytes");
+  writeFileSync(join(root, errorsPath), errors);
+  mkdirSync(join(root, baselines, "untracked.types"));
+  expect(() => verifyCorpus(root, ref)).toThrow("Untracked corpus directory");
 }));
 
 test("dist identity changes when installed declaration bytes or paths change but the binary stays pinned", () => fixture(({ root }) => {

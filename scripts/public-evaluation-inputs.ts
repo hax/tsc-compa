@@ -3,7 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { expandCaseVariants } from "../src/case.ts";
 import { readCase } from "../src/discover.ts";
 import { expectationFromOfficialBaseline, expectationFromOfficialVariantBaseline } from "../src/officialBaseline.ts";
@@ -27,10 +27,13 @@ function directoriesAreReal(root: string, relative: string) {
   }
 }
 
-function visitFiles(root: string, prefix: string, visit: (relative: string, path: string) => void) {
+function visitFiles(root: string, prefix: string, visit: (relative: string, path: string) => void, checkDir?: (relative: string) => void) {
   for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
     const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) visitFiles(root, relative, visit);
+    if (entry.isDirectory()) {
+      checkDir?.(relative);
+      visitFiles(root, relative, visit, checkDir);
+    }
     else if (entry.isFile()) visit(relative, join(root, relative));
     else throw new Error(`Non-regular public input: ${relative}`);
   }
@@ -45,10 +48,12 @@ export function verifyCorpus(dir: string, ref: string): string {
   for (const subtree of [casesPath, baselinePath]) {
     directoriesAreReal(root, subtree);
     const tree = new Map<string, string>();
+    const directories = new Set([subtree]);
     for (const entry of git(root, "ls-tree", "-r", "-z", ref, "--", subtree).split("\0").filter(Boolean)) {
       const match = /^(?:100644|100755) blob ([a-f0-9]{40})\t([\s\S]+)$/.exec(entry);
       if (!match) throw new Error(`Unexpected pinned corpus entry: ${entry}`);
       tree.set(match[2]!, match[1]!);
+      for (let parent = dirname(match[2]!); !directories.has(parent); parent = dirname(parent)) directories.add(parent);
     }
     if (!tree.size) throw new Error(`Pinned corpus subtree is empty: ${subtree}`);
     visitFiles(root, subtree, (relative, path) => {
@@ -58,6 +63,8 @@ export function verifyCorpus(dir: string, ref: string): string {
       const oid = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
       if (oid !== expected) throw new Error(`Corpus input differs from pinned bytes: ${relative}`);
       tree.delete(relative);
+    }, (relative) => {
+      if (!directories.has(relative)) throw new Error(`Untracked corpus directory: ${relative}`);
     });
     if (tree.size) throw new Error(`Missing tracked corpus input: ${tree.keys().next().value} (${tree.size} missing)`);
   }
