@@ -54,3 +54,15 @@ details { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.
 summary { cursor: pointer; width: fit-content; }
 .history-list { padding-inline-start: 1.45em; }
 .history-list li { margin-block: 0.6rem; }
+
+.candidate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 25rem), 1fr)); gap: 0.85rem; margin-block: 1rem; }
+.candidate-family, .candidate-internal { border: 1px solid var(--border); border-radius: 0.45rem; padding: 0.85rem 1rem; }
+.candidate-family h3, .candidate-internal h3 { margin: 0; font-size: 1.05rem; }
+.candidate-head { margin-block: 0.35rem; }
+.candidate-version { border-top: 1px solid var(--border); margin-top: 0.75rem; padding-top: 0.65rem; }
+.candidate-version h4 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.candidate-dates { margin-block: 0.4rem; font-size: 0.9rem; }
+.candidate-dates dt { color: var(--subtle); }
+.candidate-dates dd { margin: 0 0 0.25rem; }
+.candidate-result { margin-bottom: 0; font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+.candidate-result a { font-weight: 700; }

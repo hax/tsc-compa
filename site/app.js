@@ -2,6 +2,7 @@ import {
   combineChoices, readCatalog, readReports, reportHref, requestedSelection,
   resolveSelection, runHref, sameSelection, selectionOf, shareUrl, versionKey,
 } from './catalog.js';
+import { renderCandidateOverview } from './candidate-overview.js';
 
 const root = new URL('./', import.meta.url);
 const byId = (id) => document.getElementById(id);
@@ -175,9 +176,17 @@ window.addEventListener('popstate', () => {
 });
 
 async function start() {
+  const index = readJson('./reports/index.json').then((value) => readReports(value, root));
+  Promise.all([readJson('./candidate-overview.json'), index.catch(() => undefined)])
+    .then(([snapshot, publishedReports]) => {
+      byId('candidate-overview-content').replaceChildren(...renderCandidateOverview(snapshot, publishedReports, root));
+      byId('candidate-overview-status').textContent = '';
+    })
+    .catch(() => {
+      byId('candidate-overview-status').textContent = '候选版本资料暂不可用，仍可使用上方的报告筛选。';
+    });
   const [catalogResult, indexResult] = await Promise.allSettled([
-    readJson('./reports/catalog.json').then(readCatalog),
-    readJson('./reports/index.json').then((value) => readReports(value, root)),
+    readJson('./reports/catalog.json').then(readCatalog), index,
   ]);
   if (catalogResult.status === 'fulfilled') catalog = catalogResult.value;
   if (indexResult.status === 'fulfilled') reports = indexResult.value;
