@@ -357,7 +357,8 @@ bun scripts/validate-compatibility.ts "$TS71_CASES" "$OUT/tsrs" tsrs "$TSRS"
 ```
 
 每个候选分别在 `tsc/` 和 `official-baseline/` 写出 `report.md`、`report.html`、`metrics.json` 和
-`details.json`。`compatibility-reports.yml` 可手动生成 Linux 对照产物。
+`details.json`。原 Linux 手动工作流 `compatibility-reports.yml` 已移除；双来源复跑见
+[CI 使用说明](CI.md#本地固定版本双来源对照)。
 
 可以给上述脚本附加 `--perf-ratio`，对固定种子分层抽样 24 例；两种执行顺序各 12 例。
 八份性能附录中，所有入样用例都通过兼容档。这个小样本主要用于验证性能记录链路：
