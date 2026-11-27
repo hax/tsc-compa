@@ -16,6 +16,11 @@
       "note": "TS7 官方 Go 布局语料：cases 在 tsc/testdata/tests/cases、基线在 tsc/testdata/baselines/reference；pin = npm typescript@7.1.0-beta 的 gitHead 3e92363（release-7.1 合并提交，2026-10-19），与 tsrs/ts-rust 登记的 upstreamPin 3e9236361fa9 一致"
     }
   },
+  "equivalentDiagnosticCodesByTscVersion": {
+    "5.9.3": [[2339, 2551], [2304, 2552], [2353, 2561], [2305, 2724]],
+    "6.0.3": [[2339, 2551], [2304, 2552], [2353, 2561], [2305, 2724]],
+    "7.1.0-beta": [[2339, 2551], [2304, 2552], [2353, 2561], [2305, 2724]]
+  },
   "baselines": [
     {
       "id": "5.9.3",

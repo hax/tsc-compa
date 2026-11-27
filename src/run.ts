@@ -14,19 +14,25 @@
 // 假阳性/漏报/错锚超限、覆盖率不足、口径不可作结论等任一命中即非零退出，
 // 并在 stdout 与 metrics.meta.gate 里给出逐项结论（见 docs/CI.md）。
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createAdapter } from "./adapters/index.ts";
 import { compareCase, formatSummary, skipRecord, summarize, type CaseRecord, type Metrics, type RunMeta } from "./compare.ts";
-import { evaluateGate, formatGate, type GateThresholds } from "./gate.ts";
+import { evaluateGate, formatGate, isBlockingRegression, type GateProfile, type GateRatchetInput, type GateThresholds } from "./gate.ts";
 import { readRunData, REPORT_HTML_FILENAME, REPORT_MD_FILENAME, writeReport } from "./report.ts";
-import { checkRatchet, ratchetPathFor, readRatchet, writeRatchet, type RatchetRegression } from "./ratchet.ts";
+import { checkRatchetState, protectedCountsOf, ratchetPathFor, readRatchetState, writeRatchetState } from "./ratchet.ts";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "./baselines.ts";
 import { classifyCase, exclusionOf, parseTagList, runtimeTags } from "./classify.ts";
 import { loadManifest, readCase } from "./discover.ts";
 import { expectationOf, resolveTscPath, shortCaseName, tscVersionOf, type ExpectationResult } from "./tsc.ts";
-import { baselineFileOf, expectationFromOfficialBaseline } from "./officialBaseline.ts";
-import { toTscArgs } from "./case.ts";
+import {
+  baselineFileOf, expectationFromOfficialBaseline, expectationFromOfficialVariantBaseline,
+  lookupOfficialVariantBaseline, officialBaselineDirOf, summaryBlockOf,
+} from "./officialBaseline.ts";
+import { identifyTool, sha256 } from "./provenance.ts";
+import { expandCaseVariants, toTscArgs, type CaseVariant, type ParsedCase } from "./case.ts";
 import {
   buildPerfReport,
   planPerfOrder,
@@ -40,11 +46,12 @@ import type { Adapter, CaseFile } from "./types.ts";
 const DEFAULT_BASE_ARGS = ["--noEmit", "--ignoreConfig", "--pretty", "false"];
 
 interface Args {
-  corpus?: string;
+  corpus: string;
   cases?: string;
   tsc?: string;
   adapter: string;
   mode: "official" | "fixed";
+  optionStrategy: "defaults" | "aligned";
   out: string;
   limit?: number;
   verbose: boolean;
@@ -56,8 +63,8 @@ interface Args {
   /** 只加给适配器侧的参数（--adapter-arg name=value），用于跨版本对齐实验。 */
   adapterArgsExtra: string[];
   /** 期望来源：现场跑 tsc CLI，或直接消费官方 errors 基线子集。 */
-  expectationSource: "tsc" | "official-baseline";
-  /** 一致性 ratchet 清单（TSV）；设置后：回落退出非零、改善写回。 */
+  expectationSource: "tsc" | "official-baseline" | "ts7-api";
+  /** 已验证状态 TSV；记录回归，仅 --gate 阻断，非门禁可写回改善。 */
   ratchet?: string;
   /** 按「实现 × 基线」分账：推导 config/ratchet/<impl>-<baseline>.tsv；清单不存在时自动初始化。 */
   ratchetImpl?: string;
@@ -70,6 +77,7 @@ interface Args {
   perfTimeoutMs: number;
   /** CI 兼容性门禁：任一检查失败即非零退出（见 src/gate.ts）。 */
   gate: boolean;
+  gateProfile: GateProfile;
   /** 门禁阈值（显式给出时覆盖默认值；缺省见 resolveGateThresholds）。 */
   gateMaxFp?: number;
   gateMaxMiss?: number;
@@ -136,11 +144,12 @@ function resolveGateThresholds(args: Args, hasRatchet: boolean): GateThresholds 
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
-    corpus: process.env.TSC_COMPA_CORPUS,
+    corpus: process.env.TSC_COMPA_CORPUS ?? "",
     cases: undefined,
-    tsc: process.env.TSC_BIN,
+    tsc: process.env.TSC_BIN || undefined,
     adapter: process.env.TSC_COMPA_ADAPTER ?? "tsc-cli",
     mode: "official",
+    optionStrategy: "defaults",
     out: ".cache/run",
     verbose: false,
     baseline: process.env.TSC_COMPA_BASELINE,
@@ -155,6 +164,7 @@ function parseArgs(argv: string[]): Args {
     perfSeed: "tsc-compa-v1",
     perfTimeoutMs: 120_000,
     gate: false,
+    gateProfile: "compatibility",
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -185,8 +195,8 @@ function parseArgs(argv: string[]): Args {
       }
       case "--expectation-source": {
         const value = next();
-        if (value !== "tsc" && value !== "official-baseline") {
-          throw new Error(`--expectation-source 只接受 tsc / official-baseline，收到 ${value}`);
+        if (value !== "tsc" && value !== "official-baseline" && value !== "ts7-api") {
+          throw new Error(`--expectation-source 只接受 tsc / official-baseline / ts7-api，收到 ${value}`);
         }
         args.expectationSource = value;
         break;
@@ -207,6 +217,12 @@ function parseArgs(argv: string[]): Args {
       case "--adapter":
         args.adapter = next();
         break;
+      case "--option-strategy": {
+        const value = next();
+        if (value !== "defaults" && value !== "aligned") throw new Error("--option-strategy 只接受 defaults / aligned");
+        args.optionStrategy = value;
+        break;
+      }
       case "--mode": {
         const value = next();
         if (value !== "official" && value !== "fixed") throw new Error(`--mode 只接受 official / fixed，收到 ${value}`);
@@ -250,6 +266,12 @@ function parseArgs(argv: string[]): Args {
       case "--gate":
         args.gate = true;
         break;
+      case "--gate-profile": {
+        const value = next();
+        if (value !== "compatibility" && value !== "strict") throw new Error("--gate-profile 只接受 compatibility / strict");
+        args.gateProfile = value;
+        break;
+      }
       case "--gate-max-fp":
         args.gateMaxFp = nonNegativeInt(next(), "--gate-max-fp");
         break;
@@ -288,9 +310,9 @@ function parseArgs(argv: string[]): Args {
         console.log(
           "用法：bun src/run.ts [--corpus <tests/cases>] [--baseline <id>] [--cases <manifest>] [--tsc <bin>] " +
             "[--adapter <name>] [--mode official|fixed] [--base-arg name=value]... [--adapter-arg name=value]... " +
-            "[--expectation-source tsc|official-baseline] [--exclude-class <tags>] [--only-class <tags>] " +
+            "[--expectation-source tsc|official-baseline|ts7-api] [--option-strategy defaults|aligned] [--exclude-class <tags>] [--only-class <tags>] " +
             "[--ratchet <file> | --ratchet-impl <impl>] [--ratchet-init] [--perf-ratio] [--perf-sample N] [--perf-seed <s>] [--perf-timeout ms] " +
-            "[--gate] [--gate-max-fp N] [--gate-max-miss N] [--gate-max-misanchor N] [--gate-min-coverage P] " +
+            "[--gate] [--gate-profile compatibility|strict] [--gate-max-fp N] [--gate-max-miss N] [--gate-max-misanchor N] [--gate-min-coverage P] " +
             "[--report-md <path>] [--report-html <path>] [--report-out <dir>] [--prev-report <path>] " +
             "[--report-impl-name <name>] [--report-impl-bin <path>] " +
             "[--out <dir>] [--limit N] [--verbose]",
@@ -303,7 +325,7 @@ function parseArgs(argv: string[]): Args {
         throw new Error(`未知参数 ${arg}`);
     }
   }
-  if (args.corpus === undefined) {
+  if (args.corpus === "") {
     throw new Error("缺少语料目录：用 --corpus 或环境变量 TSC_COMPA_CORPUS 指定 tests/cases");
   }
   if (
@@ -328,6 +350,7 @@ async function runPerfAppendix(opts: {
   args: Args;
   tscBin: string;
   perfBaseArgs: string[];
+  perfCandidateBaseArgs: string[];
   implWalls: Map<string, number>;
   implCheckMs: Map<string, number>;
   reference: Map<string, ReferenceRun>;
@@ -336,17 +359,22 @@ async function runPerfAppendix(opts: {
   records: CaseRecord[];
   failed: number;
 }): Promise<ReturnType<typeof buildPerfReport>> {
-  const { adapter, args, tscBin, perfBaseArgs, implWalls, implCheckMs, reference, meta, order, records, failed } = opts;
+  const { adapter, args, tscBin, perfBaseArgs, perfCandidateBaseArgs, implWalls, implCheckMs, reference, meta, order, records, failed } = opts;
   const warnings: string[] = [];
+  if (args.optionStrategy !== "aligned" || args.adapterArgsExtra.length > 0 || process.env.TSC_COMPA_ADAPTER_ARGS?.trim()) {
+    warnings.push("参考和候选的默认设置或附加参数可能不同；请结合运行配置解读性能比值");
+  }
+  if (args.expectationSource === "ts7-api") warnings.push("诊断参考为 TS7 API，性能参考仍为逐案 tsc CLI");
+  if (adapter.kind !== "per-case") warnings.push(`候选以 ${adapter.kind} 方式调用，参考逐案启动；实际耗时包含不同的进程成本`);
   if (args.mode === "fixed") warnings.push("fixed 模式下实现忽略用例选项，性能比值仅作流水线参考");
-  const sampleIds = [...reference.keys()];
+  const sampleIds = [...order.keys()];
   const emptyFiles: CaseFile[] = [{ path: "empty.ts", text: "export {};\n" }];
 
   // 空程序基线取多次的最小值：单次会被冷启动/负载噪声放大，可能把分母推成负数。
   const EMPTY_REPS = 3;
   let implEmptyWallMs: number | null = null;
   try {
-    const emptyArgs = toTscArgs(args.mode === "fixed" ? (adapter.fixedOptions ?? []) : [], [...args.baseArgsExtra]);
+    const emptyArgs = toTscArgs(args.mode === "fixed" ? (adapter.fixedOptions ?? []) : [], perfCandidateBaseArgs);
     for (let i = 0; i < EMPTY_REPS; i++) {
       const started = performance.now();
       const outcome = await adapter.check({ id: `__perf_empty_${i}__`, files: emptyFiles, options: [], args: emptyArgs });
@@ -373,7 +401,7 @@ async function runPerfAppendix(opts: {
 
   const agreementIds = new Set(
     records
-      .filter((r) => r.status === "ran" && r.fp.length === 0 && r.missed.length === 0 && r.misanchor === 0)
+      .filter((r) => r.comparison?.compatibility === "pass")
       .map((r) => r.id),
   );
   const report = buildPerfReport({
@@ -396,9 +424,9 @@ async function runPerfAppendix(opts: {
   console.log(
     `性能附录（样本 ${report.sample.size}/${sampleIds.length}、参考失败 ${failed}）：` +
       `实现 ${report.impl.meanWallMs.toFixed(1)}ms/案、tsc ${report.reference.meanWallMs.toFixed(1)}ms/案；` +
-      `累加 Check=${fmt(report.ratio.check)}、wall-adj=${fmt(report.ratio.wallAdjusted)}；` +
+      `累加 Check=${fmt(report.ratio.check)}、wall=${fmt(report.ratio.wall)}、wall-adj=${fmt(report.ratio.wallAdjusted)}；` +
       `逐案 check[${agg(report.ratio.perCase.check)}]、wall[${agg(report.ratio.perCase.wallAdjusted)}]；` +
-      `一致子集 ${report.ratio.agreementSubset.cases} 例 check=${fmt(report.ratio.agreementSubset.check)}`,
+      `兼容子集 ${report.ratio.agreementSubset.cases} 例 check=${fmt(report.ratio.agreementSubset.check)}`,
   );
   const comp = report.sample.composition;
   console.log(
@@ -421,6 +449,12 @@ async function main(): Promise<void> {
     );
   }
   const gateThresholds = args.gate ? resolveGateThresholds(args, ratchetPath !== undefined) : null;
+  if (args.expectationSource === "official-baseline") {
+    const dir = officialBaselineDirOf(args.corpus);
+    if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new Error(`官方基线目录不存在：${dir}；不能把整个目录缺失视为零诊断`);
+    }
+  }
 
   // 基线是 (tsc, baseArgs, 语料 tag, manifest) 的具名组合；不给 --baseline 时
   // 保持旧行为：--tsc / TSC_BIN 指定期望源，基础参数用 6.0 口径。
@@ -429,16 +463,30 @@ async function main(): Promise<void> {
   // 侧只接用例指令与显式的 --base-arg / --adapter-arg，用自己的版本默认值，
   // 否则跨版本对照会把期望版本的默认口径强加到实现上（5.9 的 --target es5
   // 会被 6.0/7.1 直接判成配置错误）。
-  const config = args.baseline !== undefined ? loadBaselines() : null;
-  const baseline = config !== null ? findBaseline(config, args.baseline!) : null;
+  const config = loadBaselines();
+  const baseline = args.baseline !== undefined ? findBaseline(config, args.baseline) : null;
   const baseArgs = [...(baseline?.baseArgs ?? DEFAULT_BASE_ARGS), ...args.baseArgsExtra];
   const tscBin = resolveTscPath(args.tsc ?? (baseline !== null ? resolveBaselineTsc(baseline) : undefined));
   const tscVersion = tscVersionOf(tscBin);
-  const corpusRef = config !== null && baseline !== null ? corpusRefOf(config, baseline) : undefined;
+  const corpusRef = baseline !== null ? corpusRefOf(config, baseline) : undefined;
+  const referenceIdentity = identifyTool(tscBin, tscVersion)!;
+  if (args.expectationSource === "ts7-api" && (tscVersion !== "7.1.0-beta" || args.tsc !== undefined || baseline === null)) {
+    throw new Error("ts7-api 参考来源需要使用默认 7.1.0-beta 参考配置（不能用 --tsc 或 TSC_BIN 覆盖）");
+  }
+  const apiReference = args.expectationSource === "ts7-api" ? await createAdapter("ts7-api") : null;
+  const equivalentCodes = Object.hasOwn(config.equivalentDiagnosticCodesByTscVersion ?? {}, tscVersion)
+    ? config.equivalentDiagnosticCodesByTscVersion?.[tscVersion] : undefined;
+  const candidateBaseArgs = [
+    ...(args.optionStrategy === "aligned" ? (baseline?.baseArgs ?? DEFAULT_BASE_ARGS) : []),
+    ...args.baseArgsExtra,
+    ...args.adapterArgsExtra,
+  ];
   const casesPath =
     args.cases ?? (baseline !== null ? join(REPO_ROOT, baseline.manifest) : join(REPO_ROOT, "config/smoke-cases.json"));
 
   const adapter: Adapter = await createAdapter(args.adapter);
+  await using activeCandidate = { [Symbol.asyncDispose]: async () => { await adapter.close?.(); } };
+  await using activeReference = { [Symbol.asyncDispose]: async () => { await apiReference?.close?.(); } };
   await adapter.init?.();
 
   if (args.mode === "fixed" && adapter.fixedOptions === undefined) {
@@ -451,36 +499,75 @@ async function main(): Promise<void> {
   }
 
   const ids = loadManifest(casesPath).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
-  // 性能附录的样本在跑之前定下来（确定性分层抽样：suite × 行数档 × 有无期望错误），
-  // 参考 tsc 在逐案循环里与实现交错跑。预扫描只读主文件计行数 + （官方基线模式下）
-  // 一次基线文件存在性检查，用于「有无期望错误」分层；代价随语料线性、约百毫秒级。
+  const parsedInputs = createHash("sha256");
+  const officialInputs = createHash("sha256");
+  const candidateEnvArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter(Boolean);
+  const adapterTarget = (args.adapter.includes(":") ? args.adapter.slice(args.adapter.indexOf(":") + 1) : ({
+    "tsc-cli": process.env.TSC_COMPA_ADAPTER_TSC ?? process.env.TSC_BIN,
+    "bun-check": process.env.BUN_CHECK_BIN,
+    "ts7-api": resolve(REPO_ROOT, "node_modules/typescript-7-1/bin/tsc"),
+    "checker-cli": process.env.CHECKER_BIN,
+    "checker-batch": process.env.CHECKER_BATCH_BIN ?? process.env.CHECKER_BIN,
+    "mock-batch": join(import.meta.dir, "adapters", "mock-batch.ts"),
+  } as Record<string, string | undefined>)[args.adapter]) ?? args.reportImplBin;
+  const candidateIdentity = identifyTool(adapterTarget);
+  const bunIdentity = args.adapter.startsWith("bun-check") && candidateIdentity !== null
+    ? (() => {
+      const exact = spawnSync(candidateIdentity.path, ["-p", "JSON.stringify({version: Bun.version, revision: Bun.revision, typescript: process.versions.typescript, path: process.execPath})"], { encoding: "utf8", timeout: 5_000 });
+      try {
+        const info = JSON.parse(exact.stdout ?? "");
+        if (exact.status !== 0 || typeof info.version !== "string") return null;
+        return { version: `Bun ${info.version} (${info.revision})`, embeddedTypeScript: String(info.typescript ?? "unknown"), native: info.path === candidateIdentity.path ? undefined : identifyTool(info.path, info.version) ?? undefined };
+      } catch { return null; }
+    })() : null;
+  // 清单保留源文件 ID；每个实际配置有独立的比较、计时和回归记录 ID。
+  const executions: { parsed: ParsedCase; variant?: CaseVariant; reason?: string }[] = [];
+  const executionIds = new Set<string>();
+  for (const id of ids) {
+    const parsed = readCase(args.corpus, id);
+    parsedInputs.update(`${JSON.stringify([id, parsed])}\n`);
+    const reason = parsed.skip ?? (parsed.unknown[0] === undefined ? null : `未知指令 ${parsed.unknown[0]}`);
+    const expanded = reason === null ? expandCaseVariants(parsed) : { status: "unsupported" as const, reason };
+    const entries = expanded.status === "ok"
+      ? expanded.variants.map((variant) => ({ parsed, variant }))
+      : [{ parsed, reason: expanded.reason }];
+    for (const entry of entries) {
+      const executionId = "variant" in entry ? entry.variant.variantId : id;
+      if (executionIds.has(executionId)) throw new Error(`用例变体 ID 重复：${executionId}`);
+      executionIds.add(executionId);
+      executions.push(entry);
+    }
+  }
+
+  // 以展开后的配置 ID 抽样，避免同一个源文件的不同配置覆盖计时。
   let perfMeta: Map<string, PerfCaseMeta> | null = null;
   let perfSampleIds: Set<string> | null = null;
   let perfOrder = new Map<string, "ref-first" | "impl-first">();
   if (args.perfRatio) {
     perfMeta = new Map<string, PerfCaseMeta>();
-    for (const id of ids) {
-      let lines = 0;
-      try {
-        lines = readFileSync(join(args.corpus!, id), "utf8").split(/\r?\n/).length;
-      } catch {
-        lines = 0;
+    for (const { parsed, variant } of executions) {
+      if (variant === undefined) continue;
+      const lines = parsed.files.reduce((n, file) => n + file.text.split("\n").length, 0);
+      let hasErrors: boolean | undefined;
+      if (args.expectationSource === "official-baseline") {
+        if (variant.configName === "") hasErrors = baselineFileOf(args.corpus, variant.caseId) !== null;
+        else {
+          const lookup = lookupOfficialVariantBaseline(args.corpus, variant);
+          if (lookup.status !== "unsupported") hasErrors = lookup.status === "found";
+        }
       }
-      const hasErrors =
-        args.expectationSource === "official-baseline" ? baselineFileOf(args.corpus!, id) !== null : undefined;
-      perfMeta.set(id, { lines, hasErrors });
+      perfMeta.set(variant.variantId, { lines, hasErrors });
     }
-    const sample = selectPerfSample(ids, args.perfSample, args.perfSeed, perfMeta);
+    const sample = selectPerfSample([...perfMeta.keys()], args.perfSample, args.perfSeed, perfMeta);
     perfSampleIds = new Set(sample);
     perfOrder = planPerfOrder(sample, args.perfSeed);
   }
   const perfReference = new Map<string, ReferenceRun>();
-  // 参考侧与实现侧必须拿到同一组 CLI 参数：这里用「适配器侧参数」（用例指令 +
-  // --base-arg/--adapter-arg），不含期望侧的官方默认值（那是给期望生成用的，
-  // 例如 skipDefaultLibCheck 会让 tsc 少做 lib 检查，混入会系统性压低参考时间）。
-  const perfBaseArgs = toTscArgs([], [...args.baseArgsExtra, ...args.adapterArgsExtra]);
+  // 候选专有开关（例如 --singleThreaded）不会偷偷传给参考侧。
+  const perfBaseArgs = toTscArgs([], baseArgs);
   let perfReferenceFailed = 0;
   const records: CaseRecord[] = [];
+  const executionFailures: { id: string; side: "reference" | "candidate"; status: "crash" | "timeout"; reason: string }[] = [];
   let optionDirectiveIgnored = 0;
   let excludedStatic = 0;
   let excludedRuntime = 0;
@@ -488,15 +575,15 @@ async function main(): Promise<void> {
   const perfImplWalls = new Map<string, number>();
   const perfImplChecks = new Map<string, number>();
 
-  for (const id of ids) {
-    const parsed = readCase(args.corpus, id);
-    const staticTags = classifyCase(id, parsed);
-    if (parsed.skip !== null) {
-      records.push(skipRecord(id, parsed.skip, staticTags));
+  for (const { parsed, variant, reason } of executions) {
+    const id = variant?.variantId ?? parsed.id;
+    const staticTags = classifyCase(parsed.id, variant === undefined ? parsed : { ...parsed, options: variant.options });
+    if (variant === undefined) {
+      records.push(skipRecord(id, reason ?? "未产生可执行配置", staticTags));
       continue;
     }
-    if (parsed.unknown.length > 0) {
-      records.push(skipRecord(id, `未知指令 ${parsed.unknown[0]}`, staticTags));
+    if (variant.configName !== "" && args.mode === "fixed") {
+      records.push(skipRecord(id, "fixed 模式不执行官方配置变体", staticTags));
       continue;
     }
     const staticExclusion = exclusionOf(staticTags, args.excludeClasses, args.onlyClasses);
@@ -505,52 +592,65 @@ async function main(): Promise<void> {
       records.push(skipRecord(id, `类排除:${staticExclusion}`, staticTags));
       continue;
     }
-    const options = args.mode === "fixed" ? adapter.fixedOptions! : parsed.options;
-    if (args.mode === "fixed" && parsed.options.length > 0) optionDirectiveIgnored++;
+    const options = args.mode === "fixed" ? adapter.fixedOptions! : variant.options;
+    if (args.mode === "fixed" && variant.options.length > 0) optionDirectiveIgnored++;
     const expectationArgs = toTscArgs(options, baseArgs);
-    // 适配器侧：用例指令 + 显式 --base-arg/--adapter-arg；不含基线的官方默认值。
-    const adapterArgs = toTscArgs(options, [...args.baseArgsExtra, ...args.adapterArgsExtra]);
+    const adapterArgs = toTscArgs(options, candidateBaseArgs);
     let expectation: ExpectationResult;
     // 官方基线原文（T3 字节比对用）；现场生成期望时为 null。
     let baselineText: string | null = null;
     if (args.expectationSource === "official-baseline") {
-      const official = expectationFromOfficialBaseline(args.corpus, id, parsed);
+      const official = variant.configName === ""
+        ? expectationFromOfficialBaseline(args.corpus, parsed.id, parsed)
+        : parsed.absoluteFiles.length > 0 || parsed.id.endsWith(".d.ts")
+          ? { status: "skip" as const, reason: "绝对路径或 d.ts 用例暂不接官方基线" }
+          : expectationFromOfficialVariantBaseline(args.corpus, variant);
       if (official.status === "skip") {
-        records.push(skipRecord(id, `官方基线:${official.reason}`, staticTags));
+        records.push({ ...skipRecord(id, `官方基线:${official.reason}`, staticTags), options, expectedArgs: expectationArgs, actualArgs: adapterArgs });
         continue;
       }
       baselineText = official.text;
-      expectation = { status: "ok", diagnostics: official.diagnostics };
+      officialInputs.update(`${JSON.stringify([id, official.text])}\n`);
+      expectation = { status: "ok", diagnostics: official.diagnostics, fullText: official.text === null ? "" : summaryBlockOf(official.text) };
+    } else if (apiReference !== null) {
+      const referenceOutcome = await apiReference.check({ id, files: parsed.files, options, args: expectationArgs });
+      const { status } = referenceOutcome;
+      expectation = { ...referenceOutcome, status: status === "skip" ? "unsupported" : status };
     } else {
       expectation = expectationOf(id, parsed.files, options, {
         tscBin,
         tscVersion,
+        compilerIdentity: referenceIdentity.native?.sha256 ?? referenceIdentity.sha256 ?? undefined,
         args: expectationArgs,
         cacheDir: join(".cache", "expectations"),
       });
     }
     const tags = [...staticTags, ...runtimeTags(expectation)];
+    if (expectation.status !== "ok") {
+      const reason =
+        expectation.status === "syntax"
+          ? "tsc 语法解析失败"
+          : expectation.status === "timeout"
+            ? "参考侧超时"
+            : expectation.status === "unsupported" ? `参考不支持该输入${expectation.message ? `：${expectation.message}` : ""}`
+            : `参考侧异常${expectation.message ? `：${expectation.message}` : ""}`;
+      if (expectation.status === "crash" || expectation.status === "timeout") executionFailures.push({ id, side: "reference", status: expectation.status, reason });
+      records.push({ ...skipRecord(id, reason, tags), options, expectedArgs: expectationArgs, actualArgs: adapterArgs,
+        expected: expectation.diagnostics, expectedOutput: expectation.fullText ?? null, expectedExitCode: expectation.exitCode ?? null,
+        expectedRawOutput: expectation.rawOutput });
+      continue;
+    }
     const runtimeExclusion = exclusionOf(tags, args.excludeClasses, args.onlyClasses);
     if (runtimeExclusion !== null) {
       excludedRuntime++;
       records.push(skipRecord(id, `类排除:${runtimeExclusion}`, tags));
       continue;
     }
-    if (expectation.status !== "ok") {
-      const reason =
-        expectation.status === "syntax"
-          ? "tsc 语法解析失败"
-          : expectation.status === "timeout"
-            ? "tsc 侧超时"
-            : "tsc 侧异常";
-      records.push(skipRecord(id, reason, tags));
-      continue;
-    }
     const perfOrderKind = perfSampleIds !== null && perfSampleIds.has(id) ? perfOrder.get(id) : undefined;
     let refRun: ReferenceRun | undefined;
     if (perfOrderKind === "ref-first") {
       // 顺序对冲的前一半：先跑官方参考，再跑实现（同参数、同案、紧邻）。
-      refRun = runReference(tscBin, parsed.files, [...adapterArgs, "--extendedDiagnostics"], args.perfTimeoutMs);
+      refRun = runReference(tscBin, parsed.files, [...expectationArgs, "--extendedDiagnostics"], args.perfTimeoutMs);
     }
     const implStarted = performance.now();
     const outcome = await adapter.check({ id, files: parsed.files, options, args: adapterArgs });
@@ -560,20 +660,36 @@ async function main(): Promise<void> {
       if (typeof outcome.checkMs === "number") perfImplChecks.set(id, outcome.checkMs);
       if (perfOrderKind !== undefined) {
         // 后一半：实现刚跑完，紧接着跑官方 tsc（同参数），两侧经历同一时间窗。
-        refRun ??= runReference(tscBin, parsed.files, [...adapterArgs, "--extendedDiagnostics"], args.perfTimeoutMs);
+        refRun ??= runReference(tscBin, parsed.files, [...expectationArgs, "--extendedDiagnostics"], args.perfTimeoutMs);
         perfReference.set(id, refRun);
         if (refRun.status !== "ok") perfReferenceFailed++;
       }
     }
     if (outcome.status !== "ok") {
-      records.push(skipRecord(id, outcome.skipReason ?? `实现返回 ${outcome.status}`, tags));
+      const reason = outcome.skipReason ?? `实现返回 ${outcome.status}`;
+      if (outcome.status !== "skip") executionFailures.push({ id, side: "candidate", status: outcome.status, reason });
+      records.push({ ...skipRecord(id, reason, tags),
+        expected: expectation.diagnostics, actual: outcome.diagnostics,
+        expectedRawOutput: expectation.rawOutput, actualRawOutput: outcome.rawOutput,
+        expectedOutput: expectation.fullText ?? null, actualOutput: outcome.fullText ?? null,
+        expectedExitCode: expectation.exitCode ?? null, actualExitCode: outcome.exitCode ?? null,
+        options, expectedArgs: expectationArgs, actualArgs: adapterArgs });
       continue;
     }
-    const record = compareCase(id, expectation.diagnostics, outcome.diagnostics, tags, baselineText, outcome.fullText ?? null);
+    const record = compareCase(id, expectation.diagnostics, outcome.diagnostics, tags, baselineText, outcome.fullText ?? null, {
+      equivalentCodes,
+      expectedOutput: expectation.fullText,
+      expectedExitCode: expectation.exitCode,
+      actualExitCode: outcome.exitCode,
+    });
+    Object.assign(record, {
+      options, expectedArgs: expectationArgs, actualArgs: adapterArgs,
+      expectedRawOutput: expectation.rawOutput, actualRawOutput: outcome.rawOutput,
+    });
     if (args.verbose) {
       console.log(
         `${shortCaseName(id)}: [${tags.join(" ")}] expect=${record.expected.length} actual=${record.actual.length} ` +
-          `fp=${record.fp.length} miss=${record.missed.length} misanchor=${record.misanchor} tier=${record.tier}`,
+          `fp=${record.fp.length} miss=${record.missed.length} misanchor=${record.misanchor} 兼容=${record.comparison?.compatibility} 严格=${record.comparison?.strict}`,
       );
     }
     records.push(record);
@@ -585,6 +701,7 @@ async function main(): Promise<void> {
       args,
       tscBin,
       perfBaseArgs,
+      perfCandidateBaseArgs: candidateBaseArgs,
       implWalls: perfImplWalls,
       implCheckMs: perfImplChecks,
       reference: perfReference,
@@ -594,10 +711,9 @@ async function main(): Promise<void> {
       failed: perfReferenceFailed,
     });
   }
-  await adapter.close?.();
 
   const meta: RunMeta = {
-    suite: "smoke",
+    suite: args.cases === undefined ? "smoke" : "manifest",
     corpus: args.corpus,
     adapter: adapter.name,
     mode: args.mode,
@@ -609,11 +725,20 @@ async function main(): Promise<void> {
     expectationSource: args.expectationSource,
     generatedAt: new Date().toISOString(),
     selectedCases: ids.length,
+    executionFailures,
+    manifest: {
+      path: casesPath, sha256: sha256(readFileSync(casesPath)), selectedIdsSha256: sha256(JSON.stringify(ids)),
+      parsedInputsSha256: parsedInputs.digest("hex"),
+      officialInputsSha256: args.expectationSource === "official-baseline" ? officialInputs.digest("hex") : undefined,
+    },
+    options: { strategy: args.optionStrategy, referenceBaseArgs: baseArgs, sharedArgs: args.baseArgsExtra, candidateArgs: candidateBaseArgs,
+      candidateEnvArgs, onlyClasses: args.onlyClasses, excludeClasses: args.excludeClasses },
+    tools: { runner: `Bun ${Bun.version} (${Bun.revision})`, platform: `${process.platform}/${process.arch}`, reference: referenceIdentity, candidate: candidateIdentity === null ? null : { ...candidateIdentity, ...bunIdentity } },
   };
   const metrics = summarize(records, meta) as Metrics & { perf?: ReturnType<typeof buildPerfReport> };
   if (perf !== undefined) metrics.perf = perf;
   let exitCode = 0;
-  let ratchetGateInput: { path: string; registered: number; regressions: RatchetRegression[] } | null = null;
+  let ratchetGateInput: GateRatchetInput | null = null;
   if (ratchetPath !== undefined) {
     const existed = existsSync(ratchetPath);
     if (!existed && args.ratchetImpl === undefined && !args.ratchetInit) {
@@ -621,46 +746,43 @@ async function main(): Promise<void> {
         `ratchet 清单不存在：${ratchetPath}（首次接入请加 --ratchet-init，或改用 --ratchet-impl <impl> 按实现分账自动初始化）`,
       );
     }
-    const previous = readRatchet(ratchetPath);
-    const check = checkRatchet(previous, records);
-    ratchetGateInput = { path: ratchetPath, registered: previous.size, regressions: check.regressions };
+    const previous = readRatchetState(ratchetPath);
+    const check = checkRatchetState(previous, records);
+    const regressionDetails = check.regressions.map((regression) => ({
+      ...regression, blocking: args.gate && isBlockingRegression(regression, args.gateProfile),
+    }));
+    const blockingRegressions = regressionDetails.filter((r) => r.blocking).length;
+    ratchetGateInput = { path: ratchetPath, registered: previous.size, protected: protectedCountsOf(previous), regressions: check.regressions };
     let wrote = false;
-    // 门禁模式只读：改善留给本地运行后提交，CI 检出上的写回不持久、还会掩盖清单过期。
-    if ((check.changed || !existed) && !args.gate) {
+    // 门禁模式只读；只升不降的记录保留旧证据，完整本次结果在 details.json。
+    if ((check.changed || !existed) && !args.gate && meta.verdictEligible) {
       mkdirSync(dirname(ratchetPath), { recursive: true });
-      writeRatchet(ratchetPath, check.next);
+      writeRatchetState(ratchetPath, check.next);
       wrote = true;
     }
     meta.ratchet = {
       path: ratchetPath,
       impl: args.ratchetImpl,
       initialized: !existed,
-      regressions: check.regressions.length,
+      profile: args.gateProfile,
+      regressions: regressionDetails.length,
+      blockingRegressions,
+      regressionDetails,
       improvements: check.improvements.length,
       wrote,
     };
-    if (!existed) {
-      console.log(`ratchet：首次创建清单 ${ratchetPath}（只登记当前档位，不作回落判定）`);
-    }
-    if (check.regressions.length > 0) {
-      exitCode = 1;
-      console.log(`ratchet 回落 ${check.regressions.length} 例（本次运行失败）：`);
-      for (const r of check.regressions.slice(0, 20)) {
-        console.log(`  ${r.id}: ${r.was} → ${r.now}${r.reason !== undefined ? `（${r.reason}）` : ""}`);
-      }
-      if (check.regressions.length > 20) console.log(`  …… 共 ${check.regressions.length} 例`);
-    } else {
-      const improvementState = wrote
-        ? `，已写回 ${ratchetPath}`
-        : args.gate && check.improvements.length > 0
-          ? "（门禁模式不写回清单；请本地去掉 --gate 跑一次后提交改善）"
-          : "（清单未变）";
-      console.log(`ratchet：无回落；改善 ${check.improvements.length} 例${improvementState}`);
+    console.log(`ratchet：${regressionDetails.length} 项回归（${blockingRegressions} 项阻断），${check.improvements.length} 项改善` +
+      (wrote ? `；已写入 ${ratchetPath}` : args.gate ? "；门禁模式不写回清单" : "；清单未变"));
+    for (const r of regressionDetails.slice(0, 20)) {
+      console.log(`  [${r.blocking ? "阻断" : "报告"}] ${r.id}：${r.reason}`);
     }
   }
   if (args.gate && gateThresholds !== null) {
     const gate = evaluateGate({
+      profile: args.gateProfile,
       totals: metrics.totals,
+      comparison: metrics.comparison,
+      executionFailures,
       verdictEligible: meta.verdictEligible,
       mode: meta.mode,
       ratchet: ratchetGateInput,
@@ -677,13 +799,27 @@ async function main(): Promise<void> {
     console.log(`类排除：静态 ${excludedStatic} 例、运行期 ${excludedRuntime} 例（--exclude-class / --only-class）`);
   }
 
+  const namedVariants = new Map(executions.flatMap(({ variant }) =>
+    variant === undefined || variant.configName === "" ? [] : [[variant.variantId, variant] as const]));
   const detailsJson = records.map((r) => ({
     id: r.id,
+    caseId: namedVariants.get(r.id)?.caseId,
+    configuration: namedVariants.get(r.id)?.configName,
     status: r.status,
     skipReason: r.skipReason,
     classes: r.classes,
-    expected: r.expected.length,
-    actual: r.actual.length,
+    expected: r.expected,
+    actual: r.actual,
+    comparison: r.comparison,
+    expectedExitCode: r.expectedExitCode,
+    actualExitCode: r.actualExitCode,
+    expectedOutput: r.expectedOutput,
+    actualOutput: r.actualOutput,
+    expectedRawOutput: r.expectedRawOutput,
+    actualRawOutput: r.actualRawOutput,
+    options: r.options,
+    expectedArgs: r.expectedArgs,
+    actualArgs: r.actualArgs,
     hits: r.hits,
     fp: r.fp.map((d) => `${d.file}:${d.line + 1}:${d.col + 1} TS${d.code}`),
     missed: r.missed.map((d) => `${d.file}:${d.line + 1}:${d.col + 1} TS${d.code}`),

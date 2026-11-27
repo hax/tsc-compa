@@ -38,6 +38,28 @@ test("skip / crash 状态按用例返回", async () => {
   expect(crashed.status).toBe("crash");
 });
 
+test("完整诊断字段与结果级字段透传（不丢 raw）", async () => {
+  const outcome = await adapter.check(input("rich", "FAKE_RICH\n"));
+  expect(outcome.status).toBe("ok");
+  expect(outcome.exitCode).toBe(2);
+  expect(outcome.checkMs).toBe(12);
+  expect(outcome.fullText).toContain("error TS2322: rich message");
+  expect(outcome.rawOutput).toEqual({ stdout: "mock stdout", stderr: "mock stderr" });
+  expect(outcome.diagnostics[0]).toMatchObject({
+    file: "a.ts",
+    line: 0,
+    col: 0,
+    code: 2322,
+    width: 3,
+    message: "rich message",
+    messageChain: { text: "rich message", children: [{ text: "child" }] },
+    related: [{ file: "a.ts", line: 0, col: 1, width: 1, code: 2728, message: "related" }],
+    attributes: { source: "TS", reportsUnnecessary: false },
+    fullText: "a.ts(1,1): error TS2322: rich message\n  child",
+    raw: { marker: "FAKE_RICH" },
+  });
+});
+
 test("多个用例复用同一个进程（顺序请求互不串扰）", async () => {
   const [a, b] = await Promise.all([
     adapter.check(input("p1", "FAKE_TS2322\n")),
@@ -46,3 +68,23 @@ test("多个用例复用同一个进程（顺序请求互不串扰）", async ()
   expect(a.diagnostics.map((d) => d.code)).toEqual([2322]);
   expect(b.diagnostics.map((d) => d.code)).toEqual([2345]);
 });
+
+test("ok without a diagnostics array is a protocol error, not a clean result", async () => {
+  const invalid = new BatchAdapter({ name: "invalid", command: process.execPath, args: ["-e", `
+    import {createInterface} from 'node:readline';
+    createInterface({input:process.stdin}).on('line', line => {
+      const request = JSON.parse(line);
+      if (request.type === 'shutdown') process.exit(0);
+      console.log(JSON.stringify({protocol:1,type:'result',id:request.id,status:'ok'}));
+    });
+  `] });
+  try {
+    expect((await invalid.check(input("missing-diagnostics", ""))).status).toBe("crash");
+  } finally { await invalid.close(); }
+});
+
+test("an already exited batch process closes without waiting forever", async () => {
+  const lost = new BatchAdapter({ name: "lost", command: process.execPath, args: ["-e", "process.exit(70)"], timeoutMs: 500 });
+  expect((await lost.check(input("broken", ""))).status).toBe("crash");
+  await lost.close();
+}, 2_000);

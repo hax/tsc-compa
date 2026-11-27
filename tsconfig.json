@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2025",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "types": ["bun"],
+    "strict": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+}

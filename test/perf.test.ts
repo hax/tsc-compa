@@ -153,8 +153,24 @@ describe("buildPerfReport", () => {
     expect(report.sample.size).toBe(1);
     expect(report.sample.referenceFailed).toBe(1);
     expect(report.reference.checkSumMs).toBeCloseTo(40, 5);
-    expect(report.warnings.some((w) => w.includes("未成功"))).toBe(true);
+    expect(report.warnings.some((w) => w.includes("没有成功取得参考侧计时"))).toBe(true);
   });
+  test("候选缺失的计时不会归因给已成功的参考", () => {
+    const sampleIds = ["compiler/a.ts", "compiler/b.ts"];
+    const report = buildPerfReport({
+      seed: "s", requested: 2, sampleIds, implWalls: new Map([[sampleIds[0]!, 50]]),
+      implEmptyWallMs: 1, reference: new Map(sampleIds.map((id) => [id, mkRun(100, 10)])),
+      implCheckMs: new Map(), agreementIds: new Set(sampleIds), warnings: [],
+    });
+    expect(report.sample).toMatchObject({ size: 1, referenceOk: 2, referenceFailed: 0 });
+    expect(report.ratio.wall).toBe(0.5);
+    expect(report.ratio.agreementSubset).toMatchObject({
+      wall: 0.5, implWallMs: report.impl.sumWallMs, referenceWallMs: report.reference.sumWallMs,
+    });
+    expect(report.warnings.some((w) => w.includes("候选侧计时"))).toBe(true);
+    expect(report.ratio.agreementSubset.cases).toBe(1);
+  });
+
 });
 
 

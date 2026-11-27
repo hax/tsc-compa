@@ -7,7 +7,8 @@
 //   // @filename: a.ts
 //   ...a.ts 的内容...
 //
-// 指令行本身不进入源文本。单文件用例没有 @filename，虚拟文件名取用例文件名。
+// 只有 TS7 Go runner 的 optionRegex 能识别的行才算指令；指令行本身不进入
+// 源文本。单文件用例没有 @filename，虚拟文件名取用例文件名。
 // 这里只做「把官方声明翻译成 tsc 可接受的选项」；哪些指令在 v0 被支持/跳过/
 // 忽略见下方三张表，完整口径与后续对齐计划见 docs/DESIGN.md。
 
@@ -15,7 +16,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { CaseFile, CompilerOption, CompilerOptions, OptionValue } from "./types.ts";
 
-const META = /^\s*\/\/\s*@(\w+)\s*(?::\s*(.*))?$/;
+// 官方 TS7 Go runner 的 optionRegex 固定在行首并强制 `@name:`：
+//   `(?m)^\/{2}\s*@(\w+)\s*:\s*([^\r\n]*)`
+// 因此 `// @strict` 这类无冒号行不是元数据，必须作为源文本保留，
+// 否则诊断行号会整体偏移。缩进的 `// @internal` 同理是源码注释。
+const META = /^\/{2}\s*@(\w+)\s*:\s*([^\r\n]*)/;
 
 interface OptionSpec {
   /** tsc canonical 选项名（命令行参数拼作 --name）。 */
@@ -60,6 +65,8 @@ const OPTION_DIRECTIVES: Record<string, OptionSpec> = {
   allowarbitraryextensions: { name: "allowArbitraryExtensions", kind: "bool" },
   nouncheckedsideeffectimports: { name: "noUncheckedSideEffectImports", kind: "bool" },
   preservesymlinks: { name: "preserveSymlinks", kind: "bool" },
+  declaration: { name: "declaration", kind: "bool" },
+  emitdeclarationonly: { name: "emitDeclarationOnly", kind: "bool" },
   target: { name: "target", kind: "string" },
   module: { name: "module", kind: "string" },
   moduleresolution: { name: "moduleResolution", kind: "string" },
@@ -97,7 +104,7 @@ const SKIP_DIRECTIVES: Record<string, string> = {
 
 // 忽略的指令：只影响 emit/诊断文案/速度，不影响 v0 比较的「错误码 + 位置」。
 const IGNORED_DIRECTIVES = new Set([
-  "declaration", "declarationmap", "emitdeclarationonly", "outdir", "outfile",
+  "declarationmap", "outdir", "outfile",
   "out", "sourcemap", "inlinesourcemap", "maproot", "sourceroot", "removecomments",
   "noemit", "noemitonerror", "noemithelpers", "emitdecoratormetadata",
   "importhelpers", "downleveliteration", "preserveconstenums", "newline",
@@ -123,6 +130,7 @@ export interface ParsedCase {
   ignored: string[];
   unknown: string[];
   multiValueDirectives: string[];
+  optionSettings?: Record<string, string>;
   absoluteFiles: string[];
 }
 
@@ -192,7 +200,6 @@ export function parseCase(raw: string, id: string): ParsedCase {
     if (SKIP_DIRECTIVES[key] !== undefined) {
       result.skip ??= SKIP_DIRECTIVES[key]!;
     } else if (OPTION_DIRECTIVES[key] !== undefined) {
-      if (value.includes(",")) result.multiValueDirectives.push(`@${key}`);
       directives.set(key, value);
     } else if (IGNORED_DIRECTIVES.has(key)) {
       result.ignored.push(key);
@@ -207,8 +214,13 @@ export function parseCase(raw: string, id: string): ParsedCase {
     result.files.push({ path: basename(id), text: buffer.join("\n") });
   }
 
+  result.optionSettings = Object.fromEntries(directives);
   for (const [key, value] of directives) {
     const spec = OPTION_DIRECTIVES[key]!;
+    if (spec.kind !== "list" && value.includes(",")) {
+      result.multiValueDirectives.push(`@${key}`);
+      continue;
+    }
     const parsed = parseValue(spec.kind, value);
     if (parsed === null) {
       result.unknown.push(`@${key} 的值无法解析：${value}`);
@@ -221,6 +233,65 @@ export function parseCase(raw: string, id: string): ParsedCase {
     if (!TS_EXT.test(file.path)) result.skip ??= `含非 TS 虚拟文件 ${basename(file.path)}`;
   }
   return result;
+}
+
+export interface CaseVariant {
+  caseId: string;
+  variantId: string;
+  configName: string;
+  fileName: string;
+  baselineStem: string;
+  settings: Readonly<Record<string, string>>;
+  options: CompilerOptions;
+}
+
+export type CaseVariantExpansion = { status: "ok"; variants: CaseVariant[] } | { status: "unsupported"; reason: string };
+
+/** Expand supported scalar directives; list options (e.g. lib) are one value. */
+export function expandCaseVariants(parsed: ParsedCase): CaseVariantExpansion {
+  const name = basename(parsed.id);
+  const index = name.lastIndexOf(".");
+  const stem = index < 0 ? name : name.slice(0, index);
+  const extension = index < 0 ? "" : name.slice(index);
+  const settings = parsed.optionSettings ?? {};
+  const keys = Object.keys(settings).sort();
+  const dimensions: [string, string[]][] = [];
+  let size = 1;
+  for (const key of keys) {
+    const spec = OPTION_DIRECTIVES[key];
+    const value = settings[key]!;
+    if (spec === undefined || spec.kind === "list" || !value.includes(",")) continue;
+    const choices = [...new Set(value.split(",").map((item) => item.trim().toLowerCase()))];
+    // Do not use raw input as a path component. Official scalar values are identifiers.
+    if (choices.some((choice) => !/^[a-z0-9_-]+$/.test(choice) || parseValue(spec.kind, choice) === null)) {
+      return { status: "unsupported", reason: `不支持的多值指令 @${key}: ${value}` };
+    }
+    if (choices.length < 2) return { status: "unsupported", reason: `多值指令 @${key} 缺少不同的配置值` };
+    size *= choices.length;
+    if (size > 256) return { status: "unsupported", reason: "多值指令的组合数超过 256" };
+    dimensions.push([key, choices]);
+  }
+  if (dimensions.length === 0 && parsed.multiValueDirectives.length > 0) {
+    return { status: "unsupported", reason: "多值指令缺少配置值" };
+  }
+  let combinations: Record<string, string>[] = [{}];
+  for (const [key, choices] of dimensions) combinations = combinations.flatMap((values) => choices.map((choice) => ({ ...values, [key]: choice })));
+  return {
+    status: "ok",
+    variants: combinations.map((overrides) => {
+      const configName = Object.entries(overrides).map(([key, value]) => `${key}=${value}`).join(",");
+      const final = { ...settings, ...overrides };
+      const baselineStem = configName === "" ? stem : `${stem}(${configName})`;
+      const fileName = baselineStem + extension;
+      const options = configName === "" ? parsed.options : Object.entries(final).flatMap(([key, value]) => {
+        const spec = OPTION_DIRECTIVES[key]!;
+        const option = parseValue(spec.kind, value);
+        return option === null ? [] : [{ name: spec.name, value: option }];
+      });
+      return { caseId: parsed.id, variantId: parsed.id.slice(0, -name.length) + fileName, configName, fileName, baselineStem,
+        settings: final, options };
+    }),
+  };
 }
 
 /** 把选项转成 tsc 风格命令行参数（不含文件路径）。 */

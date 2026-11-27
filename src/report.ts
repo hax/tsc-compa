@@ -17,10 +17,107 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { TIERS, type Tier } from "./compare.ts";
+import {
+  comparisonFields,
+  diagnosticFields,
+  type ComparisonField,
+  type DiagnosticComparison,
+  type DiagnosticMatch,
+  type FieldStatus,
+  type Verdict,
+} from "./comparison.ts";
 import type { GateReport } from "./gate.ts";
+import type { CompilerOption, Diagnostic } from "./types.ts";
 
 export const REPORT_MD_FILENAME = "report.md";
 export const REPORT_HTML_FILENAME = "report.html";
+
+export const FIELD_LABELS: Record<ComparisonField, string> = {
+  code: "诊断码（等价码差异）",
+  severity: "严重级别",
+  location: "主诊断位置",
+  width: "标记范围",
+  message: "首行文字",
+  messageChain: "消息链",
+  related: "related 信息",
+  attributes: "其他诊断属性",
+  count: "诊断数量",
+  order: "输出顺序",
+  output: "完整输出",
+};
+
+const FIELD_STATUS_LABELS: Record<FieldStatus, string> = {
+  equal: "相同",
+  different: "不同",
+  unavailable: "未提供",
+};
+
+const FIELD_SHORT_LABELS: Record<ComparisonField, string> = {
+  code: "诊断码",
+  severity: "严重级别",
+  location: "位置",
+  width: "标记范围",
+  message: "首行文字",
+  messageChain: "消息链",
+  related: "related",
+  attributes: "其他属性",
+  count: "数量",
+  order: "顺序",
+  output: "输出",
+};
+
+const FIELD_ORDER: readonly ComparisonField[] = [
+  "message", "location", "code", "severity", "width", "messageChain", "related", "attributes", "count", "order", "output",
+];
+
+const VERDICT_LABELS: Record<Verdict, string> = {
+  pass: "通过",
+  fail: "失败",
+  unknown: "无法确认",
+};
+
+/** 报告侧比较结果：新契约字段必选，读取旧 details 时由 normalize 补空值。 */
+export type CaseComparison = DiagnosticComparison;
+
+export interface VerdictCounts {
+  pass: number | null;
+  fail: number | null;
+  unknown: number | null;
+  known: boolean;
+}
+
+/** 已知分布时的非空计数；用于展示层，避免在 known 分支里反复断言 null。 */
+type KnownVerdictCounts = { pass: number; fail: number; unknown: number; known: true };
+
+function knownVerdicts(counts: VerdictCounts): KnownVerdictCounts | null {
+  if (!counts.known || counts.pass === null || counts.fail === null || counts.unknown === null) return null;
+  return { pass: counts.pass, fail: counts.fail, unknown: counts.unknown, known: true };
+}
+
+function verdictCountText(counts: KnownVerdictCounts): string {
+  return `通过 ${counts.pass} / 失败 ${counts.fail} / 无法确认 ${counts.unknown}`;
+}
+
+function verdictToneOf(counts: KnownVerdictCounts): "ok" | "warn" | "bad" {
+  return counts.fail > 0 ? "bad" : counts.unknown > 0 ? "warn" : "ok";
+}
+
+export interface FieldCounts {
+  equal: number | null;
+  different: number | null;
+  unavailable: number | null;
+  known: boolean;
+}
+
+export interface ComparisonSummary {
+  compatibility: VerdictCounts;
+  strict: VerdictCounts;
+  fields: Partial<Record<ComparisonField, FieldCounts>>;
+  known: boolean;
+}
+
+/** 新报告的主视图标记：metrics.comparison 或逐案 comparison 至少出现一个。 */
+export const hasNewComparison = (model: ReportModel): boolean => model.comparison.known;
 
 /** details.json 的一条用例记录（字段与 src/run.ts 写出口径一致）。 */
 export interface CaseDetail {
@@ -28,13 +125,24 @@ export interface CaseDetail {
   status: "ran" | "skip";
   skipReason: string | null;
   className: string[];
+  /** 兼容旧 details 的计数；新 details 的 expected/actual 是完整诊断数组。 */
   expected: number;
   actual: number;
+  expectedDiagnostics: Diagnostic[] | null;
+  actualDiagnostics: Diagnostic[] | null;
   hits: number;
   fp: number;
   missed: number;
   misanchor: number;
   tier: Tier | null;
+  comparison: CaseComparison | null;
+  expectedExitCode: number | null;
+  actualExitCode: number | null;
+  expectedOutput: string | null;
+  actualOutput: string | null;
+  options: CompilerOption[];
+  expectedArgs: string[] | null;
+  actualArgs: string[] | null;
 }
 
 /** 一次运行的原始数据（metrics/details 都是未校验的 JSON）。 */
@@ -81,6 +189,13 @@ const isTier = (v: unknown): v is Tier => typeof v === "string" && (TIERS as rea
 /** [名称, 次数] 数组，按次数降序、名称升序排（输入乱序也输出稳定）。 */
 function countPairs(v: unknown): [string, number][] {
   const pairs: [string, number][] = [];
+  // 兼容 metrics.perf.sample.composition 的对象形态：{ "suite:compiler": 3, clean: 5 }。
+  if (isObject(v)) {
+    for (const [name, value] of Object.entries(v)) {
+      const count = num(value);
+      if (count !== null && count > 0) pairs.push([name, count]);
+    }
+  }
   for (const item of list(v)) {
     if (!Array.isArray(item) || item.length < 2) continue;
     const name = text(item[0]);
@@ -118,12 +233,22 @@ const mdCell = (value: string): string => mdText(value);
 
 /** 行内代码：围栏长度取内容里最长反引号串 + 1（避免提前闭合），换行压平。 */
 function mdCode(value: string): string {
-  const text = value.replace(/\r?\n/g, " ");
-  const longestRun = (text.match(/`+/g) ?? []).reduce((max, run) => Math.max(max, run.length), 0);
+  // 表格里的行内代码同样要把竖线转义；否则 `a|b` 会把单元格拆开。
+  const text = value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
+  const runs: string[] = text.match(/`+/g) ?? [];
+  const longestRun = runs.reduce((max: number, run: string) => Math.max(max, run.length), 0);
   const fence = "`".repeat(longestRun + 1);
   // 内容以反引号开头/结尾时，CommonMark 要求围栏两侧补一个空格才不会被吞。
   const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
   return `${fence}${pad}${text}${pad}${fence}`;
+}
+
+/** 多行代码块：保留换行，围栏长度随内容变化，并把 HTML 起始符转成实体。 */
+function mdCodeBlock(value: string): string {
+  const normalized = value.replace(/\r\n?/g, "\n").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const runs: string[] = normalized.match(/`+/g) ?? [];
+  const fence = "`".repeat(Math.max(3, ...runs.map((run) => run.length + 1)));
+  return `${fence}\n${normalized}\n${fence}`;
 }
 
 export function escapeHtml(value: string): string {
@@ -133,6 +258,21 @@ export function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/** 范围变化提示同时用于 Markdown/HTML；复现后不再把差异归因成检查器行为。 */
+const SCOPE_WARNING =
+  "比较范围或参考期望不同：两档、字段与逐例差异只作参照，不能据此认定检查器回归。";
+
+function scopeWarningLines(delta: ReportDelta | null): string[] {
+  if (delta === null || delta.scope.comparable || delta.scope.reasons.length === 0) return [];
+  return [
+    `> **范围提示**：${mdText(SCOPE_WARNING)}原因：${delta.scope.reasons.map(mdText).join("；")}。`,
+  ];
+}
+
+function scopeWarningText(delta: ReportDelta): string {
+  return `${SCOPE_WARNING}原因：${delta.scope.reasons.join("；")}。`;
 }
 
 /** 文件的 sha256（十六进制）；文件不存在/读不了时返回 null（报告不因缺文件而失败）。 */
@@ -175,6 +315,106 @@ export interface RatchetInfo {
   improvements: number;
   initialized: boolean;
   wrote: boolean;
+  profile: "compatibility" | "strict" | null;
+  blockingRegressions: number | null;
+  regressionDetails: RatchetRegressionInfo[];
+  legacy: boolean;
+}
+
+export interface RatchetRegressionInfo {
+  id: string;
+  kind: "compatibility" | "strict" | "field";
+  field: string | null;
+  was: string;
+  now: string;
+  reasonKind: string | null;
+  reason: string;
+  /** 新契约必带；旧数据缺 blocking 时由 profile + kind 恢复。 */
+  blocking: boolean;
+}
+
+export interface GateNoteInfo {
+  name: string;
+  detail: string;
+}
+
+/** meta 里的来源/运行参数；只展示确有内容的字段，旧报告自然退化为未提供。 */
+export interface RunProvenance {
+  manifest: string | null;
+  manifestSha: string | null;
+  /** 用例选择后的 id 集合哈希；范围相同时即使 manifest 文件字节变化也可比较。 */
+  selectedIdsSha: string | null;
+  /** 解析后的用例输入哈希，覆盖用例正文与指令。 */
+  parsedInputsSha: string | null;
+  /** 官方 .errors.txt 输入哈希；变化时参考期望本身也不同。 */
+  officialInputsSha: string | null;
+  /** 原始选项策略（defaults / aligned），用于跨报告判断范围是否可对照。 */
+  optionStrategy: "defaults" | "aligned" | null;
+  optionPolicy: string | null;
+  runArgs: string[];
+  adapter: string | null;
+  referenceBaseArgs: string[];
+  sharedArgs: string[];
+  candidateArgs: string[];
+  candidateEnvArgs: string[];
+  filters: string[];
+  runner: string | null;
+  platform: string | null;
+  reference: {
+    version: string | null;
+    bin: string | null;
+    sha256: string | null;
+    nativeBin: string | null;
+    nativeSha256: string | null;
+    source: string | null;
+    corpus: string | null;
+    corpusRef: string | null;
+  };
+  candidate: {
+    name: string | null;
+    bin: string | null;
+    version: string | null;
+    sha256: string | null;
+    nativeBin: string | null;
+    nativeSha256: string | null;
+    embeddedTypeScript: string | null;
+    source: string | null;
+  };
+}
+
+export interface PerfAggregate {
+  n: number;
+  median: number;
+  geomean: number;
+  p25: number;
+  p75: number;
+}
+
+/** metrics.perf 的报告侧视图；缺字段全部退化为未提供。 */
+export interface PerfInfo {
+  metric: "check" | "wall-adjusted" | null;
+  seed: string | null;
+  requested: number | null;
+  size: number | null;
+  referenceOk: number | null;
+  referenceFailed: number | null;
+  composition: { suite: [string, number][]; lineBucket: [string, number][]; errorPresence: [string, number][]; order: [string, number][] };
+  ratio: {
+    check: number | null;
+    wallAdjusted: number | null;
+    /** 原始 wall-clock 比值；可选字段，旧产物没有时为 null。 */
+    wall: number | null;
+    agreementCases: number | null;
+    agreementImplWallMs: number | null;
+    agreementReferenceWallMs: number | null;
+    agreementWall: number | null;
+    agreementCheck: number | null;
+    agreementWallAdjusted: number | null;
+  };
+  perCase: { check: PerfAggregate | null; wallAdjusted: PerfAggregate | null };
+  impl: { meanWallMs: number | null; emptyBaselineMs: number | null; checkSumMs: number | null };
+  reference: { meanWallMs: number | null; emptyBaselineMs: number | null; checkSumMs: number | null; parseSumMs: number | null; bindSumMs: number | null };
+  warnings: string[];
 }
 
 export interface ReportModel {
@@ -195,12 +435,17 @@ export interface ReportModel {
   expectationSource: string | null;
   corpus: string | null;
   corpusRef: string | null;
+  provenance: RunProvenance;
   /** T3 全文档是否可比：只有期望源是官方 .errors.txt 基线时才成立（否则有错误的用例最多到 T2）。 */
   t3Comparable: boolean;
   selectedCases: number | null;
   ratchet: RatchetInfo | null;
   gate: GateReport | null;
+  /** metrics.meta.gate.reported：不参与 passed 判定的简短摘要。 */
+  gateReported: GateNoteInfo[];
   totals: ReportTotals;
+  comparison: ComparisonSummary;
+  perf: PerfInfo | null;
   skips: [string, number][];
   fpByCode: [string, number][];
   missByCode: [string, number][];
@@ -226,11 +471,30 @@ export interface CaseMovement {
   kind: "regression" | "improvement";
 }
 
+/** `--prev-report` 的范围对照结果。只有 v2 ↔ v2 才计算两档/字段回归。 */
+export interface DeltaScope {
+  v2: boolean;
+  comparable: boolean;
+  reasons: string[];
+}
+
+export interface FieldDeltaRow {
+  field: ComparisonField;
+  before: { equal: number; different: number; unavailable: number };
+  after: { equal: number; different: number; unavailable: number };
+  change: string;
+  trend: "better" | "worse" | "same" | "na";
+}
+
 export interface ReportDelta {
   previousLabel: string;
   rows: MetricDeltaRow[];
   regressions: CaseMovement[];
   improvements: CaseMovement[];
+  /** 比较范围是否可对照；旧版产物仍走原来的 T0–T3 delta。 */
+  scope: DeltaScope;
+  /** v2 字段汇总变化；旧版产物为空。 */
+  fields: FieldDeltaRow[];
 }
 
 function normalizeDetails(v: unknown, source: string | null): CaseDetail[] {
@@ -240,21 +504,112 @@ function normalizeDetails(v: unknown, source: string | null): CaseDetail[] {
     const id = text(item.id);
     if (id === null) continue;
     const status = item.status === "skip" ? "skip" : "ran";
+    const expectedDiagnostics = Array.isArray(item.expected) ? diagnosticsOf(item.expected) : null;
+    const actualDiagnostics = Array.isArray(item.actual) ? diagnosticsOf(item.actual) : null;
     details.push({
       id,
       status,
       skipReason: text(item.skipReason),
       className: strList(item.classes),
-      expected: int(item.expected),
-      actual: int(item.actual),
+      expected: expectedDiagnostics?.length ?? int(item.expected),
+      actual: actualDiagnostics?.length ?? int(item.actual),
+      expectedDiagnostics,
+      actualDiagnostics,
       hits: int(item.hits),
       fp: int(Array.isArray(item.fp) ? item.fp.length : item.fp),
       missed: int(Array.isArray(item.missed) ? item.missed.length : item.missed),
       misanchor: int(item.misanchor),
       tier: isTier(item.tier) ? item.tier : null,
+      comparison: normalizeComparison(item.comparison),
+      expectedExitCode: num(item.expectedExitCode),
+      actualExitCode: num(item.actualExitCode),
+      expectedOutput: typeof item.expectedOutput === "string" ? item.expectedOutput : null,
+      actualOutput: typeof item.actualOutput === "string" ? item.actualOutput : null,
+      options: optionsOf(item.options),
+      expectedArgs: Array.isArray(item.expectedArgs) ? strList(item.expectedArgs) : null,
+      actualArgs: Array.isArray(item.actualArgs) ? strList(item.actualArgs) : null,
     });
   }
   return details;
+}
+
+function diagnosticsOf(v: unknown[]): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  for (const item of v) {
+    if (!isObject(item)) continue;
+    const file = text(item.file);
+    const line = num(item.line);
+    const col = num(item.col);
+    const code = num(item.code);
+    if (file === null || line === null || col === null || code === null) continue;
+    const severity = item.severity === "warning" ? "warning" : "error";
+    diagnostics.push({ ...item, file, line, col, code, severity } as Diagnostic);
+  }
+  return diagnostics;
+}
+
+function optionsOf(v: unknown): CompilerOption[] {
+  const options: CompilerOption[] = [];
+  for (const item of list(v)) {
+    if (!isObject(item)) continue;
+    const name = text(item.name);
+    const value = item.value;
+    if (name === null) continue;
+    if (typeof value === "boolean" || typeof value === "string") options.push({ name, value });
+    else if (Array.isArray(value) && value.every((x) => typeof x === "string")) options.push({ name, value: value as string[] });
+  }
+  return options;
+}
+
+function normalizeFieldStatus(v: unknown): FieldStatus | null {
+  return v === "equal" || v === "different" || v === "unavailable" ? v : null;
+}
+
+function normalizeVerdict(v: unknown): Verdict | null {
+  return v === "pass" || v === "fail" || v === "unknown" ? v : null;
+}
+
+function normalizeComparison(v: unknown): CaseComparison | null {
+  if (!isObject(v)) return null;
+  const fields = Object.fromEntries(comparisonFields.map((field) => [
+    field,
+    normalizeFieldStatus(obj(v.fields)[field]) ?? "unavailable",
+  ])) as DiagnosticComparison["fields"];
+  const matchFields = (value: unknown): DiagnosticMatch["fields"] => Object.fromEntries(
+    diagnosticFields.map((field) => [field, normalizeFieldStatus(obj(value)[field]) ?? "unavailable"]),
+  ) as DiagnosticMatch["fields"];
+  const matches: DiagnosticMatch[] = [];
+  for (const item of list(v.matches)) {
+    if (!isObject(item)) continue;
+    const expected = num(item.expected);
+    const actual = num(item.actual);
+    if (expected === null || actual === null) continue;
+    matches.push({ expected, actual, fields: matchFields(item.fields) });
+  }
+  const positionDifferences: DiagnosticMatch[] = [];
+  for (const item of list(v.positionDifferences)) {
+    if (!isObject(item)) continue;
+    const expected = num(item.expected);
+    const actual = num(item.actual);
+    if (expected !== null && actual !== null) {
+      positionDifferences.push({ expected, actual, fields: matchFields(item.fields) });
+    }
+  }
+  const indices = (value: unknown): number[] =>
+    list(value).filter((x): x is number => typeof x === "number" && Number.isSafeInteger(x));
+  const unresolved = obj(v.unresolved);
+  return {
+    compatibility: normalizeVerdict(v.compatibility) ?? "unknown",
+    strict: normalizeVerdict(v.strict) ?? "unknown",
+    fields,
+    matches,
+    positionDifferences,
+    missing: indices(v.missing),
+    extraErrors: indices(v.extraErrors),
+    extraWarnings: indices(v.extraWarnings),
+    unclassified: indices(v.unclassified),
+    unresolved: { expected: indices(unresolved.expected), actual: indices(unresolved.actual) },
+  };
 }
 
 /** metrics.totals.byTier 缺失时，用逐例 tier 反推分布（旧产物可能没有 tier，则记未知）。 */
@@ -332,6 +687,29 @@ function normalizeRatchet(meta: Record<string, unknown>): RatchetInfo | null {
   const ratchet = obj(meta.ratchet);
   const path = text(ratchet.path);
   if (path === null) return null;
+  const profile = ratchet.profile === "strict" ? "strict" : ratchet.profile === "compatibility" ? "compatibility" : null;
+  const regressionDetails: RatchetRegressionInfo[] = [];
+  for (const item of list(ratchet.regressionDetails)) {
+    if (!isObject(item)) continue;
+    const id = text(item.id);
+    const kind = item.kind === "compatibility" || item.kind === "strict" || item.kind === "field" ? item.kind : null;
+    if (id === null || kind === null) continue;
+    const was = text(item.was);
+    const now = text(item.now);
+    if (was === null || now === null) continue;
+    const explicitBlocking = typeof item.blocking === "boolean" ? item.blocking : null;
+    const field = text(item.field);
+    regressionDetails.push({
+      id,
+      kind,
+      field,
+      was,
+      now,
+      reasonKind: text(item.reasonKind),
+      reason: text(item.reason) ?? "",
+      blocking: explicitBlocking ?? (kind === "compatibility" || (profile === "strict" && kind === "strict")),
+    });
+  }
   return {
     path,
     impl: text(ratchet.impl),
@@ -339,6 +717,11 @@ function normalizeRatchet(meta: Record<string, unknown>): RatchetInfo | null {
     improvements: int(ratchet.improvements),
     initialized: ratchet.initialized === true,
     wrote: ratchet.wrote === true,
+    profile,
+    blockingRegressions: num(ratchet.blockingRegressions),
+    regressionDetails,
+    // 没有 profile/blockingRegressions/regressionDetails 的是旧 T0–T3 归档。
+    legacy: profile === null && num(ratchet.blockingRegressions) === null && !Array.isArray(ratchet.regressionDetails),
   };
 }
 
@@ -364,7 +747,19 @@ function normalizeGate(meta: Record<string, unknown>): GateReport | null {
       minCoverage: num(thresholds.minCoverage),
     },
     checks,
+    reported: [],
   };
+}
+
+function normalizeGateReported(meta: Record<string, unknown>): GateNoteInfo[] {
+  const notes: GateNoteInfo[] = [];
+  for (const item of list(obj(meta.gate).reported)) {
+    if (!isObject(item)) continue;
+    const name = text(item.name);
+    if (name === null) continue;
+    notes.push({ name, detail: text(item.detail) ?? "" });
+  }
+  return notes;
 }
 
 function normalizeSamples(metrics: Record<string, unknown>): ReportModel["samples"] {
@@ -375,6 +770,191 @@ function normalizeSamples(metrics: Record<string, unknown>): ReportModel["sample
     textDiff: strList(samples.textDiff),
     messageDiff: strList(samples.messageDiff),
     t3: strList(samples.t3),
+  };
+}
+
+function normalizeProvenance(meta: Record<string, unknown>, adapter: string | null, implName: string): RunProvenance {
+  const provenance = obj(meta.provenance);
+  const manifest = obj(meta.manifest);
+  const tools = obj(meta.tools);
+  const optionDef = obj(meta.options);
+  const reference = obj(provenance.reference ?? meta.reference);
+  const candidate = obj(provenance.candidate ?? meta.candidate);
+  const referenceTool = obj(tools.reference);
+  const candidateTool = obj(tools.candidate);
+  const referenceNative = obj(referenceTool.native);
+  const candidateNative = obj(candidateTool.native);
+  const strategy = text(meta.optionPolicy ?? meta.optionStrategy ?? optionDef.strategy ?? provenance.optionPolicy);
+  const optionPolicy = strategy === "defaults"
+    ? "默认设置（参考与候选各自使用默认值，未显式对齐）"
+    : strategy === "aligned"
+      ? "对齐设置（候选使用参考配置的基础参数）"
+      : strategy;
+  const manifestSha = text(manifest.sha256);
+  const selectedIdsSha = text(manifest.selectedIdsSha256 ?? meta.selectedIdsSha256 ?? provenance.selectedIdsSha256);
+  const parsedInputsSha = text(manifest.parsedInputsSha256 ?? meta.parsedInputsSha256 ?? provenance.parsedInputsSha256);
+  const officialInputsSha = text(manifest.officialInputsSha256 ?? meta.officialInputsSha256 ?? provenance.officialInputsSha256);
+  return {
+    manifest: text(manifest.path ?? meta.manifestPath ?? provenance.manifest),
+    manifestSha,
+    selectedIdsSha,
+    parsedInputsSha,
+    officialInputsSha,
+    optionStrategy:
+      strategy === "defaults" || strategy === "aligned"
+        ? strategy
+        : null,
+    optionPolicy,
+    runArgs: strList(meta.runArgs ?? provenance.runArgs),
+    adapter,
+    referenceBaseArgs: strList(optionDef.referenceBaseArgs),
+    sharedArgs: strList(optionDef.sharedArgs),
+    candidateArgs: strList(optionDef.candidateArgs),
+    candidateEnvArgs: strList(optionDef.candidateEnvArgs),
+    filters: [
+      ...strList(optionDef.onlyClasses).map((name) => `只含 ${name}`),
+      ...strList(optionDef.excludeClasses).map((name) => `排除 ${name}`),
+    ],
+    runner: text(tools.runner),
+    platform: text(tools.platform),
+    reference: {
+      version: text(reference.version ?? referenceTool.version ?? meta.tscVersion),
+      bin: text(reference.bin ?? referenceTool.path ?? meta.tscBin),
+      sha256: text(reference.sha256 ?? referenceTool.sha256),
+      nativeBin: text(reference.nativeBin ?? referenceNative.path),
+      nativeSha256: text(reference.nativeSha256 ?? referenceNative.sha256),
+      source: text(reference.source ?? meta.expectationSource),
+      corpus: text(reference.corpus ?? meta.corpus),
+      corpusRef: text(reference.corpusRef ?? meta.corpusRef),
+    },
+    candidate: {
+      name: text(candidate.name) ?? implName,
+      bin: text(candidate.bin ?? candidateTool.path ?? implBinFromAdapter(adapter)),
+      version: text(candidate.version ?? candidateTool.version),
+      sha256: text(candidate.sha256 ?? candidateTool.sha256),
+      nativeBin: text(candidate.nativeBin ?? candidateNative.path),
+      nativeSha256: text(candidate.nativeSha256 ?? candidateNative.sha256),
+      embeddedTypeScript: text(candidate.embeddedTypeScript ?? candidateTool.embeddedTypeScript),
+      source: text(candidate.source),
+    },
+  };
+}
+
+function normalizeAggregate(v: unknown): PerfAggregate | null {
+  if (!isObject(v)) return null;
+  const n = num(v.n);
+  const median = num(v.median);
+  const geomean = num(v.geomean);
+  const p25 = num(v.p25);
+  const p75 = num(v.p75);
+  if (n === null || median === null || geomean === null || p25 === null || p75 === null) return null;
+  return { n, median, geomean, p25, p75 };
+}
+
+function normalizePerf(metrics: Record<string, unknown>): PerfInfo | null {
+  const perf = metrics.perf;
+  if (!isObject(perf)) return null;
+  if (perf.enabled === false) return null;
+  const sample = obj(perf.sample);
+  const composition = obj(sample.composition);
+  const ratio = obj(perf.ratio);
+  const agreement = obj(ratio.agreementSubset);
+  const perCase = obj(ratio.perCase);
+  const impl = obj(perf.impl);
+  const reference = obj(perf.reference);
+  const metric = perf.metric === "check" || perf.metric === "wall-adjusted" ? perf.metric : null;
+  return {
+    metric,
+    seed: text(sample.seed),
+    requested: num(sample.requested),
+    size: num(sample.size),
+    referenceOk: num(sample.referenceOk),
+    referenceFailed: num(sample.referenceFailed),
+    composition: {
+      suite: countPairs(composition.suite),
+      lineBucket: countPairs(composition.lineBucket),
+      errorPresence: countPairs(composition.errorPresence),
+      order: countPairs(composition.order),
+    },
+    ratio: {
+      check: num(ratio.check),
+      wallAdjusted: num(ratio.wallAdjusted),
+      wall: num(ratio.wall),
+      agreementCases: num(agreement.cases),
+      agreementImplWallMs: num(agreement.implWallMs),
+      agreementReferenceWallMs: num(agreement.referenceWallMs),
+      agreementWall: num(agreement.wall),
+      agreementCheck: num(agreement.check),
+      agreementWallAdjusted: num(agreement.wallAdjusted),
+    },
+    perCase: { check: normalizeAggregate(perCase.check), wallAdjusted: normalizeAggregate(perCase.wallAdjusted) },
+    impl: { meanWallMs: num(impl.meanWallMs), emptyBaselineMs: num(impl.emptyBaselineMs), checkSumMs: num(impl.checkSumMs) },
+    reference: {
+      meanWallMs: num(reference.meanWallMs),
+      emptyBaselineMs: num(reference.emptyBaselineMs),
+      checkSumMs: num(reference.checkSumMs),
+      parseSumMs: num(reference.parseSumMs),
+      bindSumMs: num(reference.bindSumMs),
+    },
+    warnings: strList(perf.warnings),
+  };
+}
+
+function verdictCounts(known: boolean, pass: number, fail: number, unknown: number): VerdictCounts {
+  return known ? { pass, fail, unknown, known } : { pass: null, fail: null, unknown: null, known: false };
+}
+
+function fieldCounts(known: boolean, equal: number, different: number, unavailable: number): FieldCounts {
+  return known ? { equal, different, unavailable, known } : { equal: null, different: null, unavailable: null, known: false };
+}
+
+/** 读 metrics.comparison；缺该字段的旧报告不按旧 T3 冒充严格一致。 */
+function normalizeComparisonSummary(metrics: Record<string, unknown>, details: CaseDetail[]): ComparisonSummary {
+  const raw = obj(metrics.comparison);
+  const compatibility = obj(raw.compatibility);
+  const strict = obj(raw.strict);
+  const rawFields = obj(raw.fields);
+  let compatibilityKnown =
+    num(compatibility.pass) !== null && num(compatibility.fail) !== null && num(compatibility.unknown) !== null;
+  let strictKnown = num(strict.pass) !== null && num(strict.fail) !== null && num(strict.unknown) !== null;
+  const caseComparisons = details.flatMap((detail) => detail.comparison === null ? [] : [detail.comparison]);
+  const compatibilityFallback = { pass: 0, fail: 0, unknown: 0 };
+  const strictFallback = { pass: 0, fail: 0, unknown: 0 };
+  for (const comparison of caseComparisons) {
+    compatibilityFallback[comparison.compatibility]++;
+    strictFallback[comparison.strict]++;
+  }
+  if (!compatibilityKnown && caseComparisons.length > 0) compatibilityKnown = true;
+  if (!strictKnown && caseComparisons.length > 0) strictKnown = true;
+  const fields: Partial<Record<ComparisonField, FieldCounts>> = {};
+  for (const field of comparisonFields) {
+    const counts = obj(rawFields[field]);
+    let known = num(counts.equal) !== null && num(counts.different) !== null && num(counts.unavailable) !== null;
+    const fallback = { equal: 0, different: 0, unavailable: 0 };
+    for (const comparison of caseComparisons) fallback[comparison.fields[field]]++;
+    if (!known && caseComparisons.length > 0) known = true;
+    if (known) {
+      fields[field] = num(counts.equal) === null
+        ? fieldCounts(true, fallback.equal, fallback.different, fallback.unavailable)
+        : fieldCounts(true, int(counts.equal), int(counts.different), int(counts.unavailable));
+    }
+    else fields[field] = fieldCounts(false, 0, 0, 0);
+  }
+  return {
+    compatibility: verdictCounts(
+      compatibilityKnown,
+      num(compatibility.pass) === null ? compatibilityFallback.pass : int(compatibility.pass),
+      num(compatibility.fail) === null ? compatibilityFallback.fail : int(compatibility.fail),
+      num(compatibility.unknown) === null ? compatibilityFallback.unknown : int(compatibility.unknown),
+    ),
+    strict: verdictCounts(
+      strictKnown,
+      num(strict.pass) === null ? strictFallback.pass : int(strict.pass),
+      num(strict.fail) === null ? strictFallback.fail : int(strict.fail),
+      num(strict.unknown) === null ? strictFallback.unknown : int(strict.unknown),
+    ),
+    fields,
+    known: compatibilityKnown || strictKnown || caseComparisons.length > 0,
   };
 }
 
@@ -407,11 +987,15 @@ function normalizeModel(data: RunData, options: ReportOptions, previous: ReportM
     expectationSource: text(meta.expectationSource),
     corpus: text(meta.corpus),
     corpusRef: text(meta.corpusRef),
+    provenance: normalizeProvenance(meta, adapter, options.implName ?? neutralImplName(adapter)),
     t3Comparable: text(meta.expectationSource) === "official-baseline",
     selectedCases: num(meta.selectedCases),
     ratchet: normalizeRatchet(meta),
     gate: normalizeGate(meta),
+    gateReported: normalizeGateReported(meta),
     totals: normalizeTotals(metrics, details),
+    comparison: normalizeComparisonSummary(metrics, details),
+    perf: normalizePerf(metrics),
     skips: countPairs(metrics.skips),
     fpByCode: countPairs(obj(metrics.byCode).fp),
     missByCode: countPairs(obj(metrics.byCode).miss),
@@ -452,8 +1036,152 @@ function metricRow(
 
 const formatPctPoints = (n: number): string => `${(n * 100).toFixed(1)}pp`;
 
+function scopeOf(previous: ReportModel, current: ReportModel): DeltaScope {
+  const v2 = previous.comparison.known && current.comparison.known;
+  if (!v2) return { v2: false, comparable: false, reasons: [] };
+  const reasons: string[] = [];
+  const compare = (label: string, before: string | null, after: string | null): void => {
+    if (before === null && after === null) return;
+    if (before === null || after === null) {
+      reasons.push(`${label}缺少一侧记录，无法对照`);
+      return;
+    }
+    if (before !== after) reasons.push(`${label}不同`);
+  };
+  // 用例选择哈希优先：manifest 可能因注释或格式变化而内容哈希改变，但实际选中的
+  // 用例不变；两侧都没有选择哈希时才退回 manifest 文件哈希。
+  if (previous.provenance.selectedIdsSha !== null && current.provenance.selectedIdsSha !== null) {
+    compare("用例选择", previous.provenance.selectedIdsSha, current.provenance.selectedIdsSha);
+  } else if (previous.provenance.manifestSha !== null && current.provenance.manifestSha !== null) {
+    compare("用例列表", previous.provenance.manifestSha, current.provenance.manifestSha);
+  } else if (
+    (previous.provenance.selectedIdsSha !== null) !== (current.provenance.selectedIdsSha !== null) ||
+    (previous.provenance.manifestSha !== null) !== (current.provenance.manifestSha !== null)
+  ) {
+    reasons.push("用例选择缺少两侧哈希，无法对照");
+  }
+  compare("解析后的用例输入", previous.provenance.parsedInputsSha, current.provenance.parsedInputsSha);
+  compare("官方基线输入", previous.provenance.officialInputsSha, current.provenance.officialInputsSha);
+  compare("期望源", previous.expectationSource, current.expectationSource);
+  compare("选项策略", previous.provenance.optionStrategy, current.provenance.optionStrategy);
+  return { v2: true, comparable: reasons.length === 0, reasons };
+}
+
+function v2CountRow(
+  label: string,
+  before: number,
+  after: number,
+  scope: DeltaScope,
+  betterWhen: "up" | "down",
+): MetricDeltaRow {
+  if (!scope.comparable) {
+    return { label, before: String(before), after: String(after), change: "n/a（范围不可比）", trend: "na" };
+  }
+  return metricRow(label, before, after, String, betterWhen);
+}
+
+function fieldDeltaRows(previous: ReportModel, current: ReportModel, scope: DeltaScope): FieldDeltaRow[] {
+  const rows: FieldDeltaRow[] = [];
+  for (const field of FIELD_ORDER) {
+    const before = previous.comparison.fields[field];
+    const after = current.comparison.fields[field];
+    if (before === undefined || after === undefined || !before.known || !after.known) continue;
+    if (before.equal === null || before.different === null || before.unavailable === null) continue;
+    if (after.equal === null || after.different === null || after.unavailable === null) continue;
+    const beforeCounts = { equal: before.equal, different: before.different, unavailable: before.unavailable };
+    const afterCounts = { equal: after.equal, different: after.different, unavailable: after.unavailable };
+    const delta = after.equal - before.equal;
+    rows.push({
+      field,
+      before: beforeCounts,
+      after: afterCounts,
+      change:
+        `相同 ${before.equal} → ${after.equal}；不同 ${before.different} → ${after.different}；` +
+        `未提供 ${before.unavailable} → ${after.unavailable}`,
+      trend: !scope.comparable ? "na" : delta > 0 ? "better" : delta < 0 ? "worse" : "same",
+    });
+  }
+  return rows;
+}
+
+interface V2CaseMovement {
+  id: string;
+  regressions: string[];
+  improvements: string[];
+}
+
+function v2MovementOf(before: CaseDetail, after: CaseDetail | undefined): V2CaseMovement | null {
+  const id = before.id;
+  const regressions: string[] = [];
+  const improvements: string[] = [];
+  const previous = before.comparison;
+  if (before.status !== "ran" || previous === null) return null;
+
+  const verifiedParts = [
+    previous.compatibility === "pass" ? "兼容档原为通过" : null,
+    previous.strict === "pass" ? "严格一致档原为通过" : null,
+  ].filter((part): part is string => part !== null);
+  const verifiedFields = FIELD_ORDER
+    .filter((field) => previous.fields[field] === "equal")
+    .map((field) => `${FIELD_SHORT_LABELS[field]}原为相同`);
+  const verified = [...verifiedParts, ...verifiedFields];
+
+  // 跳过或移出范围只有在之前已验证通过/相同时才是回归；未验证的维度不补造历史证据。
+  if (after === undefined || after.status === "skip") {
+    if (verified.length === 0) return null;
+    const reason = after === undefined ? "已从本次范围移除" : `不再运行：${after.skipReason ?? "unknown"}`;
+    regressions.push(`${reason}（${verified.join("；")}）`);
+    return { id, regressions, improvements };
+  }
+  if (after.status !== "ran" || after.comparison === null) return null;
+  const current = after.comparison;
+
+  if (previous.compatibility === "pass" && current.compatibility !== "pass") {
+    regressions.push(`兼容档：通过 → ${VERDICT_LABELS[current.compatibility]}`);
+  } else if (previous.compatibility !== "pass" && current.compatibility === "pass") {
+    improvements.push(`兼容档：${VERDICT_LABELS[previous.compatibility]} → 通过`);
+  }
+  if (previous.strict === "pass" && current.strict !== "pass") {
+    regressions.push(`严格一致档：通过 → ${VERDICT_LABELS[current.strict]}`);
+  } else if (previous.strict !== "pass" && current.strict === "pass") {
+    improvements.push(`严格一致档：${VERDICT_LABELS[previous.strict]} → 通过`);
+  }
+  for (const field of FIELD_ORDER) {
+    const was = previous.fields[field];
+    const now = current.fields[field];
+    if (was === "equal" && now !== "equal") {
+      regressions.push(`字段 ${FIELD_SHORT_LABELS[field]}：相同 → ${FIELD_STATUS_LABELS[now]}`);
+    } else if (was !== "equal" && now === "equal") {
+      improvements.push(`字段 ${FIELD_SHORT_LABELS[field]}：${FIELD_STATUS_LABELS[was]} → 相同`);
+    }
+  }
+  if (regressions.length === 0 && improvements.length === 0) return null;
+  return { id, regressions, improvements };
+}
+
+function v2Movements(previous: ReportModel, current: ReportModel): { regressions: CaseMovement[]; improvements: CaseMovement[] } {
+  const previousById = new Map(previous.details.map((d) => [d.id, d]));
+  const currentById = new Map(current.details.map((d) => [d.id, d]));
+  const regressions: CaseMovement[] = [];
+  const improvements: CaseMovement[] = [];
+  for (const id of [...previousById.keys()].sort((a, b) => a.localeCompare(b))) {
+    const before = previousById.get(id)!;
+    const movement = v2MovementOf(before, currentById.get(id));
+    if (movement === null) continue;
+    // 同一用例的多个维度合并为一条，便于报告按用例审阅；有回归时以回归为主。
+    if (movement.regressions.length > 0) {
+      const detail = [...movement.regressions, ...movement.improvements.map((item) => `另有改善：${item}`)].join("；");
+      regressions.push({ id, kind: "regression", detail });
+    } else if (movement.improvements.length > 0) {
+      improvements.push({ id, kind: "improvement", detail: movement.improvements.join("；") });
+    }
+  }
+  return { regressions, improvements };
+}
+
 function computeDelta(previous: ReportModel, current: ReportModel): ReportDelta {
-  const rows: MetricDeltaRow[] = [
+  const scope = scopeOf(previous, current);
+  let rows: MetricDeltaRow[] = [
     metricRow("覆盖率", previous.totals.coverage, current.totals.coverage, (n) => (n * 100).toFixed(1) + "%", "up"),
     metricRow("完全通过用例", previous.totals.passCases, current.totals.passCases, String, "up"),
     metricRow("假阳性用例", previous.totals.fpCases, current.totals.fpCases, String, "down"),
@@ -462,61 +1190,96 @@ function computeDelta(previous: ReportModel, current: ReportModel): ReportDelta 
     metricRow("错锚条数", previous.totals.misanchorTotal, current.totals.misanchorTotal, String, "down"),
     metricRow("跳过用例", previous.totals.skipped, current.totals.skipped, String, "down"),
   ];
-  if (previous.totals.byTierKnown && current.totals.byTierKnown) {
+  if (!scope.v2 && previous.totals.byTierKnown && current.totals.byTierKnown) {
     rows.push(metricRow("T3 全文用例", previous.totals.byTier.full, current.totals.byTier.full, String, "up"));
   }
   // 覆盖率变化用百分点展示更直观，覆盖掉上面的百分比差值文本。
-  if (previous.totals.coverage !== null && current.totals.coverage !== null) {
+  if ((!scope.v2 || scope.comparable) && previous.totals.coverage !== null && current.totals.coverage !== null) {
     rows[0]!.change = formatPctPoints(current.totals.coverage - previous.totals.coverage);
   }
 
-  const regressions: CaseMovement[] = [];
-  const improvements: CaseMovement[] = [];
-  const previousById = new Map(previous.details.map((d) => [d.id, d]));
-  const currentById = new Map(current.details.map((d) => [d.id, d]));
-  const tierRank = (tier: Tier | null): number => (tier === null ? -1 : TIERS.indexOf(tier));
-  for (const id of [...previousById.keys()].sort((a, b) => a.localeCompare(b))) {
-    if (!currentById.has(id)) continue;
-    const before = previousById.get(id)!;
-    const after = currentById.get(id)!;
-    if (before.status === "ran" && after.status === "skip") {
-      regressions.push({ id, kind: "regression", detail: `不再运行：${after.skipReason ?? "unknown"}` });
-      continue;
+  let regressions: CaseMovement[] = [];
+  let improvements: CaseMovement[] = [];
+  let fields: FieldDeltaRow[] = [];
+  if (scope.v2) {
+    const compatibility = knownVerdicts(previous.comparison.compatibility);
+    const currentCompatibility = knownVerdicts(current.comparison.compatibility);
+    const strict = knownVerdicts(previous.comparison.strict);
+    const currentStrict = knownVerdicts(current.comparison.strict);
+    if (compatibility !== null && currentCompatibility !== null) {
+      rows.push(
+        v2CountRow("兼容档 · 通过", compatibility.pass, currentCompatibility.pass, scope, "up"),
+        v2CountRow("兼容档 · 失败", compatibility.fail, currentCompatibility.fail, scope, "down"),
+        v2CountRow("兼容档 · 无法确认", compatibility.unknown, currentCompatibility.unknown, scope, "down"),
+      );
     }
-    if (before.status === "skip" && after.status === "ran" && tierRank(after.tier) >= 0) {
-      improvements.push({ id, kind: "improvement", detail: `恢复运行（${TIER_LABELS[after.tier!]}）` });
-      continue;
+    if (strict !== null && currentStrict !== null) {
+      rows.push(
+        v2CountRow("严格一致档 · 通过", strict.pass, currentStrict.pass, scope, "up"),
+        v2CountRow("严格一致档 · 失败", strict.fail, currentStrict.fail, scope, "down"),
+        v2CountRow("严格一致档 · 无法确认", strict.unknown, currentStrict.unknown, scope, "down"),
+      );
     }
-    if (before.status !== "ran" || after.status !== "ran") continue;
-    const beforeRank = tierRank(before.tier);
-    const afterRank = tierRank(after.tier);
-    if (beforeRank >= 0 && afterRank >= 0 && afterRank < beforeRank) {
-      regressions.push({
-        id,
-        kind: "regression",
-        detail: `${TIER_LABELS[before.tier!]} → ${TIER_LABELS[after.tier!]}`,
-      });
-    } else if (beforeRank >= 0 && afterRank >= 0 && afterRank > beforeRank) {
-      improvements.push({
-        id,
-        kind: "improvement",
-        detail: `${TIER_LABELS[before.tier!]} → ${TIER_LABELS[after.tier!]}`,
-      });
-    } else if (after.fp > before.fp) {
-      regressions.push({
-        id,
-        kind: "regression",
-        detail: `假阳性 ${before.fp} → ${after.fp} 条`,
-      });
-    } else if (after.fp < before.fp) {
-      improvements.push({ id, kind: "improvement", detail: `假阳性 ${before.fp} → ${after.fp} 条` });
+    fields = fieldDeltaRows(previous, current, scope);
+    if (scope.comparable && previous.details.length > 0 && current.details.length > 0) {
+      const movements = v2Movements(previous, current);
+      regressions = movements.regressions;
+      improvements = movements.improvements;
     }
+  } else {
+    const previousById = new Map(previous.details.map((d) => [d.id, d]));
+    const currentById = new Map(current.details.map((d) => [d.id, d]));
+    const tierRank = (tier: Tier | null): number => (tier === null ? -1 : TIERS.indexOf(tier));
+    for (const id of [...previousById.keys()].sort((a, b) => a.localeCompare(b))) {
+      if (!currentById.has(id)) continue;
+      const before = previousById.get(id)!;
+      const after = currentById.get(id)!;
+      if (before.status === "ran" && after.status === "skip") {
+        regressions.push({ id, kind: "regression", detail: `不再运行：${after.skipReason ?? "unknown"}` });
+        continue;
+      }
+      if (before.status === "skip" && after.status === "ran" && tierRank(after.tier) >= 0) {
+        improvements.push({ id, kind: "improvement", detail: `恢复运行（${TIER_LABELS[after.tier!]}）` });
+        continue;
+      }
+      if (before.status !== "ran" || after.status !== "ran") continue;
+      const beforeRank = tierRank(before.tier);
+      const afterRank = tierRank(after.tier);
+      if (beforeRank >= 0 && afterRank >= 0 && afterRank < beforeRank) {
+        regressions.push({
+          id,
+          kind: "regression",
+          detail: `${TIER_LABELS[before.tier!]} → ${TIER_LABELS[after.tier!]}`,
+        });
+      } else if (beforeRank >= 0 && afterRank >= 0 && afterRank > beforeRank) {
+        improvements.push({
+          id,
+          kind: "improvement",
+          detail: `${TIER_LABELS[before.tier!]} → ${TIER_LABELS[after.tier!]}`,
+        });
+      } else if (after.fp > before.fp) {
+        regressions.push({
+          id,
+          kind: "regression",
+          detail: `假阳性 ${before.fp} → ${after.fp} 条`,
+        });
+      } else if (after.fp < before.fp) {
+        improvements.push({ id, kind: "improvement", detail: `假阳性 ${before.fp} → ${after.fp} 条` });
+      }
+    }
+  }
+  // 范围不可比时，所有汇总差异都不能被读成检查器改善/变差；数字保留供复现核对。
+  if (scope.v2 && !scope.comparable) {
+    rows = rows.map((row) => ({ ...row, change: "n/a（范围不可比）", trend: "na" as const }));
+    fields = fields.map((row) => ({ ...row, trend: "na" as const }));
   }
   return {
     previousLabel: previous.generatedAt ?? previous.title,
     rows,
     regressions,
     improvements,
+    scope,
+    fields,
   };
 }
 
@@ -533,7 +1296,50 @@ interface SummaryCard {
 
 function summaryCards(model: ReportModel): SummaryCard[] {
   const t = model.totals;
-  return [
+  const cards: SummaryCard[] = [];
+  if (hasNewComparison(model)) {
+    const compatibility = model.comparison.compatibility;
+    const strict = model.comparison.strict;
+    const compatibilityKnown = knownVerdicts(compatibility);
+    const strictKnown = knownVerdicts(strict);
+    const summaryNodes: SummaryCard[] = [];
+    cards.push(
+      {
+        label: "兼容档",
+        value: compatibilityKnown === null ? "未提供" : verdictCountText(compatibilityKnown),
+        note: "参考诊断是否都能在同一文件、同一起点找到对应",
+        tone: compatibilityKnown === null ? "neutral" : verdictToneOf(compatibilityKnown),
+      },
+      {
+        label: "严格一致档",
+        value: strictKnown === null ? "未提供" : verdictCountText(strictKnown),
+        note: "全部诊断信息和输出相同；不等同于旧 T3 全文",
+        tone: strictKnown === null ? "neutral" : verdictToneOf(strictKnown),
+      },
+    );
+    if (compatibilityKnown === null || strictKnown === null || compatibilityKnown.unknown > 0 || strictKnown.unknown > 0) {
+      summaryNodes.push({
+        label: "两档未确认",
+        value: compatibilityKnown === null || strictKnown === null
+          ? "未提供"
+          : `${compatibilityKnown.unknown} / ${strictKnown.unknown}`,
+        note: "兼容 / 严格一致中无法确认的用例数；不等同于失败；旧报告没有此项时不显示 0",
+        tone: "warn",
+      });
+    }
+    cards.push(...summaryNodes);
+    if (model.perf !== null) {
+      const ratio = model.perf.ratio.check ?? model.perf.ratio.wallAdjusted;
+      const metric = model.perf.ratio.check !== null ? "Check" : "实际耗时差分";
+      cards.push({
+        label: "性能比值",
+        value: ratio === null ? "不可用" : `${ratio.toFixed(3)}×`,
+        note: `${metric}；候选 / 参考，大于 1 表示候选更慢。仅供附录阅读`,
+        tone: "neutral",
+      });
+    }
+  }
+  cards.push(
     {
       label: "覆盖率",
       value: pct(t.coverage),
@@ -565,12 +1371,15 @@ function summaryCards(model: ReportModel): SummaryCard[] {
       tone: t.skipped === 0 ? "ok" : "neutral",
     },
     {
-      label: "完全通过",
+      label: hasNewComparison(model) ? "兼容通过（旧字段）" : "完全通过",
       value: `${t.passCases}/${t.ran} 例`,
-      note: "假阳性、漏报、错锚都为 0 的用例",
+      note: hasNewComparison(model)
+        ? "来自 metrics.totals.passCases（新口径为兼容档通过数）；严格一致看上一行"
+        : "假阳性、漏报、错锚都为 0 的用例",
       tone: t.ran > 0 && t.passCases === t.ran ? "ok" : "warn",
     },
-  ];
+  );
+  return cards;
 }
 
 function gateConclusion(model: ReportModel): string {
@@ -600,8 +1409,8 @@ function ladder(model: ReportModel): LadderRow[] {
   return TIER_ORDER.map((tier) => ({
     tier,
     label: TIER_LABELS[tier],
-    count: cumulative[tier],
-    ratio: t.ran === 0 ? null : cumulative[tier] / t.ran,
+    count: cumulative[tier as Exclude<Tier, "none">],
+    ratio: t.ran === 0 ? null : cumulative[tier as Exclude<Tier, "none">] / t.ran,
   }));
 }
 
@@ -621,6 +1430,14 @@ function failingCases(model: ReportModel): FailureItem[] {
   const items: FailureItem[] = [];
   for (const detail of model.details) {
     if (detail.status === "skip") continue;
+    if (detail.comparison !== null) {
+      const parts: string[] = [];
+      if (detail.comparison.compatibility !== "pass") parts.push(`兼容档 ${VERDICT_LABELS[detail.comparison.compatibility]}`);
+      if (detail.comparison.strict !== "pass") parts.push(`严格一致档 ${VERDICT_LABELS[detail.comparison.strict]}`);
+      if (parts.length === 0) continue;
+      items.push({ id: detail.id, detail: parts.join("；") });
+      continue;
+    }
     const bad =
       detail.fp > 0 ||
       detail.missed > 0 ||
@@ -652,6 +1469,9 @@ interface RegressionCallout {
   misanchorTotal: number;
   messageMismatch: number;
   hasT3Failures: boolean;
+  /** 新契约：所选保护档的阻断回归数；null = 未提供。 */
+  blockingRegressions: number | null;
+  comparisonFailed: number;
   /** false 表示产物里没有 details.json（只能用 metrics/samples 展示，不能逐例下钻）。 */
   detailsAvailable: boolean;
 }
@@ -670,6 +1490,10 @@ function calloutsOf(model: ReportModel): RegressionCallout {
     misanchorTotal: model.totals.misanchorTotal,
     messageMismatch: model.totals.messageMismatch,
     hasT3Failures: model.totals.t3Failures.length > 0,
+    blockingRegressions: model.ratchet?.blockingRegressions ?? null,
+    comparisonFailed: [model.comparison.compatibility.fail, model.comparison.strict.fail]
+      .filter((n): n is number => n !== null)
+      .reduce((sum, n) => sum + n, 0),
     detailsAvailable: model.details.length > 0,
   };
 }
@@ -689,7 +1513,9 @@ function hasFailures(callouts: RegressionCallout): boolean {
     callouts.fpSamples.length > 0 ||
     callouts.missSamples.length > 0 ||
     callouts.t3Samples.length > 0 ||
-    callouts.hasT3Failures
+    callouts.hasT3Failures ||
+    callouts.comparisonFailed > 0 ||
+    (callouts.blockingRegressions !== null && callouts.blockingRegressions > 0)
   );
 }
 
@@ -721,18 +1547,78 @@ function renderHeaderMd(model: ReportModel): string[] {
   lines.push(`| 期望源 | ${route.join(" · ")} |`);
   const corpusPart = model.corpus === null ? "n/a" : mdCode(model.corpus);
   lines.push(`| 语料 | ${corpusPart}${model.corpusRef !== null ? `（pin ${mdCode(model.corpusRef)}）` : ""} |`);
+  lines.push(`| 用例列表 | ${model.provenance.manifest === null ? "未提供" : mdCode(model.provenance.manifest)} |`);
+  if (model.provenance.manifestSha !== null) {
+    lines.push(`| 用例列表 SHA-256 | ${mdCode(model.provenance.manifestSha)} |`);
+  }
+  lines.push(`| 选项策略 | ${model.provenance.optionPolicy === null ? "未提供" : mdText(model.provenance.optionPolicy)} |`);
+  lines.push(
+    `| 原始运行参数 | ${model.provenance.runArgs.length === 0 ? "未提供" : model.provenance.runArgs.map(mdCode).join(" ")} |`,
+  );
+  const optionRows: [string, string[]][] = [
+    ["参考基础参数", model.provenance.referenceBaseArgs],
+    ["共享覆盖参数", model.provenance.sharedArgs],
+    ["候选基础参数", model.provenance.candidateArgs],
+    ["候选环境参数", model.provenance.candidateEnvArgs],
+    ["用例过滤", model.provenance.filters],
+  ];
+  for (const [label, values] of optionRows) {
+    if (values.length > 0) lines.push(`| ${label} | ${values.map(mdCode).join(" ")} |`);
+  }
+  const referenceBits: string[] = [];
+  if (model.provenance.reference.version !== null) referenceBits.push(`tsc ${mdCode(model.provenance.reference.version)}`);
+  if (model.provenance.reference.bin !== null) referenceBits.push(`bin ${mdCode(model.provenance.reference.bin)}`);
+  if (model.provenance.reference.sha256 !== null) referenceBits.push(`sha256 ${mdCode(model.provenance.reference.sha256.slice(0, 12))}`);
+  if (model.provenance.reference.nativeBin !== null) referenceBits.push(`原生 ${mdCode(model.provenance.reference.nativeBin)}`);
+  if (model.provenance.reference.nativeSha256 !== null) {
+    referenceBits.push(`原生 sha256 ${mdCode(model.provenance.reference.nativeSha256.slice(0, 12))}`);
+  }
+  if (model.provenance.reference.source !== null) referenceBits.push(`源 ${mdCode(model.provenance.reference.source)}`);
+  if (model.provenance.reference.corpus !== null) referenceBits.push(`语料 ${mdCode(model.provenance.reference.corpus)}`);
+  if (model.provenance.reference.corpusRef !== null) referenceBits.push(`pin ${mdCode(model.provenance.reference.corpusRef)}`);
+  lines.push(`| 参考来源 | ${referenceBits.length === 0 ? "未提供" : referenceBits.join(" · ")} |`);
+  const candidateBits: string[] = [];
+  if (model.provenance.candidate.name !== null) candidateBits.push(`名称 ${mdCell(model.provenance.candidate.name)}`);
+  if (model.provenance.candidate.version !== null) candidateBits.push(`版本 ${mdCode(model.provenance.candidate.version)}`);
+  if (model.provenance.candidate.bin !== null) candidateBits.push(`bin ${mdCode(model.provenance.candidate.bin)}`);
+  if (model.provenance.candidate.sha256 !== null) candidateBits.push(`sha256 ${mdCode(model.provenance.candidate.sha256.slice(0, 12))}`);
+  if (model.provenance.candidate.nativeBin !== null) candidateBits.push(`原生 ${mdCode(model.provenance.candidate.nativeBin)}`);
+  if (model.provenance.candidate.nativeSha256 !== null) {
+    candidateBits.push(`原生 sha256 ${mdCode(model.provenance.candidate.nativeSha256.slice(0, 12))}`);
+  }
+  if (model.provenance.candidate.embeddedTypeScript !== null) {
+    candidateBits.push(`内置 TypeScript ${mdCode(model.provenance.candidate.embeddedTypeScript)}（Bun 内置版本，不是参考 tsc 版本）`);
+  }
+  if (model.provenance.candidate.source !== null) candidateBits.push(`源 ${mdCode(model.provenance.candidate.source)}`);
+  lines.push(`| 候选来源 | ${candidateBits.length === 0 ? "未提供" : candidateBits.join(" · ")} |`);
+  if (model.provenance.runner !== null || model.provenance.platform !== null) {
+    lines.push(
+      `| 运行环境 | ${[model.provenance.runner, model.provenance.platform].filter((x): x is string => x !== null).map(mdCode).join(" · ")} |`,
+    );
+  }
   if (model.ratchet !== null) {
     const state = model.ratchet.initialized
       ? "首次登记"
-      : `回落 ${model.ratchet.regressions} 例、改善 ${model.ratchet.improvements} 例`;
+      : `回归 ${model.ratchet.regressions} 项、改善 ${model.ratchet.improvements} 项`;
+    const profile = model.ratchet.profile === "strict" ? "严格一致" : model.ratchet.profile === "compatibility" ? "兼容" : "未提供";
+    const blocking = model.ratchet.blockingRegressions === null ? "未提供" : `${model.ratchet.blockingRegressions} 项`;
+    lines.push(`| 回归保护档 | ${profile}（阻断 ${blocking}） |`);
+    if (model.ratchet.legacy) {
+      lines.push("| 回归记录格式 | 旧 T0–T3：没有 strict / 逐字段回归证据 |");
+    }
     lines.push(`| ratchet | ${mdCode(model.ratchet.path)}：${state} |`);
+  }
+  if (model.provenance.adapter !== null) {
+    lines.push(`| 适配器 | ${mdCode(model.provenance.adapter)} |`);
   }
   if (model.selectedCases !== null) {
     lines.push(
-      `| 用例 | 选中 ${model.selectedCases} / 本次 ${model.totals.cases}：跑 ${model.totals.ran}，跳过 ${model.totals.skipped} |`,
+      `| 用例 | 选中 ${model.selectedCases}（源用例）/ 实际 ${model.totals.cases}（展开后）：跑 ${model.totals.ran}，跳过 ${model.totals.skipped}`,
     );
   } else {
-    lines.push(`| 用例 | 本次 ${model.totals.cases}：跑 ${model.totals.ran}，跳过 ${model.totals.skipped} |`);
+    lines.push(
+      `| 用例 | 实际 ${model.totals.cases}（展开后）：跑 ${model.totals.ran}，跳过 ${model.totals.skipped}`,
+    );
   }
   return lines;
 }
@@ -750,6 +1636,12 @@ function renderGateMd(model: ReportModel): string[] {
   for (const check of model.gate.checks) {
     lines.push(`| ${mdCell(check.name)} | ${check.ok ? "通过" : "**失败**"} | ${mdCell(check.detail)} |`);
   }
+  if (model.gateReported.length > 0) {
+    lines.push("");
+    lines.push(`**仅报告（不参与门禁）**`);
+    lines.push("");
+    for (const note of model.gateReported) lines.push(`- ${mdText(note.name)}：${mdText(note.detail)}`);
+  }
   return lines;
 }
 
@@ -761,11 +1653,29 @@ function renderDeltaMd(model: ReportModel): string[] {
     return lines;
   }
   lines.push(`对比基准：${mdCell(delta.previousLabel)}。`);
+  const scopeWarning = scopeWarningLines(delta);
+  if (scopeWarning.length > 0) {
+    lines.push("");
+    lines.push(...scopeWarning);
+  }
   lines.push("");
   lines.push(`| 指标 | 上次 | 本次 | 变化 |`);
   lines.push(`| --- | --- | --- | --- |`);
   for (const row of delta.rows) {
     lines.push(`| ${mdCell(row.label)} | ${mdCell(row.before)} | ${mdCell(row.after)} | ${mdCell(row.change)} |`);
+  }
+  if (delta.fields.length > 0) {
+    lines.push("");
+    lines.push("**逐字段分布变化**");
+    lines.push("");
+    lines.push("| 字段 | 上次（相同 / 不同 / 未提供） | 本次（相同 / 不同 / 未提供） | 变化 |");
+    lines.push("| --- | --- | --- | --- |");
+    for (const row of delta.fields) {
+      lines.push(
+        `| ${FIELD_LABELS[row.field]} | ${row.before.equal} / ${row.before.different} / ${row.before.unavailable} | ` +
+          `${row.after.equal} / ${row.after.different} / ${row.after.unavailable} | ${mdCell(row.change)} |`,
+      );
+    }
   }
   const movementRows: string[] = [];
   for (const movement of delta.regressions.slice(0, 20)) {
@@ -804,7 +1714,12 @@ function renderFailuresMd(model: ReportModel, callouts: RegressionCallout): stri
     lines.push("");
   }
   if (callouts.ratchetRegressions > 0) {
-    lines.push(`**ratchet 回落 ${callouts.ratchetRegressions} 例**：清单 ${mdCode(model.ratchet!.path)} 出现档位下降，详见 stdout 与门禁明细。`);
+    const blocking = model.ratchet?.blockingRegressions;
+    lines.push(
+      `**ratchet 回归 ${callouts.ratchetRegressions} 项**` +
+        (blocking === null || blocking === undefined ? "（旧记录未提供阻断信息）" : `（阻断 ${blocking} 项）`) +
+        `：清单 ${mdCode(model.ratchet!.path)}，逐项原因见“两档比较”下的回归记录。`,
+    );
     lines.push("");
   }
   if (callouts.deltaRegressions.length > 0) {
@@ -857,11 +1772,26 @@ function renderFailuresMd(model: ReportModel, callouts: RegressionCallout): stri
     lines.push(`**首行文案不同 ${callouts.messageMismatch} 条**：位置命中、文案不同（T1 与 T2 的差）。`);
     lines.push("");
   }
+  if (hasNewComparison(model)) {
+    const gateHasBlocking = callouts.gateFailed.length > 0 ||
+      (callouts.blockingRegressions !== null && callouts.blockingRegressions > 0);
+    const blockedBy = [
+      gateHasBlocking ? "门禁检查 / 回归记录" : null,
+      callouts.deltaRegressions.length > 0 ? "与上次相比的回归" : null,
+    ].filter((x): x is string => x !== null);
+    lines.push(
+      blockedBy.length === 0
+        ? "**门槛结论**：本次没有阻断项；兼容档与严格一致档的未通过项、非阻断回归仅供阅读，不代表门禁失败。"
+        : `**门槛结论**：${blockedBy.join("、")}阻断。两档比较的失败项、字段回归与门禁是否失败分开判断；请对照上方门禁结论。`,
+    );
+  }
   return lines;
 }
 
 function renderTierMd(model: ReportModel): string[] {
   const lines: string[] = [];
+  lines.push("> 下面是旧 metrics.totals 的 T0–T3 阶梯，仅作过渡参考；T3 全文不等于严格一致档。");
+  lines.push("");
   if (!model.totals.byTierKnown) {
     lines.push("本次运行的产物里没有 T0–T3 分档数据（旧版 metrics），阶梯不可用。");
     return lines;
@@ -893,6 +1823,374 @@ function renderCodesMd(title: string, pairs: [string, number][], cap = 15): stri
   return [`| ${title} | 条数 |`, `| --- | --- |`, ...shown.map(([code, n]) => `| ${mdCode(code)} | ${n} |`)];
 }
 
+function verdictTone(verdict: Verdict): string {
+  return verdict === "pass" ? "ok" : verdict === "fail" ? "bad" : "unknown";
+}
+
+function comparisonCountText(counts: VerdictCounts): string {
+  const known = knownVerdicts(counts);
+  return known === null ? "未提供" : verdictCountText(known);
+}
+
+function comparisonLine(model: ReportModel): string {
+  const summary = model.comparison;
+  return (
+    `> 兼容档 ${comparisonCountText(summary.compatibility)}｜严格一致档 ${comparisonCountText(summary.strict)}` +
+    "（严格一致不是旧 T3 全文比较）"
+  );
+}
+
+/** 逐案比较中所有「未提供」/「不同」的字段，用于展开差异。 */
+function differingFields(comparison: CaseComparison): [ComparisonField, FieldStatus][] {
+  const fields: [ComparisonField, FieldStatus][] = [];
+  for (const field of comparisonFields) {
+    const status = comparison.fields[field];
+    if (status === "different" || status === "unavailable") fields.push([field, status]);
+  }
+  return fields;
+}
+
+function differingMatchFields(match: DiagnosticMatch): [ComparisonField, FieldStatus][] {
+  const fields: [ComparisonField, FieldStatus][] = [];
+  for (const field of diagnosticFields) {
+    const status = match.fields[field];
+    if (status === "different" || status === "unavailable") fields.push([field, status]);
+  }
+  return fields;
+}
+
+function fieldStatusText(status: FieldStatus): string {
+  return FIELD_STATUS_LABELS[status];
+}
+
+function comparisonStatusLine(comparison: CaseComparison): string {
+  return [
+    `兼容档：${VERDICT_LABELS[comparison.compatibility]}`,
+    `严格一致档：${VERDICT_LABELS[comparison.strict]}`,
+    `位置差异：${comparison.positionDifferences.length} 对`,
+  ].join("｜");
+}
+
+const RATCHET_KIND_LABELS: Record<RatchetRegressionInfo["kind"], string> = {
+  compatibility: "兼容",
+  strict: "严格一致",
+  field: "字段",
+};
+
+function renderRatchetMd(ratchet: RatchetInfo): string[] {
+  const lines: string[] = [];
+  const heading = ratchet.profile === "strict"
+    ? "严格一致保护档"
+    : ratchet.profile === "compatibility"
+      ? "兼容保护档"
+      : ratchet.legacy ? "旧 T0–T3 归档" : "保护档未提供";
+  lines.push(
+    `#### 回归记录（${heading}）`,
+  );
+  lines.push("");
+  if (ratchet.legacy) {
+    lines.push(
+      "> 这是旧版 T0–T3 清单：只保留旧分级计数，没有 profile / regressionDetails / blocking 信息；不能用它推断严格一致回归。",
+    );
+    return lines;
+  }
+  lines.push(
+    `- 回归 ${ratchet.regressions} 项；阻断 ${ratchet.blockingRegressions ?? "未提供"} 项；改善 ${ratchet.improvements} 项。`,
+  );
+  if (ratchet.regressionDetails.length === 0) {
+    lines.push("- 逐项回归：无");
+    return lines;
+  }
+  lines.push("");
+  lines.push(`| 用例 | 维度 | 字段 | 变化 | 原因类型 | 原因 | 门禁 |`);
+  lines.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+  for (const item of ratchet.regressionDetails) {
+    lines.push(
+      `| ${mdCode(item.id)} | ${RATCHET_KIND_LABELS[item.kind]} | ${item.field === null ? "—" : mdCode(item.field)} | ` +
+        `${mdCell(item.was)} → ${mdCell(item.now)} | ${item.reasonKind === null ? "未提供" : mdCode(item.reasonKind)} | ` +
+        `${mdCell(item.reason)} | ${item.blocking ? "**阻断**" : "仅报告"} |`,
+    );
+  }
+  return lines;
+}
+
+function exitCodeText(expected: number | null, actual: number | null): string {
+  const left = expected === null ? "未提供" : `参考 ${expected}`;
+  const right = actual === null ? "未提供" : `候选 ${actual}`;
+  if (expected !== null && actual !== null && expected !== actual) return `${left}｜${right}（不一致）`;
+  return `${left}｜${right}`;
+}
+
+function outputText(value: string | null): string {
+  return value === null ? "（未提供）" : value.length === 0 ? "（明确为空）" : value;
+}
+
+function diagnosticSummary(diagnostic: Diagnostic, index: number): string {
+  const location = `${diagnostic.file}:${diagnostic.line + 1}:${diagnostic.col + 1}`;
+  const message = diagnostic.message === undefined ? "" : `：${diagnostic.message}`;
+  const related = diagnostic.related === undefined || diagnostic.related.length === 0
+    ? ""
+    : `（related ${diagnostic.related.length} 条）`;
+  return `[${index}] ${location} ${diagnostic.severity} TS${diagnostic.code}${message}${related}`;
+}
+
+function diagnosticsAt(diagnostics: Diagnostic[] | null, indices: number[], cap = 12): string[] {
+  if (diagnostics === null) return [];
+  const shown: string[] = [];
+  for (const index of indices.slice(0, cap)) {
+    const diagnostic = diagnostics[index];
+    if (diagnostic !== undefined) shown.push(diagnosticSummary(diagnostic, index));
+  }
+  if (indices.length > cap) shown.push(`…… 共 ${indices.length} 条`);
+  return shown;
+}
+
+function matchValueSummary(expected: Diagnostic[], actual: Diagnostic[], pair: DiagnosticMatch): string {
+  const left = expected[pair.expected];
+  const right = actual[pair.actual];
+  if (left === undefined || right === undefined) return `expected[${pair.expected}] ↔ actual[${pair.actual}]`;
+  const code = `TS${left.code} → TS${right.code}`;
+  const severity = `${left.severity} → ${right.severity}`;
+  const message = `${left.message ?? "（无文案）"} → ${right.message ?? "（无文案）"}`;
+  return `expected[${pair.expected}] ↔ actual[${pair.actual}]；${code}；${severity}；${message}`;
+}
+
+const ratioText = (value: number | null, digits = 3): string => (value === null ? "不可用" : value.toFixed(digits));
+
+function aggregateText(aggregate: PerfAggregate | null): string {
+  if (aggregate === null) return "未提供";
+  return (
+    `${aggregate.n} 例；中位 ${aggregate.median.toFixed(3)}，几何均值 ${aggregate.geomean.toFixed(3)}，` +
+    `P25 ${aggregate.p25.toFixed(3)}，P75 ${aggregate.p75.toFixed(3)}`
+  );
+}
+
+const formatMs = (value: number | null): string => (value === null ? "未提供" : value.toFixed(1));
+
+function compositionText(pairs: [string, number][]): string {
+  return pairs.length === 0 ? "未提供" : pairs.map(([name, count]) => `${name} ${count}`).join("，");
+}
+
+function perfMetricText(metric: PerfInfo["metric"]): string {
+  return metric === "check"
+    ? "Check 相位累加（两侧都自报）"
+    : metric === "wall-adjusted"
+      ? "实际耗时扣空程序基线（含 parse/bind/渲染）"
+      : "未提供";
+}
+
+function renderPerfMd(model: ReportModel): string[] {
+  const perf = model.perf;
+  if (perf === null) return ["本次运行没有性能附录（未传 `--perf-ratio`，或产物没有 `metrics.perf`）。"];
+  const lines: string[] = [];
+  lines.push(`口径：${perfMetricText(perf.metric)}；比值为「候选 / 参考 tsc」，小于 1 表示候选更快。`);
+  lines.push("");
+  lines.push(`| 项 | 值 |`);
+  lines.push(`| --- | --- |`);
+  lines.push(`| 样本 | 请求 ${perf.requested ?? "未提供"}，有效 ${perf.size ?? "未提供"}（参考成功 ${perf.referenceOk ?? "未提供"}，失败 ${perf.referenceFailed ?? "未提供"}） |`);
+  lines.push(`| 抽样 seed | ${perf.seed === null ? "未提供" : mdCode(perf.seed)} |`);
+  lines.push(`| 总比值（Check） | ${ratioText(perf.ratio.check)} |`);
+  lines.push(`| 总比值（实际耗时差分） | ${ratioText(perf.ratio.wallAdjusted)} |`);
+  lines.push(`| 总比值（原始实际耗时） | ${ratioText(perf.ratio.wall)} |`);
+  lines.push(
+    `| 兼容通过子集 | ${perf.ratio.agreementCases ?? "未提供"} 例；原始实际耗时 ${ratioText(perf.ratio.agreementWall)}（${formatMs(perf.ratio.agreementImplWallMs)} / ${formatMs(perf.ratio.agreementReferenceWallMs)} ms）；` +
+      `Check ${ratioText(perf.ratio.agreementCheck)}；实际耗时差分 ${ratioText(perf.ratio.agreementWallAdjusted)} |`,
+  );
+  lines.push(`| 逐案 Check | ${aggregateText(perf.perCase.check)} |`);
+  lines.push(`| 逐案实际耗时差分 | ${aggregateText(perf.perCase.wallAdjusted)} |`);
+  lines.push("");
+  lines.push("样本构成：");
+  lines.push("");
+  lines.push(`- suite：${compositionText(perf.composition.suite)}`);
+  lines.push(`- 行数档：${compositionText(perf.composition.lineBucket)}`);
+  lines.push(`- 有无期望错误：${compositionText(perf.composition.errorPresence)}`);
+  lines.push(`- 先后顺序对冲：${compositionText(perf.composition.order)}`);
+  lines.push("");
+  lines.push(
+    `累计时间：候选实际耗时均值 ${perf.impl.meanWallMs === null ? "未提供" : `${perf.impl.meanWallMs.toFixed(1)}ms`}，` +
+      `空程序基线 ${perf.impl.emptyBaselineMs === null ? "未提供" : `${perf.impl.emptyBaselineMs.toFixed(1)}ms`}，` +
+      `Check 合计 ${perf.impl.checkSumMs === null ? "未提供" : `${perf.impl.checkSumMs.toFixed(1)}ms`}；` +
+      `参考实际耗时均值 ${perf.reference.meanWallMs === null ? "未提供" : `${perf.reference.meanWallMs.toFixed(1)}ms`}，` +
+      `Check 合计 ${perf.reference.checkSumMs === null ? "未提供" : `${perf.reference.checkSumMs.toFixed(1)}ms`}。`,
+  );
+  if (perf.warnings.length > 0) {
+    lines.push("");
+    lines.push("**性能附录告警**");
+    lines.push("");
+    for (const warning of perf.warnings) lines.push(`- ${mdText(warning)}`);
+  }
+  return lines;
+}
+
+function renderComparisonMd(model: ReportModel): string[] {
+  const lines: string[] = [];
+  const summary = model.comparison;
+  if (!summary.known) {
+    lines.push("本次产物没有两档比较结果：旧报告不提供 `metrics.comparison`，逐案也没有 `comparison`。");
+    lines.push("");
+    lines.push("旧版 T0–T3 阶梯仍保留在上一节供对照，但 **T3 全文不能当作严格一致档**。compatibility / strict 的各状态在旧数据里均为「未提供」。");
+    return lines;
+  }
+  lines.push("| 档位 | 通过 | 失败 | 无法确认 |");
+  lines.push("| --- | ---: | ---: | ---: |");
+  for (const [label, counts] of [
+    ["兼容档", summary.compatibility],
+    ["严格一致档", summary.strict],
+  ] as const) {
+    lines.push(
+      counts.known
+        ? `| ${label} | ${counts.pass} | ${counts.fail} | ${counts.unknown} |`
+        : `| ${label} | 未提供 | 未提供 | 未提供 |`,
+    );
+  }
+  const fieldRows = comparisonFields
+    .map((field) => [field, summary.fields[field]] as const)
+    .filter(([, counts]) => counts !== undefined);
+  if (fieldRows.length > 0) {
+    lines.push("");
+    lines.push("| 字段 | 相同 | 不同 | 未提供 |");
+    lines.push("| --- | ---: | ---: | ---: |");
+    for (const [field, counts] of fieldRows) {
+      if (counts === undefined) continue;
+      lines.push(
+        counts.known
+          ? `| ${FIELD_LABELS[field]} | ${counts.equal} | ${counts.different} | ${counts.unavailable} |`
+          : `| ${FIELD_LABELS[field]} | 未提供 | 未提供 | 未提供 |`,
+      );
+    }
+  }
+  if (model.ratchet !== null) {
+    lines.push("");
+    lines.push(
+      "`meta.ratchet` 由回归模块生成；这里逐项展示它给出的回归，旧 T3 不会被当作严格一致回归。",
+    );
+  }
+  if (model.ratchet !== null) {
+    lines.push("");
+    lines.push(...renderRatchetMd(model.ratchet));
+    const otherRegressions = model.ratchet.regressionDetails.filter((item) => !item.blocking);
+    if (otherRegressions.length > 0) {
+      lines.push("");
+      lines.push("非阻断回归与字段回归只在报告里列出，不改变门禁结论。");
+    }
+    if (model.ratchet.profile === null && !model.ratchet.legacy) {
+      lines.push("");
+      lines.push("> 本次没有提供保护档；表中门禁列按各回归自身的 blocking 标记展示，兼容/严格档的失败数不等于阻断数。");
+    }
+  }
+  const cases = model.details.filter((detail) => detail.status === "ran");
+  if (cases.length === 0) {
+    lines.push("");
+    lines.push("没有可展开的逐案比较（旧 details 或全部跳过）。");
+    return lines;
+  }
+  lines.push("");
+  lines.push("### 逐案比较");
+  lines.push("");
+  for (const detail of cases) {
+    const comparison = detail.comparison;
+    lines.push(`<details>`);
+    lines.push(
+      `<summary>${mdCode(detail.id)}${comparison === null ? "：旧版结果（未提供两档比较）" : `：${mdText(comparisonStatusLine(comparison))}`}</summary>`,
+    );
+    lines.push("");
+    lines.push(`- 退出码：${mdText(exitCodeText(detail.expectedExitCode, detail.actualExitCode))}`);
+    if (comparison === null) {
+      lines.push("- 比较详情：未提供（旧版 details）");
+    } else {
+      const statuses = differingFields(comparison);
+      if (statuses.length === 0) lines.push("- 字段差异：无（所有已比较字段相同）");
+      else {
+        lines.push("- 字段差异：");
+        for (const [field, status] of statuses) {
+          lines.push(`  - ${FIELD_LABELS[field]}：${fieldStatusText(status)}`);
+        }
+      }
+      const counts = [
+        `${comparison.missing.length} 条参考诊断未对应`,
+        `${comparison.extraErrors.length} 条新增 error`,
+        `${comparison.extraWarnings.length} 条新增 warning`,
+      ];
+      if (comparison.unclassified.length > 0) counts.push(`${comparison.unclassified.length} 条未分类诊断`);
+      if (comparison.unresolved.expected.length > 0 || comparison.unresolved.actual.length > 0) {
+        counts.push(
+          `${comparison.unresolved.expected.length} 条参考 / ${comparison.unresolved.actual.length} 条候选未能唯一对应（已知字段不足）`,
+        );
+      }
+      counts.push(`${comparison.positionDifferences.length} 对仅位置不同`);
+      lines.push(`- 诊断对应：${counts.join("；")}`);
+      if (comparison.positionDifferences.length > 0) {
+        const details = comparison.positionDifferences.map((pair) => matchValueSummary(
+          detail.expectedDiagnostics ?? [],
+          detail.actualDiagnostics ?? [],
+          pair,
+        ));
+        lines.push(
+          `  - 仅位置不同（仍判不兼容）：${details.map(mdText).join("；")}`,
+        );
+      }
+      const matchDifferences = comparison.matches
+        .map((match) => ({ match, changed: differingMatchFields(match) }))
+        .filter(({ changed }) => changed.length > 0);
+      if (matchDifferences.length > 0) {
+        lines.push("- 已配对诊断的差异：");
+        for (const { match, changed } of matchDifferences.slice(0, 12)) {
+          const detailText = changed.map(([field, status]) => `${FIELD_LABELS[field]} ${fieldStatusText(status)}`).join("、");
+          lines.push(
+            `  - ${mdText(matchValueSummary(detail.expectedDiagnostics ?? [], detail.actualDiagnostics ?? [], match))}：${detailText}`,
+          );
+        }
+        if (matchDifferences.length > 12) lines.push(`  - …… 共 ${matchDifferences.length} 对`);
+      }
+      if (detail.expectedDiagnostics !== null && detail.actualDiagnostics !== null) {
+        const expectedText = detail.expectedOutput ?? "未提供";
+        const actualText = detail.actualOutput ?? "未提供";
+        lines.push(
+          `- 诊断原文：参考 ${detail.expectedDiagnostics.length} 条，候选 ${detail.actualDiagnostics.length} 条；` +
+            `输出 ${expectedText === "未提供" ? "未提供" : "已提供"} / ${actualText === "未提供" ? "未提供" : "已提供"}`,
+        );
+      }
+      const missingLines = diagnosticsAt(detail.expectedDiagnostics, comparison.missing);
+      const extraLines = diagnosticsAt(detail.actualDiagnostics, comparison.extraErrors);
+      const warningLines = diagnosticsAt(detail.actualDiagnostics, comparison.extraWarnings);
+      if (missingLines.length > 0) {
+        lines.push("- 未对应的参考诊断：");
+        for (const line of missingLines) lines.push(`  - ${mdCode(line)}`);
+      }
+      if (extraLines.length > 0) {
+        lines.push("- 新增 error：");
+        for (const line of extraLines) lines.push(`  - ${mdCode(line)}`);
+      }
+      if (warningLines.length > 0) {
+        lines.push("- 附加 warning：");
+        for (const line of warningLines) lines.push(`  - ${mdCode(line)}`);
+      }
+      if (detail.expectedOutput !== null || detail.actualOutput !== null) {
+        lines.push("");
+        lines.push(`- 完整输出（参考）：`);
+        lines.push("");
+        lines.push(detail.expectedOutput === null || detail.expectedOutput.length === 0 ? mdText(outputText(detail.expectedOutput)) : mdCodeBlock(detail.expectedOutput));
+        lines.push("");
+        lines.push(`- 完整输出（候选）：`);
+        lines.push("");
+        lines.push(detail.actualOutput === null || detail.actualOutput.length === 0 ? mdText(outputText(detail.actualOutput)) : mdCodeBlock(detail.actualOutput));
+      }
+    }
+    lines.push(
+      `- 选项：参考 ${detail.expectedArgs === null ? "未提供" : mdCode(detail.expectedArgs.join(" ") || "（无）")}；` +
+        `候选 ${detail.actualArgs === null ? "未提供" : mdCode(detail.actualArgs.join(" ") || "（无）")}`,
+    );
+    if (detail.options.length > 0) {
+      lines.push(`- 用例选项：${detail.options.map((option) => mdCode(`${option.name}=${String(option.value)}`)).join(" ")}`);
+    }
+    lines.push("");
+    lines.push("</details>");
+    lines.push("");
+  }
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
 export function renderMarkdown(model: ReportModel): string {
   const callouts = calloutsOf(model);
   const lines: string[] = [];
@@ -901,6 +2199,15 @@ export function renderMarkdown(model: ReportModel): string {
   lines.push(
     `> ${mdText(gateConclusion(model))}｜覆盖 ${pct(model.totals.coverage)}｜假阳性 ${model.totals.fpCases} 例 / ${model.totals.fpTotal} 条｜漏报 ${model.totals.missTotal}｜错锚 ${model.totals.misanchorTotal}｜跳过 ${model.totals.skipped}`,
   );
+  if (hasNewComparison(model)) {
+    lines.push(">");
+    lines.push(comparisonLine(model));
+  }
+  const deltaScopeWarning = scopeWarningLines(model.delta);
+  if (deltaScopeWarning.length > 0) {
+    lines.push(">");
+    lines.push(...deltaScopeWarning);
+  }
   lines.push("");
   lines.push("## 运行信息");
   lines.push("");
@@ -912,6 +2219,12 @@ export function renderMarkdown(model: ReportModel): string {
   lines.push(`| --- | --- | --- |`);
   for (const card of summaryCards(model)) {
     lines.push(`| ${mdCell(card.label)} | ${mdCell(card.value)} | ${mdCell(card.note)} |`);
+  }
+  if (hasNewComparison(model)) {
+    lines.push("");
+    lines.push("## 两档比较");
+    lines.push("");
+    lines.push(...renderComparisonMd(model));
   }
   lines.push("");
   lines.push("## T0–T3 阶梯");
@@ -929,6 +2242,12 @@ export function renderMarkdown(model: ReportModel): string {
   lines.push("## 失败与回归");
   lines.push("");
   lines.push(...renderFailuresMd(model, callouts));
+  if (model.perf !== null) {
+    lines.push("");
+    lines.push("## 性能附录");
+    lines.push("");
+    lines.push(...renderPerfMd(model));
+  }
   const codeSections = [renderCodesMd("假阳性错误码", model.fpByCode), renderCodesMd("漏报错误码", model.missByCode)].filter(
     (section) => section.length > 0,
   );
@@ -1003,6 +2322,8 @@ th { color: var(--muted); font-weight: 600; }
 .better { color: var(--ok); } .worse { color: var(--bad); } .same { color: var(--muted); }
 code { font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
   background: color-mix(in srgb, var(--fg) 6%, transparent); padding: 0 4px; border-radius: 4px; }
+pre { overflow-x: auto; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+pre code { background: none; padding: 0; }
 ul { margin: 8px 0; padding-left: 22px; }
 li { margin: 3px 0; }
 .note { color: var(--muted); font-size: 13px; }
@@ -1027,6 +2348,183 @@ function htmlCards(model: ReportModel): string {
     )
     .join("\n");
   return `<div class="cards">\n${cards}\n</div>`;
+}
+
+function htmlUl(items: string[], cap = 20): string {
+  const shown = items.slice(0, cap).map((item) => `<li>${item}</li>`).join("\n");
+  const tail = items.length > cap ? `\n<li>…… 共 ${items.length} 条</li>` : "";
+  return `<ul>\n${shown}${tail}\n</ul>`;
+}
+
+function verdictClass(verdict: Verdict): string {
+  return verdict === "pass" ? "status-ok" : verdict === "fail" ? "status-bad" : "";
+}
+
+function renderComparisonHtml(model: ReportModel): string {
+  const summary = model.comparison;
+  if (!summary.known) {
+    return (
+      '<p class="note">本次产物没有两档比较结果：旧报告不提供 <code>metrics.comparison</code>，逐案也没有 <code>comparison</code>。' +
+      "旧版 T0–T3 阶梯仍保留在上一节供对照，但 <strong>T3 全文不能当作严格一致档</strong>。</p>"
+    );
+  }
+  const blocks: string[] = [];
+  const verdictRows = [
+    ["兼容档", summary.compatibility],
+    ["严格一致档", summary.strict],
+  ] as const;
+  blocks.push(
+    htmlTable(
+      ["档位", "通过", "失败", "无法确认"],
+      verdictRows.map(([label, counts]) => [
+        label,
+        counts.known ? String(counts.pass) : "未提供",
+        counts.known ? String(counts.fail) : "未提供",
+        counts.known ? String(counts.unknown) : "未提供",
+      ]),
+    ),
+  );
+  const fieldRows = comparisonFields
+    .map((field) => [field, summary.fields[field]] as const)
+    .filter(([, counts]) => counts !== undefined)
+    .map(([field, counts]) => [
+      FIELD_LABELS[field],
+      counts!.known ? String(counts!.equal) : "未提供",
+      counts!.known ? String(counts!.different) : "未提供",
+      counts!.known ? String(counts!.unavailable) : "未提供",
+    ]);
+  if (fieldRows.length > 0) {
+    blocks.push(htmlTable(["字段", "相同", "不同", "未提供"], fieldRows));
+  }
+  if (model.ratchet !== null) {
+    blocks.push(
+      '<p class="note"><code>meta.ratchet</code> 由回归模块生成；这里逐项展示它给出的回归，旧 T3 不会被当作严格一致回归。</p>',
+    );
+    blocks.push(renderRatchetHtml(model.ratchet));
+    if (model.ratchet.regressionDetails.some((item) => !item.blocking)) {
+      blocks.push("<p class=\"note\">非阻断回归与字段回归只在报告里列出，不改变门禁结论。</p>");
+    }
+    if (model.ratchet.profile === null && !model.ratchet.legacy) {
+      blocks.push(
+        "<p class=\"note\">本次没有提供保护档；门禁列按各回归自身的 blocking 标记展示，兼容/严格档的失败数不等于阻断数。</p>",
+      );
+    }
+  }
+  const cases = model.details.filter((detail) => detail.status === "ran");
+  if (cases.length === 0) {
+    blocks.push('<p class="note">没有可展开的逐案比较（旧 details 或全部跳过）。</p>');
+    return blocks.join("\n");
+  }
+  blocks.push("<h3>逐案比较</h3>");
+  for (const detail of cases) {
+    const comparison = detail.comparison;
+    const body: string[] = [];
+    body.push(`<p>退出码：${escapeHtml(exitCodeText(detail.expectedExitCode, detail.actualExitCode))}</p>`);
+    if (comparison === null) {
+      body.push('<p class="note">比较详情：未提供（旧版 details）。</p>');
+    } else {
+      body.push(
+        `<p>兼容档：<span class="${verdictClass(comparison.compatibility)}">${escapeHtml(VERDICT_LABELS[comparison.compatibility])}</span>` +
+          `｜严格一致档：<span class="${verdictClass(comparison.strict)}">${escapeHtml(VERDICT_LABELS[comparison.strict])}</span></p>`,
+      );
+      const statuses = differingFields(comparison);
+      if (statuses.length === 0) body.push("<p>字段差异：无（所有已比较字段相同）。</p>");
+      else {
+        body.push(
+          "<p>字段差异：</p>" +
+            htmlUl(statuses.map(([field, status]) => `${escapeHtml(FIELD_LABELS[field])}：${escapeHtml(fieldStatusText(status))}`)),
+        );
+      }
+      const counts = [
+        `${comparison.missing.length} 条参考诊断未对应`,
+        `${comparison.extraErrors.length} 条新增 error`,
+        `${comparison.extraWarnings.length} 条新增 warning`,
+      ];
+      if (comparison.unclassified.length > 0) counts.push(`${comparison.unclassified.length} 条未分类诊断`);
+      if (comparison.unresolved.expected.length > 0 || comparison.unresolved.actual.length > 0) {
+        counts.push(
+          `${comparison.unresolved.expected.length} 条参考 / ${comparison.unresolved.actual.length} 条候选未能唯一对应（已知字段不足）`,
+        );
+      }
+      counts.push(`${comparison.positionDifferences.length} 对仅位置不同`);
+      body.push(`<p>诊断对应：${escapeHtml(counts.join("；"))}</p>`);
+      if (comparison.positionDifferences.length > 0) {
+        const pairs = comparison.positionDifferences.map((pair) => matchValueSummary(
+          detail.expectedDiagnostics ?? [],
+          detail.actualDiagnostics ?? [],
+          pair,
+        ));
+        body.push(
+          "<p>仅位置不同（仍判不兼容）：" +
+            escapeHtml(pairs.join("；")) +
+            "</p>",
+        );
+      }
+      const matchDifferences = comparison.matches
+        .map((match) => ({ match, changed: differingMatchFields(match) }))
+        .filter(({ changed }) => changed.length > 0);
+      if (matchDifferences.length > 0) {
+        body.push(
+          "<p>已配对诊断的差异：</p>" +
+            htmlUl(
+              matchDifferences.slice(0, 12).map(({ match, changed }) =>
+                `${escapeHtml(matchValueSummary(detail.expectedDiagnostics ?? [], detail.actualDiagnostics ?? [], match))}：${escapeHtml(
+                  changed.map(([field, status]) => `${FIELD_LABELS[field]} ${fieldStatusText(status)}`).join("、"),
+                )}`,
+              ),
+            ),
+        );
+      }
+      if (detail.expectedDiagnostics !== null && detail.actualDiagnostics !== null) {
+        body.push(
+          `<p class="note">诊断原文：参考 ${detail.expectedDiagnostics.length} 条，候选 ${detail.actualDiagnostics.length} 条；` +
+            `输出 ${detail.expectedOutput === null ? "未提供" : "已提供"} / ${detail.actualOutput === null ? "未提供" : "已提供"}</p>`,
+        );
+      }
+      const missingLines = diagnosticsAt(detail.expectedDiagnostics, comparison.missing);
+      const extraLines = diagnosticsAt(detail.actualDiagnostics, comparison.extraErrors);
+      const warningLines = diagnosticsAt(detail.actualDiagnostics, comparison.extraWarnings);
+      if (missingLines.length > 0) {
+        body.push("<p>未对应的参考诊断：</p>" + htmlUl(missingLines.map((line) => `<code>${escapeHtml(line)}</code>`)));
+      }
+      if (extraLines.length > 0) {
+        body.push("<p>新增 error：</p>" + htmlUl(extraLines.map((line) => `<code>${escapeHtml(line)}</code>`)));
+      }
+      if (warningLines.length > 0) {
+        body.push("<p>附加 warning：</p>" + htmlUl(warningLines.map((line) => `<code>${escapeHtml(line)}</code>`)));
+      }
+      if (detail.expectedOutput !== null || detail.actualOutput !== null) {
+        const expectedOutput = detail.expectedOutput === null || detail.expectedOutput.length === 0 ? outputText(detail.expectedOutput) : detail.expectedOutput;
+        const actualOutput = detail.actualOutput === null || detail.actualOutput.length === 0 ? outputText(detail.actualOutput) : detail.actualOutput;
+        body.push(
+          "<p>完整输出（参考）：</p>" +
+            `<pre><code>${escapeHtml(expectedOutput)}</code></pre>` +
+            "<p>完整输出（候选）：</p>" +
+            `<pre><code>${escapeHtml(actualOutput)}</code></pre>`,
+        );
+      }
+    }
+    body.push(
+      `<p class="note">选项：参考 ${
+        detail.expectedArgs === null ? "未提供" : `<code>${escapeHtml(detail.expectedArgs.join(" ") || "（无）")}</code>`
+      }；候选 ${
+        detail.actualArgs === null ? "未提供" : `<code>${escapeHtml(detail.actualArgs.join(" ") || "（无）")}</code>`
+      }</p>`,
+    );
+    if (detail.options.length > 0) {
+      body.push(
+        `<p class="note">用例选项：${detail.options
+          .map((option) => `<code>${escapeHtml(`${option.name}=${String(option.value)}`)}</code>`)
+          .join(" ")}</p>`,
+      );
+    }
+    blocks.push(
+      `<details>\n<summary><code>${escapeHtml(detail.id)}</code>：${
+        comparison === null ? "旧版结果（未提供两档比较）" : escapeHtml(comparisonStatusLine(comparison))
+      }</summary>\n${body.join("\n")}\n</details>`,
+    );
+  }
+  return blocks.join("\n");
 }
 
 /** T0–T3 阶梯：内联 SVG 横条（宽 = 达到该档的用例比例；右侧标数）。 */
@@ -1071,10 +2569,79 @@ function renderGateHtml(model: ReportModel): string {
         }</td><td>${escapeHtml(check.detail)}</td></tr>`,
     )
     .join("\n");
+  const reported = model.gateReported.length === 0
+    ? ""
+    : `<p><strong>仅报告（不参与门禁）</strong></p>\n` +
+      htmlUl(model.gateReported.map((note) => `${escapeHtml(note.name)}：${escapeHtml(note.detail)}`));
   return (
     `<table>\n<thead><tr><th>检查</th><th>结论</th><th>说明</th></tr></thead>\n` +
-    `<tbody>\n${rows}\n</tbody>\n</table>`
+    `<tbody>\n${rows}\n</tbody>\n</table>` +
+    (reported.length === 0 ? "" : `\n${reported}`)
   );
+}
+
+function renderRatchetHtml(ratchet: RatchetInfo): string {
+  const heading = ratchet.profile === "strict" ? "严格一致保护档" : ratchet.profile === "compatibility" ? "兼容保护档" : "旧 T0–T3 归档";
+  const parts: string[] = [`<h3>回归记录（${escapeHtml(heading)}）</h3>`];
+  if (ratchet.legacy) {
+    parts.push(
+      '<p class="note">这是旧版 T0–T3 清单：只保留旧分级计数，没有 profile / regressionDetails / blocking 信息；不能用它推断严格一致回归。</p>',
+    );
+    return parts.join("\n");
+  }
+  parts.push(
+    `<p>回归 ${ratchet.regressions} 项；阻断 ${ratchet.blockingRegressions ?? "未提供"} 项；改善 ${ratchet.improvements} 项。</p>`,
+  );
+  if (ratchet.regressionDetails.length === 0) {
+    parts.push("<p>逐项回归：无</p>");
+    return parts.join("\n");
+  }
+  const rows = ratchet.regressionDetails.map((item) => [
+    item.id,
+    RATCHET_KIND_LABELS[item.kind],
+    item.field ?? "—",
+    `${item.was} → ${item.now}`,
+    item.reason,
+    item.blocking ? "阻断" : "仅报告",
+  ]);
+  parts.push(htmlTable(["用例", "维度", "字段", "变化", "原因", "门禁"], rows));
+  return parts.join("\n");
+}
+
+function renderPerfHtml(model: ReportModel): string {
+  const perf = model.perf;
+  if (perf === null) return '<p class="note">本次运行没有性能附录（未传 <code>--perf-ratio</code>，或产物没有 <code>metrics.perf</code>）。</p>';
+  const rows: string[][] = [
+    ["口径", `${perfMetricText(perf.metric)}；比值为候选 / 参考 tsc，小于 1 表示候选更快`],
+    ["样本", `请求 ${perf.requested ?? "未提供"}，有效 ${perf.size ?? "未提供"}（参考成功 ${perf.referenceOk ?? "未提供"}，失败 ${perf.referenceFailed ?? "未提供"}）`],
+    ["抽样 seed", perf.seed ?? "未提供"],
+    ["总比值（Check）", ratioText(perf.ratio.check)],
+    ["总比值（实际耗时差分）", ratioText(perf.ratio.wallAdjusted)],
+    ["总比值（原始实际耗时）", ratioText(perf.ratio.wall)],
+    [
+      "兼容通过子集",
+      `${perf.ratio.agreementCases ?? "未提供"} 例；原始实际耗时 ${ratioText(perf.ratio.agreementWall)}（${formatMs(perf.ratio.agreementImplWallMs)} / ${formatMs(perf.ratio.agreementReferenceWallMs)} ms）；` +
+        `Check ${ratioText(perf.ratio.agreementCheck)}；实际耗时差分 ${ratioText(perf.ratio.agreementWallAdjusted)}`,
+    ],
+    ["逐案 Check", aggregateText(perf.perCase.check)],
+    ["逐案实际耗时差分", aggregateText(perf.perCase.wallAdjusted)],
+    ["样本构成 · suite", compositionText(perf.composition.suite)],
+    ["样本构成 · 行数档", compositionText(perf.composition.lineBucket)],
+    ["样本构成 · 有无期望错误", compositionText(perf.composition.errorPresence)],
+    ["样本构成 · 顺序对冲", compositionText(perf.composition.order)],
+    [
+      "累计时间",
+      `候选实际耗时均值 ${perf.impl.meanWallMs === null ? "未提供" : `${perf.impl.meanWallMs.toFixed(1)}ms`}；` +
+        `空程序基线 ${perf.impl.emptyBaselineMs === null ? "未提供" : `${perf.impl.emptyBaselineMs.toFixed(1)}ms`}；` +
+        `Check 合计 ${perf.impl.checkSumMs === null ? "未提供" : `${perf.impl.checkSumMs.toFixed(1)}ms`}；` +
+        `参考实际耗时均值 ${perf.reference.meanWallMs === null ? "未提供" : `${perf.reference.meanWallMs.toFixed(1)}ms`}；` +
+        `参考 Check 合计 ${perf.reference.checkSumMs === null ? "未提供" : `${perf.reference.checkSumMs.toFixed(1)}ms`}`,
+    ],
+  ];
+  const warnings = perf.warnings.length === 0
+    ? ""
+    : `<p><strong>性能附录告警</strong></p>\n${htmlUl(perf.warnings.map((warning) => escapeHtml(warning)))}`;
+  return `${htmlTable(["项", "值"], rows)}${warnings.length === 0 ? "" : `\n${warnings}`}`;
 }
 
 function renderDeltaHtml(model: ReportModel): string {
@@ -1097,10 +2664,29 @@ function renderDeltaHtml(model: ReportModel): string {
     const tail = items.length > 20 ? `<li>…… 共 ${items.length} 例</li>` : "";
     return `<p><strong>${escapeHtml(label)}（${items.length}）</strong></p>\n<ul>\n${shown}\n${tail}\n</ul>`;
   };
+  const fieldRows = delta.fields
+    .map(
+      (row) =>
+        `<tr><td>${escapeHtml(FIELD_LABELS[row.field])}</td>` +
+        `<td>${row.before.equal} / ${row.before.different} / ${row.before.unavailable}</td>` +
+        `<td>${row.after.equal} / ${row.after.different} / ${row.after.unavailable}</td>` +
+        `<td>${escapeHtml(row.change)}</td></tr>`,
+    )
+    .join("\n");
+  const fieldTable = delta.fields.length === 0
+    ? ""
+    : `\n<p><strong>逐字段分布变化</strong></p>\n` +
+      `<table>\n<thead><tr><th>字段</th><th>上次（相同 / 不同 / 未提供）</th><th>本次（相同 / 不同 / 未提供）</th><th>变化</th></tr></thead>\n` +
+      `<tbody>\n${fieldRows}\n</tbody>\n</table>`;
+  const scopeWarning = delta.scope.comparable || delta.scope.reasons.length === 0
+    ? ""
+    : `<p class="verdict bad"><strong>范围提示</strong>：${escapeHtml(scopeWarningText(delta))}</p>\n`;
   return (
+    scopeWarning +
     `<p class="note">对比基准：${escapeHtml(delta.previousLabel)}</p>\n` +
     `<table>\n<thead><tr><th>指标</th><th>上次</th><th>本次</th><th>变化</th></tr></thead>\n` +
     `<tbody>\n${rows}\n</tbody>\n</table>\n` +
+    fieldTable +
     movement("regressions", "回归") +
     movement("improvements", "改善")
   );
@@ -1130,8 +2716,11 @@ function renderFailuresHtml(model: ReportModel, callouts: RegressionCallout): st
     );
   }
   if (callouts.ratchetRegressions > 0) {
+    const blocking = model.ratchet?.blockingRegressions;
     blocks.push(
-      `<p><strong>ratchet 回落 ${callouts.ratchetRegressions} 例</strong>：清单出现档位下降，详见 stdout 与门禁明细。</p>`,
+      `<p><strong>ratchet 回归 ${callouts.ratchetRegressions} 项</strong>` +
+        (blocking === null || blocking === undefined ? "（旧记录未提供阻断信息）" : `（阻断 ${blocking} 项）`) +
+        `：清单出现变化，逐项原因见「两档比较」下的回归记录。</p>`,
     );
   }
   if (callouts.deltaRegressions.length > 0) {
@@ -1168,6 +2757,17 @@ function renderFailuresHtml(model: ReportModel, callouts: RegressionCallout): st
       `<p><strong>首行文案不同 ${callouts.messageMismatch} 条</strong>：位置命中、文案不同（T1 与 T2 的差）。</p>`,
     );
   }
+  if (hasNewComparison(model)) {
+    const blocked =
+      callouts.gateFailed.length > 0 ||
+      (callouts.blockingRegressions !== null && callouts.blockingRegressions > 0) ||
+      callouts.deltaRegressions.length > 0;
+    blocks.push(
+      blocked
+        ? '<p><strong>门槛结论</strong>：存在阻断项。两档失败项与门禁是否失败分开判断，请对照上方门禁结论。</p>'
+        : '<p><strong>门槛结论</strong>：本次没有阻断项；两档比较中的未通过项仅供阅读。</p>',
+    );
+  }
   return blocks.join("\n");
 }
 
@@ -1186,7 +2786,9 @@ function renderTierHtml(model: ReportModel): string {
   const t3Note = model.t3Comparable
     ? ""
     : `<p class="note">注：本次期望源不是官方 <code>.errors.txt</code> 基线，T3 全文档只对无期望错误的用例成立（有错误的用例最多到 T2）；T0–T2 是门禁口径。</p>\n`;
+  const legacyNote = '<p class="note">旧 metrics.totals 的 T0–T3 阶梯仅作过渡参考；T3 全文不等于严格一致档。</p>\n';
   return (
+    legacyNote +
     `<p class="note">达到「至少该档」的用例数（分母 = 跑完的 ${model.totals.ran} 例）。</p>\n` +
     tierSvg(model) +
     `\n<p>恰好落在各档：${escapeHtml(exact + none)}</p>\n` +
@@ -1215,6 +2817,51 @@ export function renderHtml(model: ReportModel): string {
     ],
     ["期望源", route.length > 0 ? route.join(" · ") : "n/a"],
     ["语料", model.corpus === null ? "n/a" : `${model.corpus}${model.corpusRef !== null ? `（pin ${model.corpusRef}）` : ""}`],
+    ["用例列表", model.provenance.manifest ?? "未提供"],
+    ...(model.provenance.manifestSha === null ? [] : [["用例列表 SHA-256", model.provenance.manifestSha]]),
+    ["选项策略", model.provenance.optionPolicy ?? "未提供"],
+    ["原始运行参数", model.provenance.runArgs.length === 0 ? "未提供" : model.provenance.runArgs.join(" ")],
+    ...([
+      ["参考基础参数", model.provenance.referenceBaseArgs],
+      ["共享覆盖参数", model.provenance.sharedArgs],
+      ["候选基础参数", model.provenance.candidateArgs],
+      ["候选环境参数", model.provenance.candidateEnvArgs],
+      ["用例过滤", model.provenance.filters],
+    ] as [string, string[]][]).filter(([, values]) => values.length > 0).map(([label, values]) => [label, values.join(" ")]),
+    [
+      "参考来源",
+      [
+        model.provenance.reference.version === null ? null : `tsc ${model.provenance.reference.version}`,
+        model.provenance.reference.bin === null ? null : `bin ${model.provenance.reference.bin}`,
+        model.provenance.reference.sha256 === null ? null : `sha256 ${model.provenance.reference.sha256.slice(0, 12)}`,
+        model.provenance.reference.nativeBin === null ? null : `原生 ${model.provenance.reference.nativeBin}`,
+        model.provenance.reference.nativeSha256 === null ? null : `原生 sha256 ${model.provenance.reference.nativeSha256.slice(0, 12)}`,
+        model.provenance.reference.source === null ? null : `源 ${model.provenance.reference.source}`,
+        model.provenance.reference.corpus === null ? null : `语料 ${model.provenance.reference.corpus}`,
+        model.provenance.reference.corpusRef === null ? null : `pin ${model.provenance.reference.corpusRef}`,
+      ]
+        .filter((x): x is string => x !== null)
+        .join(" · ") || "未提供",
+    ],
+    [
+      "候选来源",
+      [
+        model.provenance.candidate.name === null ? null : `名称 ${model.provenance.candidate.name}`,
+        model.provenance.candidate.version === null ? null : `版本 ${model.provenance.candidate.version}`,
+        model.provenance.candidate.bin === null ? null : `bin ${model.provenance.candidate.bin}`,
+        model.provenance.candidate.sha256 === null ? null : `sha256 ${model.provenance.candidate.sha256.slice(0, 12)}`,
+        model.provenance.candidate.nativeBin === null ? null : `原生 ${model.provenance.candidate.nativeBin}`,
+        model.provenance.candidate.nativeSha256 === null ? null : `原生 sha256 ${model.provenance.candidate.nativeSha256.slice(0, 12)}`,
+        model.provenance.candidate.embeddedTypeScript === null ? null : `内置 TypeScript ${model.provenance.candidate.embeddedTypeScript}（Bun 内置，不是参考 tsc 版本）`,
+        model.provenance.candidate.source === null ? null : `源 ${model.provenance.candidate.source}`,
+      ]
+        .filter((x): x is string => x !== null)
+        .join(" · ") || "未提供",
+    ],
+    ...(model.provenance.runner === null && model.provenance.platform === null
+      ? []
+      : [["运行环境", [model.provenance.runner, model.provenance.platform].filter((x): x is string => x !== null).join(" · ")]]),
+    ...(model.provenance.adapter === null ? [] : [["适配器", model.provenance.adapter]]),
   ];
   if (model.ratchet !== null) {
     headerRows.push([
@@ -1222,13 +2869,21 @@ export function renderHtml(model: ReportModel): string {
       `${model.ratchet.path}：` +
         (model.ratchet.initialized
           ? "首次登记"
-          : `回落 ${model.ratchet.regressions} 例、改善 ${model.ratchet.improvements} 例`),
+          : `回归 ${model.ratchet.regressions} 项、改善 ${model.ratchet.improvements} 项`),
     ]);
+    headerRows.push([
+      "回归保护档",
+      (model.ratchet.profile === "strict" ? "严格一致" : model.ratchet.profile === "compatibility" ? "兼容" : "未提供") +
+        `（阻断 ${model.ratchet.blockingRegressions === null ? "未提供" : `${model.ratchet.blockingRegressions} 项`}）`,
+    ]);
+    if (model.ratchet.legacy) {
+      headerRows.push(["回归记录格式", "旧 T0–T3：没有 strict / 逐字段回归证据"]);
+    }
   }
   headerRows.push([
     "用例",
-    `本次 ${model.totals.cases}：跑 ${model.totals.ran}，跳过 ${model.totals.skipped}` +
-      (model.selectedCases !== null ? `；选中 ${model.selectedCases}` : ""),
+    `选中 ${model.selectedCases === null ? "未提供" : `${model.selectedCases}（源用例）`} / 实际 ${model.totals.cases}（展开后）：` +
+      `跑 ${model.totals.ran}，跳过 ${model.totals.skipped}`,
   ]);
 
   const sections: string[] = [];
@@ -1238,12 +2893,26 @@ export function renderHtml(model: ReportModel): string {
       `<br>覆盖 ${escapeHtml(pct(model.totals.coverage))}｜假阳性 ${model.totals.fpCases} 例 / ${model.totals.fpTotal} 条` +
       `｜漏报 ${model.totals.missTotal}｜错锚 ${model.totals.misanchorTotal}｜跳过 ${model.totals.skipped}</div>`,
   );
+  if (hasNewComparison(model)) {
+    sections.push(`<div class="verdict"><strong>${escapeHtml(comparisonLine(model).replace(/^> /, ""))}</strong></div>`);
+  }
+  if (model.delta !== null && !model.delta.scope.comparable && model.delta.scope.reasons.length > 0) {
+    sections.push(
+      `<div class="verdict bad"><strong>范围提示</strong>：${escapeHtml(scopeWarningText(model.delta))}</div>`,
+    );
+  }
   sections.push(`<h2>运行信息</h2>\n${htmlTable(["项", "值"], headerRows)}`);
   sections.push(`<h2>摘要</h2>\n${htmlCards(model)}`);
+  if (hasNewComparison(model)) {
+    sections.push(`<h2>两档比较</h2>\n${renderComparisonHtml(model)}`);
+  }
   sections.push(`<h2>T0–T3 阶梯</h2>\n${renderTierHtml(model)}`);
   sections.push(`<h2>门禁结论</h2>\n${renderGateHtml(model)}`);
   sections.push(`<h2>与上次报告对比</h2>\n${renderDeltaHtml(model)}`);
   sections.push(`<h2>失败与回归</h2>\n${renderFailuresHtml(model, callouts)}`);
+  if (model.perf !== null) {
+    sections.push(`<h2>性能附录</h2>\n${renderPerfHtml(model)}`);
+  }
   if (model.fpByCode.length > 0 || model.missByCode.length > 0) {
     const blocks: string[] = [];
     if (model.fpByCode.length > 0) {

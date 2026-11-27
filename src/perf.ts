@@ -96,12 +96,21 @@ export interface PerfReport {
     counts: Record<string, number>;
   };
   ratio: {
+    /** 未扣除固定成本的实际耗时比，含各适配器和进程成本。 */
+    wall: number | null;
     /** (implSum − N·implEmpty) / (refSum − N·refEmpty)；分母不可用时为 null。 */
     wallAdjusted: number | null;
     /** 两侧都有 Check 相位时的累加比；实现通常拿不到，故多为 null。 */
     check: number | null;
-    /** 只取「判定完全一致（fp/miss/错锚均为 0）」的子集再算一遍。 */
-    agreementSubset: { cases: number; wallAdjusted: number | null; check: number | null };
+    /** 只取「兼容通过」的子集再算一遍。 */
+    agreementSubset: {
+      cases: number;
+      implWallMs: number | null;
+      referenceWallMs: number | null;
+      wall: number | null;
+      wallAdjusted: number | null;
+      check: number | null;
+    };
     /** 逐案比值的聚合（比值分布比总量比更能暴露个案噪声）。 */
     perCase: { check: Aggregate | null; wallAdjusted: Aggregate | null };
   };
@@ -160,7 +169,11 @@ export function runReference(tscBin: string, files: CaseFile[], args: string[], 
       return { status: timeout ? "timeout" : "crash", wallMs, message: String(r.error) };
     }
     const text = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-    return { status: "ok", wallMs, stats: parseExtendedDiagnostics(text) ?? undefined };
+    const stats = parseExtendedDiagnostics(text);
+    if (r.status === null || r.status < 0 || r.status > 2 || (r.status !== 0 && stats === null)) {
+      return { status: "crash", wallMs, message: `参考计时退出状态 ${r.status}：${text.slice(0, 500)}` };
+    }
+    return { status: "ok", wallMs, stats: stats ?? undefined };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -277,7 +290,7 @@ export interface PerfReportInput {
   reference: Map<string, ReferenceRun>;
   /** 实现自报的每案 Check 时间（可选；tsc 系 CLI 适配器可提供）。 */
   implCheckMs: Map<string, number>;
-  /** 判定完全一致的用例 id 集合（fp/miss/错锚均为 0）。 */
+  /** 兼容档通过的用例 id 集合。 */
   agreementIds: Set<string>;
   /** 抽样分层元信息（行数 / 有无期望错误），用于样本组成报告。 */
   meta?: Map<string, PerfCaseMeta>;
@@ -297,10 +310,11 @@ function ratioOf(implSum: number, implBase: number | null, refSum: number, refBa
   return numer / denom;
 }
 
-/** 汇总性能附录；只用「参考 tsc 成功」的样本进入分母。 */
+/** 汇总性能附录；只用双方都完成计时的样本进入分母。 */
 export function buildPerfReport(input: PerfReportInput): PerfReport {
   const sample = input.sampleIds;
   const okIds = sample.filter((id) => input.reference.get(id)?.status === "ok" && input.implWalls.has(id));
+  const referenceOk = sample.filter((id) => input.reference.get(id)?.status === "ok").length;
   const refRuns = okIds.map((id) => input.reference.get(id)!);
   const implWalls = okIds.map((id) => input.implWalls.get(id)!);
   const n = okIds.length;
@@ -331,9 +345,8 @@ export function buildPerfReport(input: PerfReportInput): PerfReport {
   } else if (checkSum === null) {
     warnings.push("参考 tsc 未提供 Check 相位；使用 wall − 空程序基线");
   }
-  if (n < sample.length) {
-    warnings.push(`样本中 ${sample.length - n} 例参考 tsc 未成功，已从分母剔除`);
-  }
+  if (referenceOk < sample.length) warnings.push(`样本中 ${sample.length - referenceOk} 例没有成功取得参考侧计时`);
+  if (n < referenceOk) warnings.push(`样本中 ${referenceOk - n} 例没有成功取得候选侧计时`);
   if (refEmpty === null) warnings.push("参考空程序基线运行失败，wall-adjusted ratio 不可用");
   if (wallAdj === null && refEmpty !== null && input.implEmptyWallMs !== null) {
     warnings.push("wall-adjusted 比值不可用：空程序基线估计不稳定（分母/分子非正）");
@@ -353,7 +366,9 @@ export function buildPerfReport(input: PerfReportInput): PerfReport {
   const agreement = okIds.filter((id) => input.agreementIds.has(id));
   const agRef = agreement.map((id) => input.reference.get(id)!);
   const agImpl = agreement.map((id) => input.implWalls.get(id)!);
-  const agWallRaw = ratioOf(sum(agImpl), input.implEmptyWallMs, sum(agRef.map((r) => r.wallMs)), refEmpty, agreement.length);
+  const agRefSum = sum(agRef.map((r) => r.wallMs));
+  const agImplSum = sum(agImpl);
+  const agWallRaw = ratioOf(agImplSum, input.implEmptyWallMs, agRefSum, refEmpty, agreement.length);
   const agWall = warnedDenom ? null : agWallRaw;
   const agCheckValues = agreement.map((id) => input.implCheckMs.get(id)).filter((v): v is number => typeof v === "number");
   const agRefCheckValues = agRef.map((r) => r.stats?.checkMs).filter((v): v is number => typeof v === "number");
@@ -408,8 +423,8 @@ export function buildPerfReport(input: PerfReportInput): PerfReport {
       seed: input.seed,
       requested: input.requested,
       size: n,
-      referenceOk: n,
-      referenceFailed: sample.length - n,
+      referenceOk,
+      referenceFailed: sample.length - referenceOk,
       composition,
     },
     metric,
@@ -424,9 +439,17 @@ export function buildPerfReport(input: PerfReportInput): PerfReport {
       counts,
     },
     ratio: {
+      wall: refSum > 0 ? implSum / refSum : null,
       wallAdjusted,
       check: checkRatio,
-      agreementSubset: { cases: agreement.length, wallAdjusted: agWall, check: agCheck },
+      agreementSubset: {
+        cases: agreement.length,
+        implWallMs: agreement.length > 0 ? agImplSum : null,
+        referenceWallMs: agreement.length > 0 ? agRefSum : null,
+        wall: agRefSum > 0 ? agImplSum / agRefSum : null,
+        wallAdjusted: agWall,
+        check: agCheck,
+      },
       perCase: {
         check: aggregateRatios(perCaseCheck),
         wallAdjusted: aggregateRatios(perCaseWall),

@@ -2,6 +2,7 @@
 //
 // 内置：
 //   tsc-cli        参考实现：直接用真实 tsc 跑逐案 CLI（TSC_COMPA_ADAPTER_TSC 覆盖二进制）
+//   bun-check      Bun 内置类型检查器（bun-check:<bin> 或显式 BUN_CHECK_BIN）
 //   checker-cli    被测检查器逐案 CLI（CHECKER_BIN 或 checker-cli:<bin>），固定 strict+esnext 口径
 //   checker-batch  同一检查器的批量 NDJSON 模式（CHECKER_BATCH_BIN，缺省回落 CHECKER_BIN），固定口径
 //   none           永远不报诊断（用于跑通流水线/看漏报全貌）
@@ -12,8 +13,10 @@ import { join, resolve } from "node:path";
 import { FIXED_STRICT_ESNEXT } from "../case.ts";
 import type { Adapter, CaseInput, CaseOutcome } from "../types.ts";
 import { BatchAdapter } from "./batch.ts";
+import { BunCheckAdapter } from "./bun-check.ts";
 import { CheckerCliAdapter } from "./checker-cli.ts";
 import { CliAdapter } from "./cli.ts";
+import { Ts7ApiAdapter } from "./ts7-api.ts";
 import { TscCliAdapter } from "./tsc-cli.ts";
 
 class NoopAdapter implements Adapter {
@@ -21,12 +24,15 @@ class NoopAdapter implements Adapter {
   readonly kind = "per-case" as const;
   readonly supportsOptions = true;
   async check(input: CaseInput): Promise<CaseOutcome> {
-    return { id: input.id, status: "ok", diagnostics: [] };
+    return { id: input.id, status: "ok", diagnostics: [], fullText: "" };
   }
 }
 
 export const ADAPTER_NAMES = [
   "tsc-cli",
+  "ts7-api",
+  "bun-check",
+  "bun-check:<bin>",
   "checker-cli",
   "checker-cli:<bin>",
   "checker-batch",
@@ -48,6 +54,21 @@ export async function createAdapter(name: string): Promise<Adapter> {
     const bin = raw.includes("/") ? resolve(raw) : raw;
     const extraArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter((s) => s.length > 0);
     return new TscCliAdapter({ name: embedded.length > 0 ? name : "tsc-cli", bin, extraArgs });
+  }
+  if (name === "ts7-api") return new Ts7ApiAdapter();
+  if (name === "bun-check" || name.startsWith("bun-check:")) {
+    // 只用显式指定的固定版本：不把当前 runner 的 Bun 当成候选。
+    const embedded = name.startsWith("bun-check:") ? name.slice("bun-check:".length) : "";
+    const raw = embedded.length > 0 ? embedded : (process.env.BUN_CHECK_BIN ?? "");
+    if (raw.length === 0) {
+      throw new Error("适配器 bun-check 需要 BUN_CHECK_BIN 或 bun-check:<bin> 指向固定版本的 Bun 可执行文件");
+    }
+    const extraArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter((s) => s.length > 0);
+    return new BunCheckAdapter({
+      name: embedded.length > 0 ? name : "bun-check",
+      bin: raw.includes("/") ? resolve(raw) : raw,
+      extraArgs,
+    });
   }
   if (name === "checker-cli" || name.startsWith("checker-cli:")) {
     // 被测检查器的逐案 CLI；checker-cli:<bin> 显式指定路径，缺省读 CHECKER_BIN。
