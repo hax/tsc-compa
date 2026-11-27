@@ -1,7 +1,79 @@
 {
   "schemaVersion": 1,
-  "note": "第三方 TSC 兼容实现登记。只登记能被 CLI 驱动的实现（复用 tsc-cli 适配器），不为任何实现写内部 adapter；能力/获取方式的差异在这里显式记录。",
+  "note": "第三方实现登记。tsc 兼容实现用 tsc-cli 驱动；Bun 内置检查器用 bun-check 独立 adapter。只登记可复现的获取方式，能力差异显式记录。",
   "implementations": {
+    "bun-check-1.4.4": {
+      "displayName": "Bun built-in TypeScript checker (bun check)",
+      "adapter": "bun-check",
+      "kind": "native",
+      "tsVersion": "7.0.2 (embedded)",
+      "acquisition": {
+        "release": {
+          "repo": "oven-sh/bun",
+          "version": "1.4.4",
+          "tag": "bun-v1.4.4",
+          "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-{platform}.zip",
+          "bin": "bun-{platform}/bun",
+          "fallbackBin": "bun"
+        },
+        "localEnv": "BUN_CHECK_BIN"
+      },
+      "cliArgs": [
+        "--no-script",
+        "--no-pretty",
+        "--all",
+        "--timing"
+      ],
+      "baselines": [
+        "7.1.0-beta-official",
+        "7.1.0-beta"
+      ],
+      "phaseMetrics": {
+        "flag": "--timing",
+        "checkField": "checked in",
+        "extra": "stderr: \"<n> files loaded in <ms>, <n> checked in <ms>\"; no JSON output",
+        "parallelControls": [
+          "--threads"
+        ]
+      },
+      "notes": "Bun 1.4.4 内置 typescript-go 移植（process.versions.typescript=7.0.2）；诊断在 stdout/stderr（按环境），无 JSON。target 支持至 es2025/esnext，es2026 被拒；harness 物化 tsconfig，不剥离类型选项。"
+    },
+    "bun-check-1.4.5": {
+      "displayName": "Bun built-in TypeScript checker (bun check)",
+      "adapter": "bun-check",
+      "kind": "native",
+      "tsVersion": "7.0.2 (embedded)",
+      "acquisition": {
+        "release": {
+          "repo": "oven-sh/bun",
+          "version": "1.4.5",
+          "tag": "bun-v1.4.5",
+          "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-{platform}.zip",
+          "bin": "bun-{platform}/bun",
+          "fallbackBin": "bun"
+        },
+        "localEnv": "BUN_CHECK_BIN"
+      },
+      "cliArgs": [
+        "--no-script",
+        "--no-pretty",
+        "--all",
+        "--timing"
+      ],
+      "baselines": [
+        "7.1.0-beta-official",
+        "7.1.0-beta"
+      ],
+      "phaseMetrics": {
+        "flag": "--timing",
+        "checkField": "checked in",
+        "extra": "stderr: \"<n> files loaded in <ms>, <n> checked in <ms>\"; no JSON output",
+        "parallelControls": [
+          "--threads"
+        ]
+      },
+      "notes": "Bun 1.4.5 内置 typescript-go 移植（process.versions.typescript=7.0.2）；诊断在 stdout/stderr（按环境），无 JSON。target 支持至 es2025/esnext，es2026 被拒；harness 物化 tsconfig，不剥离类型选项。"
+    },
     "tsrs": {
       "displayName": "tsrs (oxc-tsrs)",
       "adapter": "tsc-cli",

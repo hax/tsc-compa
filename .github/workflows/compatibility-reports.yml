@@ -1,0 +1,75 @@
+# Produce the same evidence for the three requested checker families on Linux.
+# Compatibility failures are report data, not CI failures in this evaluation job.
+name: compatibility-reports
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: typescript-7.1.0-beta
+            bun: 1.4.5
+          - id: bun-1.4.4
+            bun: 1.4.4
+          - id: bun-1.4.5
+            bun: 1.4.5
+          - id: oxc-tsrs
+            bun: 1.4.5
+    env:
+      CANDIDATE: ${{ matrix.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun }}
+      - name: Install runner dependencies
+        run: bun install --frozen-lockfile
+      - name: Resolve corpus ref
+        id: corpus
+        run: |
+          REF=$(bun -e 'const c = require("./config/baselines.json"); const b = c.baselines.find(x => x.id === "7.1.0-beta-official"); console.log(c.corpora[b.corpus].ref)')
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/TypeScript
+          ref: ${{ steps.corpus.outputs.ref }}
+          path: reference/corpus
+      - name: Produce both reference comparisons
+        run: |
+          set -euo pipefail
+          TSC="$PWD/node_modules/typescript-7-1/bin/tsc"
+          case "$CANDIDATE" in
+            typescript-7.1.0-beta) NAME=typescript; BIN="$TSC" ;;
+            bun-*) NAME="$CANDIDATE"; BIN=$(command -v bun) ;;
+            oxc-tsrs)
+              BIN=$(bun scripts/install-impl.ts --name tsrs --dest .cache/checkers | tail -n 1)
+              test -x "$BIN"
+              NAME=tsrs ;;
+            *) exit 2 ;;
+          esac
+          bun scripts/validate-compatibility.ts reference/corpus/tsc/testdata/tests/cases out "$NAME" "$BIN"
+      - name: Report summary
+        if: always()
+        run: |
+          for SOURCE in tsc official-baseline; do
+            if [ -f "out/$SOURCE/metrics.json" ]; then
+              printf '\n### %s · %s\n\n```json\n' "$CANDIDATE" "$SOURCE"
+              jq '{comparison: (.comparison | {compatibility, strict}), totals: (.totals | {cases, ran, skipped, coverage})}' "out/$SOURCE/metrics.json"
+              printf '```\n'
+            fi
+          done >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compatibility-${{ matrix.id }}
+          path: out/
+          if-no-files-found: warn

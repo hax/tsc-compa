@@ -1,42 +1,27 @@
 # tsc-compa
 
-面向 TypeScript 类型检查器、与具体实现无关的兼容性测试套件。
+面向 TypeScript 类型检查器、与具体实现无关的兼容性测试工具。
 
 本仓库不绑定任何一种实现：只要检查器提供 TSC 兼容的二进制程序，就可以通过适配器
-驱动它，在官方 TypeScript 测试语料上与多个 tsc 基线对照，并报告：
+驱动它，在官方 TypeScript 测试集上与多个 tsc 参考配置对照，并报告：
 
-- **假阳性（误报）** — 实现报告了诊断，而 tsc 没有；
-- **覆盖率** — 官方期望的诊断中，实现实际报告了多少；
-- **错锚** — 文件和诊断码相同，但位置不同（单独计数，不混入假阳性或漏报）；
+- **多报错误** — 实现报告了错误，而 tsc 没有；
+- **覆盖率** — 参考诊断中，候选实际报告了多少；
+- **位置差异** — 文件和诊断码相同，但位置不同（单独计数，不混入多报错误或漏报）；
 - **跳过** — 对不支持的构造分类并说明原因，而不是静默忽略。
 
-目标是在官方测试语料上证明检查器「近乎 100% 兼容」，并让任意 TSC 兼容实现
+目标是在官方测试集上验证检查器是否接近 100% 兼容，并让任意 TSC 兼容实现
 都能使用同一套测试。
 
 ## 当前状态
 
-warning 兼容比较及“完整记录、默认 T0 回归门槛”的新设计尚待实现；
-下面的命令与门禁说明仍对应现有代码，迁移工作见
-[docs/STATUS.md](docs/STATUS.md#53-新的诊断比较与回归策略待实现)。
+新版运行器把「是否找到了同一个问题」和「诊断是否完全一致」分开判断：
 
-v1（2026-11）已具备：
-
-- 用例指令解析、分类与过滤；
-- 两种期望来源：由 tsc 现场生成并缓存，或通过
-  `--expectation-source official-baseline` 读取官方 `tests/baselines` 子集；
-- 三个 tsc 基线（5.9.3 / 6.0.3 / 7.1.0-beta），在 `config/baselines.json` 中
-  分别配对语料版本，基础参数显式编码官方测试框架（harness）的默认值；
-- 逐案 CLI 适配器、批量适配器协议及其参考实现，以及
-  **运行真实 `tsc` 的参考适配器**（`--adapter tsc-cli`，用于测试框架自检）；
-- 假阳性、覆盖率、错锚及按用例分类细分的指标；
-- 直接读取 TypeScript 7 官方仓库布局（`tsc/testdata/...`）中的 `.errors.txt` 基线，
-  按 T0–T3 一致性阶梯评估每个用例（位置与码 → 严重级别 → 首行文本 → 诊断摘要文本），
-  并按「实现 × 基线」维护只升不降的 `--ratchet` 清单；
-- GitHub Actions 在每次推送和 PR 上运行单测及带门禁的冒烟测试；每日变化检测仅在
-  输入变化（配置／锁文件哈希、仓库 HEAD、外部固定版本或提交）时重跑套件；
-- `--gate` 将假阳性、漏报、错锚超限或 ratchet 回落转为非零退出码
-  （T0–T2 参与门禁，T3 仅报告）；各 CI 档位生成 Markdown／HTML 报告并合并到运行摘要；
-- 手动触发的 TS7 官方基线冒烟 workflow。
+- **兼容**：同文件同起点找到同码或已登记的等价码，没有漏报或新增 error；严重级别变化、附加 warning 独立展示。
+- **严格一致**：范围、文字、消息链、相关信息、顺序与完整输出也必须相同。CLI 未提供必要字段时显示「无法确认」，不会按旧 T3 判通过。
+- 同一批用例可以对照现场生成的 tsc 诊断、官方 `.errors.txt`，或通过 TS7 async API 为每个用例建立 program 取结构化诊断；报告保留诊断、退出码、选项与版本出处。
+- `--report-out` 同时生成 Markdown 和 HTML；`--gate` 默认保护兼容档，也可选择 `--gate-profile strict`。
+- 2026-11-27 用 Bun 1.4.4 复跑的[本地 TS7 API 自比](docs/STATUS.md#41-内置适配器)严格通过 28/28。纯文本 CLI 缺少必要字段时仍是「无法确认」。
 
 设计思路与报告解读见 [docs/DESIGN.md](docs/DESIGN.md)；
 参数、字段和适配器协议见 [docs/REFERENCE.md](docs/REFERENCE.md)；
@@ -47,32 +32,41 @@ v1（2026-11）已具备：
 
 ## 快速开始
 
-环境要求：[Bun](https://bun.com) ≥ 1.3、`microsoft/TypeScript` 测试语料检出，
+环境要求：[Bun](https://bun.com) ≥ 1.3、`microsoft/TypeScript` 测试集检出，
 以及通过 npm 别名安装的 `tsc` 二进制（见 `package.json`）。
 
 ```bash
 bun install
 
-# 语料路径：指向检出的 tests/cases，语料版本须与基线配置匹配
+# 测试集路径：指向检出的 tests/cases，版本须与参考配置匹配
 export TSC_COMPA_CORPUS=/path/to/typescript/tests/cases
 
-# 基线自比：同一个 tsc 既生成期望，也作为被测实现
+# 自比：同一个 tsc 既生成参考诊断，也作为候选
 bun src/run.ts --baseline 6.0.3 \
   --corpus "$TSC_COMPA_CORPUS" \
   --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
 
-# 从官方 .errors.txt 基线读取期望（筛选后的子集）
+# 从官方 .errors.txt 读取参考诊断（筛选后的子集）
 bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --expectation-source official-baseline --cases config/official-baseline-cases.json --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc
 
-# TS7 官方基线（Go 仓库布局，T0–T3 分档 + ratchet）
+# TS7 官方结果文件（Go 仓库布局，兼容档回归记录）
 export TSC_COMPA_CORPUS=/path/to/typescript-go/tsc/testdata/tests/cases
 bun src/run.ts --baseline 7.1.0-beta-official --corpus "$TSC_COMPA_CORPUS" \
   --expectation-source official-baseline \
   --cases config/smoke-cases-ts71-official.json \
-  --ratchet-impl tsc-7-1 \
+  --ratchet config/ratchet-ts71-official.tsv --gate \
   --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc
 
-# 用同一套件测试另一个检查器实现（批量适配器）
+# TS7 async API 自比（参考与候选都走 API；严格一致门禁）
+OUT=.cache/run/ts7-api-self
+bun src/run.ts --baseline 7.1.0-beta-official --corpus "$TSC_COMPA_CORPUS" \
+  --expectation-source ts7-api --adapter ts7-api \
+  --option-strategy aligned \
+  --cases config/smoke-cases-ts71-official.json \
+  --gate --gate-profile strict \
+  --out "$OUT" --report-md "$OUT/report.md" --report-html "$OUT/report.html"
+
+# 用同一测试集测试另一个检查器（批量适配器）
 CHECKER_BATCH_BIN=/path/to/checker \
 bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter checker-batch
 # 对照：同一个二进制用逐案 CLI 模式
@@ -89,21 +83,21 @@ tsc-compa smoke — 用例 28：跑 28，完全通过 28，跳过 0
 口径：adapter=tsc-cli:node_modules/typescript-6-0/bin/tsc mode=official baseline=6.0.3 tsc=6.0.3
 ```
 
-## 基线
+## 参考配置
 
-`config/baselines.json` 将通过 npm 别名安装的 `tsc` 版本与语料版本、默认用例清单、
+`config/baselines.json` 将通过 npm 别名安装的 `tsc` 版本与测试集版本、默认用例列表、
 基础 CLI 参数配对（例如 5.9 不接受 `--ignoreConfig`）：
 
-| 基线 | tsc | 语料 | 默认用例清单 |
+| 参考配置 | tsc | 测试集 | 默认用例列表 |
 | --- | --- | --- | --- |
 | `5.9.3` | `typescript-5-9` | `v5.9.3` 标签 | `config/smoke-cases-5.9.json` |
 | `6.0.3` | `typescript-6-0` | strada，v6.0.3 标签 `050880ce` | `config/smoke-cases.json` |
 | `7.1.0-beta` | `typescript-7-1` | strada，v6.0.3 标签 `050880ce` | `config/smoke-cases.json` |
-| `7.1.0-beta-official` | `typescript-7-1` | TS7 Go 语料，固定提交 `3e92363` | `config/smoke-cases-ts71-official.json` |
+| `7.1.0-beta-official` | `typescript-7-1` | TS7 Go 测试集，固定提交 `3e92363` | `config/smoke-cases-ts71-official.json` |
 
-两套官方基线语料的固定提交均与对应 npm 包（`typescript@6.0.3` /
+两套官方测试集的固定提交均与对应 npm 包（`typescript@6.0.3` /
 `typescript@7.1.0-beta`）的 `gitHead` 一致；`test/baseline-pins.test.ts` 检查这一
-对齐关系，CI workflow 从 `config/baselines.json` 解析语料引用，不硬编码 SHA。
+对齐关系，CI workflow 从 `config/baselines.json` 解析测试集引用，不硬编码 SHA。
 
 每个基线的 `baseArgs` 显式编码**官方测试框架的默认值**（参数顺序见
 [技术参考](docs/REFERENCE.md#13-选项来源与优先级)，这样设计的原因见 `docs/DESIGN.md` §3.3）：
@@ -112,12 +106,12 @@ tsc-compa smoke — 用例 28：跑 28，完全通过 28，跳过 0
 - 6.0：target ES2025 / module ES2022 / moduleResolution Bundler / strict 开启；
 - 7.1：target ES2026 / 模块相关设置与 6.0 相同 / strict 开启。
 
-这些默认值**只作用于期望侧**。适配器接收用例指令及显式传入的
+这些默认值**只作用于参考侧**。适配器接收用例指令及显式传入的
 `--base-arg` / `--adapter-arg`，其余选项使用实现自己的默认值。
 跨版本比较若要单独观察语义差异，必须显式对齐选项：
 
 ```bash
-# 5.9 期望与 6.0.3 适配器对照，两侧显式使用相同选项
+# 5.9 参考与 6.0.3 候选对照，两侧显式使用相同选项
 bun src/run.ts --baseline 5.9.3 --corpus /path/to/v5.9.3/tests/cases --adapter tsc-cli:node_modules/typescript-6-0/bin/tsc --base-arg strict=false --base-arg target=es2015 --base-arg module=es2015 --base-arg moduleResolution=bundler
 ```
 
@@ -126,7 +120,7 @@ bun src/run.ts --baseline 5.9.3 --corpus /path/to/v5.9.3/tests/cases --adapter t
 ## 报告
 
 每次运行都可以从生成的 `metrics.json` / `details.json` 输出人类可读报告，
-无需为生成报告重复执行套件：
+无需为生成报告重复执行测试：
 
 ```bash
 # Markdown + 自包含 HTML（默认文件名为 report.md / report.html）
@@ -146,14 +140,14 @@ bun src/report.ts --from .cache/run --md .cache/run/report.md --html .cache/run/
 
 Markdown 报告包括：
 
-- 运行信息：时间、语料／tsc 固定版本或提交、实现名称及二进制 sha256、基线／模式；
-- 指标摘要：覆盖率、假阳性、漏报、错锚、跳过、完全通过的用例数；
-- T0–T3 一致性阶梯，以及启用 `--gate` 时的门禁结论；
+- 运行信息：时间、测试集／tsc 固定版本或提交、检查器名称及二进制 sha256、参考配置／模式；
+- 指标摘要：兼容与严格一致各自的通过、失败与无法确认数，及单独汇总的字段差异、覆盖率和跳过原因；
+- 已验证的兼容性、严格一致性与字段回归，以及启用 `--gate` 时的阻断原因；
 - 与上次运行的差异：通过 `--prev-report` 指定；未指定时，若存在
   `<out>/prev/metrics.json` 则自动使用；
 - 失败与回归提示。
 
-HTML 报告包含相同内容，使用内联 CSS 和内联 SVG 阶梯图，不依赖外部资源。
+HTML 报告包含相同内容，使用内联样式，不依赖外部资源。
 生成过程具有确定性（相同输入生成相同字节），因此可缓存或比较差异。
 报告渲染或写入失败会以非零退出码结束，不会把失败的运行变成通过。
 
@@ -161,76 +155,74 @@ HTML 报告包含相同内容，使用内联 CSS 和内联 SVG 阶梯图，不�
 因此在使用默认对比数据时，`bun src/report.ts --from <out>` 可以逐字节复现运行时的报告
 （若 `run.ts` 显式指定了 `--prev-report`，重新生成时也要传相同路径）。
 
-CI 中，`smoke.yml` 的每个矩阵档位写入 `report.md` / `report.html`，与
+CI 中，`smoke.yml` 的每个矩阵任务写入 `report.md` / `report.html`，与
 `metrics.json` / `details.json` 一起上传为 `report-<entry>` 产物。
 即使门禁失败也会生成报告；若运行在写入指标前崩溃，则生成失败占位报告。
-`report` 任务将所有档位合并到该次运行的 **Summary** 页面，并上传
-`report-summary` 产物；下载后打开 `report/index.html` 即可浏览各档位的 HTML 报告。
+`report` 任务将所有任务项合并到该次运行的 **Summary** 页面，并上传
+`report-summary` 产物；下载后打开 `report/index.html` 即可浏览各任务项的 HTML 报告。
 workflow 令牌为只读（`contents: read`），因此只通过步骤摘要和产物发布报告，
-不向 PR 发送评论。
+不向 PR 发送评论。报告头部列出用例列表路径与 SHA-256、选项策略及参考侧／候选侧
+二进制（含 TS7 wrapper 与原生二进制各自 sha256）；输出目录不带用例路径时可只靠这些
+指纹判断输入是否一致。`details.json` 保存逐案名单和诊断，可以核对 `--limit` 后究竟
+跑了哪些用例；没有 `details.json` 时报告只能给出汇总，不能逐案查看。
+
+用例列表仍填写源文件 ID，例如 `compiler/Foo.ts`。按支持的多值指令展开后，
+`details.json` 会分别记录 `compiler/Foo(target=es2015).ts` 等配置；`lib` 的逗号分隔值
+仍是一组选项，不展开。`--limit N` 在展开前截取前 N 个源文件，展开后的记录数可以超过 N。
+读取官方结果时，具名配置没有 `.errors.txt` 也没有同名配置的其他产物佐证，就记为跳过，
+不当作零诊断。具体规则见[技术参考](docs/REFERENCE.md#42-读取官方结果文件)。
 
 ## CI 与兼容性门禁
 
 `.github/workflows/smoke.yml` 在每次推送和 PR 上运行，下表中的矩阵构成兼容性门禁；
 同时每日定时触发一次（`cron 23 19 * * *`，即 UTC 19:23／北京时间次日 03:23，
 避开整点）。**每日任务由变化驱动，并非每日全量运行**：先运行 `detect` 任务
-（约 30 秒），只有检测到变化才执行套件。没有变化时不运行套件，
+（约 30 秒），只有检测到变化才执行测试。没有变化时不运行测试，
 以「无变化，跳过」摘要结束，状态为通过。
 
-变化检测（`scripts/detect-changes.ts`）将当前状态与上次**成功**运行套件后记录的状态
+变化检测（`scripts/detect-changes.ts`）将当前状态与上次**成功**运行测试后记录的状态
 比较，状态通过 `actions/cache` 保存：
 
 | 检测信号 | 检测方式 | 查询条件／用途 |
 | --- | --- | --- |
-| 本地输入 | `config/**`（基线／语料／用例清单／实现／ratchet）、`package.json` 和 `bun.lock` 的 SHA-256 | 始终可查 |
+| 本地输入 | `config/**`（参考配置／测试集／用例列表／检查器／回归记录）、`package.json` 和 `bun.lock` 的 SHA-256 | 始终可查 |
 | 仓库 HEAD | 当前 `github.sha` 与上次成功运行记录的 HEAD 比较 | 始终可查 |
 | npm 固定版本 | 从 npm registry 查询各精确固定版本的 `dist.integrity`（tsc 别名及 `implementations.json` 中的 npm 版本） | 需要网络；不可查询时视为未变化 |
-| 语料固定引用 | 通过 GitHub API 解析 `config/baselines.json` 中的各个 `corpora.*.ref`（标签移动会改变提交） | 需要网络／GitHub API；不可查询时视为未变化 |
+| 测试集固定引用 | 通过 GitHub API 解析 `config/baselines.json` 中的各个 `corpora.*.ref`（标签移动会改变提交） | 需要网络／GitHub API；不可查询时视为未变化 |
 | 第三方 cargo git 固定提交 | 检查固定提交是否仍存在于 GitHub（`tsc-rs`、`tsz`）；非 GitHub URL 标记为不可比较 | 需要网络／GitHub API；不可查询时视为未变化 |
 | 上游默认分支 HEAD | 只报告，不触发运行（版本／提交已固定，输入不随上游 HEAD 改变） | 仅供参考 |
 
 定时或手动触发时，若首次运行没有缓存状态，则视为有变化。
-`workflow_dispatch` 默认也经过变化检测；设置 `force` 输入可跳过检测、强制运行套件。
-只有所有套件通过后才更新已保存的状态，因此失败会在后续检测中重试，直到通过。
+`workflow_dispatch` 默认也经过变化检测；设置 `force` 输入可跳过检测、强制运行测试。
+只有所有测试通过后才更新已保存的状态，因此失败会在后续检测中重试，直到通过。
 
-套件矩阵（仅在检测判定需要运行时执行）：
+测试矩阵（仅在检测判定需要运行时执行，共六档）：
 
-| 档位 | 期望来源 | 门禁 |
+| 任务项（slug） | 参考结果来源 | 门禁 |
 | --- | --- | --- |
-| 自比 × `5.9.3` / `6.0.3` / `7.1.0-beta` | 固定版本 tsc | `--gate` 零差异自检：不允许假阳性、漏报或错锚 |
-| `7.1.0-beta-official`，28 例 | TS7 官方 `.errors.txt` | 逐案 ratchet（`config/ratchet-ts71-official.tsv`）：任何门禁档位回落均失败 |
-| `6.0.3` 官方基线子集，191 例 | strada `.errors.txt` | 容忍已知的测试框架保真度缺口（12 条假阳性／4 条漏报；见 `docs/RESULTS.md` 结论 11），参数为 `--gate-max-fp 12 --gate-max-miss 4 --gate-min-coverage 0.99` |
+| `5.9.3-self` / `6.0.3-self` / `7.1.0-beta-self` | 固定版本 tsc | 完成用例全部兼容；`--option-strategy aligned` |
+| `7.1.0-beta-api-self`，28 例 | 参考与候选均为 TS7 async API | `aligned` + `--gate --gate-profile strict`，无 ratchet |
+| `7.1.0-beta-official`，28 例 | TS7 官方 `.errors.txt` | `config/ratchet-ts71-official.tsv`，默认兼容保护档 |
+| `6.0.3-official-subset`，191 例 | strada `.errors.txt` | `config/ratchet/typescript-6.0.3-official.tsv`，另检查多报／漏报／覆盖率阈值 |
 
-启用 `--gate` 后，必须满足以下所有条件，否则运行失败并以非零退出码结束；
-逐项结果会打印并保存到 `metrics.meta.gate.checks`：
 
-1. 本次运行可作为兼容性结论（`--mode official`，且适配器接受外部选项；
-   `--mode fixed` 会被拒绝，不会判为通过）；
-2. 至少运行一个用例；
-3. 配置 ratchet 清单时，T0–T2 门禁档位无回落，且清单必须非空、已提交入库
-   （门禁模式不自动初始化，也不写回改善；空清单会被拒绝，不会判为通过）；
-4. 假阳性／漏报／错锚不超过 `--gate-max-fp` / `--gate-max-miss` /
-   `--gate-max-misanchor`，覆盖率不低于 `--gate-min-coverage`。
-
-未配置 ratchet 清单时，三个计数上限默认为 0（自检口径）；配置清单后，
-默认不限制总条数，由清单逐案约束，仍可叠加显式上限。
-
-**门禁档位**：只有 T0 位置与码／T1 严重级别／T2 首行文本通过 ratchet 清单逐案参与门禁。
-清单存储 `location|category|text`，旧的 `full` 条目在读取时归一为 `text`。
-**T3 诊断摘要文本一致（换行归一后的 `.errors.txt` 摘要块）仅用于报告**：
-T3 未达记录在 `totals.byTier` / `totals.t3Failures` 中，不会导致门禁失败。
+启用 `--gate` 后，至少需要一个完成用例和可作结论的运行；未配置回归记录时，完成用例全部满足保护档才通过。
+配置记录后，已验证的用例不能退步或离开执行范围。严格一致退到仅兼容仍是回归，但只有 `--gate-profile strict` 才阻断。
+数字阈值可附加约束，不能把无法确认改判为通过。详见 [回归规则](docs/REFERENCE.md#7-回归检查与-ci-通过条件)。
 
 配置分支保护时，应将稳定的聚合任务 **`compat-gate`** 设为必需状态检查。
 它汇总 `detect` / `unit` / `smoke` / `report`：无变化而跳过时通过；
-套件、检测或报告任务失败时失败。
+测试、检测或报告任务失败时失败。
 必需状态检查属于仓库设置，不能仅通过 workflow 文件声明。
-`ts7-official.yml` 仍是手动 workflow，虽已带 `--gate`，但按现有记录尚未在
-GitHub Actions 上运行；应先手动触发并确认通过，再考虑为其增加独立定时任务
-（变化驱动的 `smoke.yml` 定时任务已在输入变化时重跑相同的 28 个官方基线用例）。
+本仓库现有记录只能证明本地命令跑过；远端 GitHub Actions 的运行结果不能从
+workflow 文件或本地报告推出。`ts7-official.yml` 仍是手动 workflow，已带 `--gate`，
+但尚未确认在 GitHub Actions 上执行成功；应先手动触发并核对报告，再考虑独立定时任务。
+`smoke.yml` 的每日变化检测判「有变化」时，会重跑相同的 28 例官方结果文件对照用例；
+新增的 API 自比档同样只有在检测判定需要运行或推送／PR 时执行，不能在远端运行前写成已通过。
 
 ## 用例分类
 
-`src/classify.ts` 为每个用例添加多个正交标签，例如 `suite:compiler`、
+`src/classify.ts` 为每个用例添加不同维度的标签，例如 `suite:compiler`、
 `files:multi`、`lang:js`、`lang:jsx`、`shape:parser`、`options:module`、
 `options:lib`、`options:emit`、`env:skip`，以及运行时标签
 `expect:syntax`、`expect:no-errors`。指标包含 `byClass` 分类明细；
@@ -239,7 +231,7 @@ GitHub Actions 上运行；应先手动触发并确认通过，再考虑为其�
 通过 `--exclude-class a,b` / `--only-class` 过滤。被排除的用例会记录为
 SKIP，原因为 `类排除:<tag>`，不会静默消失。
 
-重新生成冒烟用例清单（按类过滤，再由基线 tsc 剔除语法错误用例）：
+重新生成冒烟用例列表（按类过滤，再由参考 tsc 剔除语法错误用例）：
 
 ```bash
 bun scripts/select-smoke.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --out config/smoke-cases.json
@@ -247,8 +239,13 @@ bun scripts/select-smoke.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --out 
 
 ## 其他适配器
 
-- `tsc-cli`：参考实现，见 [docs/RESULTS.md](docs/RESULTS.md)；
-- `none`：不报告任何诊断；
+- `tsc-cli`：逐案参考 CLI；`tsc-cli:<bin>` 可驱动参考 tsc 或第三方 TSC 兼容二进制；
+- `ts7-api`：TS7 的 async API 适配器。Bun 进程内只持有 API 客户端，TS7 后端仍是持久子进程，
+  通过 JSON-RPC 调用 `parseCommandLine` / `createProgram` / 诊断方法；`--adapter ts7-api`
+  和 `--expectation-source ts7-api` 同时使用时，参考与候选共用同一实现但各自建 program；
+- `bun-check`：Bun 内置 `bun check` 的逐案适配器，必须显式给 `bun-check:<bin>` 或 `BUN_CHECK_BIN`，
+  不使用当前运行器的 Bun 充当候选。需要声明生成阶段诊断的配置会显式跳过；
+- `none`：不报告任何诊断，用于验证多报错误和漏报路径；
 - `mock-batch`：批量协议参考实现，见 `src/adapters/mock-batch.ts`；
 - `cli:<bin>`：通用逐案 CLI，通过 `TSC_COMPA_CLI_ARGS` 传额外参数；
 - `checker-cli`：驱动支持 `--json` 输出的检查器二进制，逐案运行、使用固定选项集，
@@ -256,67 +253,121 @@ bun scripts/select-smoke.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --out 
 - `checker-batch`：同一二进制的批量 NDJSON 模式，使用 `CHECKER_BATCH_BIN`，
   未设置时回退到 `CHECKER_BIN`。
 
-`--mode fixed` 忽略用例指令，强制使用适配器的固定选项集，因此其数字只用于验证流水线。
-`--mode official` 遵循用例指令；只有适配器也接受外部选项时，
-本次运行才可作为兼容性结论（`verdictEligible`）。
+`ts7-api` 使用运行器生成的命令行参数和物化后的用例文件；解析器已经把支持的指令
+转成 `CaseInput.args`，适配器不再改写成另一种 CLI 格式。它以
+`typescript-7-1/async` 的 `API` 调用 `createProgram`，保留结束位置 `end`（可跨行）、
+消息链、相关信息、附加属性和格式化后的 `fullText`。诊断调用在一个会话里串行排队，
+每个用例独立建 program 并 dispose。API 没有逐案进程退出码，报告会显示「未提供」
+而不是伪造 0/2。某案超时后，后续调用仍可能被后端在途请求拖住，不能把超时当作
+后端已取消。
+
+批量 NDJSON 客户端会透传诊断级 `width`、`messageChain`、`related`、`attributes`、
+`fullText`、`raw`，以及结果级 `fullText`、`exitCode`、`checkMs`、`rawOutput`。
+实现侧不提供这些字段时，报告保持「未提供」，不会补出虚假的结构或空输出。
+`checker-batch` 在工厂里固定 `supportsOptions=false`；即使传 `--mode official`，
+也不能据此给出兼容性结论。它适合用 `--mode fixed` 验证远端二进制的批量管线，
+真实实现的字段完整度和 Check 耗时仍要逐项核对。`mock-batch` 是协议自检实现，
+不是真实检查器。
+
 
 ## 第三方实现
 
 任何提供 TSC 兼容 CLI 的检查器都可通过现有 `tsc-cli` 适配器驱动，
 无需为其编写内部适配器。获取方式（npm 预编译包／cargo 构建／本地二进制）、
-固定 CLI 参数、上游固定提交及相位指标登记在
+固定 CLI 参数、上游固定提交及阶段指标登记在
 [`config/implementations.json`](config/implementations.json)：
 
 ```bash
 # 按登记信息获取实现，并打印二进制路径
 BIN=$(bun scripts/install-impl.ts --name tsrs --dest .tools | tail -1)
 
-# 在 TS7 官方基线上对该实现运行同一套冒烟测试
+# 在 TS7 官方结果文件上对该实现运行同一套冒烟测试
+
+IMPL=tsrs
 TSC_COMPA_ADAPTER_ARGS="--singleThreaded" \
 bun src/run.ts --baseline 7.1.0-beta-official \
   --corpus /tmp/ts71-corpus/tsc/testdata/tests/cases \
   --adapter "tsc-cli:$BIN" --mode official \
   --expectation-source official-baseline \
+  --option-strategy aligned \
   --ratchet-impl "$IMPL"
 ```
 
+`--ratchet-impl` 推导 `config/ratchet/<impl>-<baseline>.tsv`；第一次不带
+`--gate` 运行会在本地生成并登记当前结果，审阅后再提交。门禁只读取已入库记录；
+`--limit` 或只跑部分用例时不能把这一次写成完整回归通过。
+
 `.github/workflows/third-party.yml` 在 CI 中执行相同流程（手动触发，
-按「实现 × 基线」运行）。已记录的结果：`tsrs` 在 TS7 官方基线和 strada 7.1 基线上
-均为 28/28 通过、0 假阳性、100% 覆盖率，见 [docs/RESULTS.md](docs/RESULTS.md)。
+按「检查器 × 参考配置」运行）。本地记录中，`tsrs` 在 TS7 官方结果文件和 strada 7.1
+参考配置上均为 28/28 通过、0 多报错误、100% 覆盖率；完整固定版本样本见
+[docs/RESULTS.md](docs/RESULTS.md)。这些是本地实测，不代表 GitHub Actions 的
+`third-party.yml` 已成功运行。
+
+固定版本复现脚本 `scripts/validate-compatibility.ts` 对每个候选分别跑现场 tsc 与
+官方 `.errors.txt` 两种参考来源，并从 manifest 读取固定样本数；任一次没有完成全部
+比较、出现执行失败或适配器不能接受用例选项，脚本即非零退出。120 例样本当前要求
+`totals.ran === 120`，不会把「跑了一部分」当完整结果：
+
+```bash
+TS71_CASES=/path/to/ts71/tsc/testdata/tests/cases
+bun scripts/validate-compatibility.ts "$TS71_CASES" .cache/compatibility/typescript typescript
+```
+
+固定版本的 Bun 1.4.4／1.4.5 与 tsrs 也走同一入口：
+
+```bash
+for V in 1.4.4 1.4.5; do
+  BIN=$(vp env exec --package-manager "bun@$V" -- bun -p process.execPath)
+  vp env exec --package-manager "bun@$V" -- bun scripts/validate-compatibility.ts \
+    "$TS71_CASES" ".cache/compatibility/bun-$V" "bun-$V" "$BIN"
+done
+
+TSRS=$(bun scripts/install-impl.ts --name tsrs --dest .cache/checkers | tail -n 1)
+bun scripts/validate-compatibility.ts "$TS71_CASES" .cache/compatibility/tsrs tsrs "$TSRS"
+```
+
+`.github/workflows/compatibility-reports.yml` 只负责在 Linux 上手动生成同类报告，
+本地 `darwin/arm64` 的哈希和耗时不能直接当作 CI 结果。Bun 1.4.x 的 `bun check`
+拒绝 `target=es2026`，这份 120 例列表的用例都显式覆盖了 target，所以不能把结果
+外推到 Bun 的默认 target 或项目配置；它的 `process.versions.typescript` 是内置的
+`7.0.2`，不是参考 tsc 的版本。`tsrs` 的自报版本包含它跟踪的 TypeScript 提交，
+不等于 tsrs 自身的源码提交；npm provenance 与二进制 sha256 要分别记录。
 
 ## 目录结构
 
 | 路径 | 用途 |
 | --- | --- |
 | `src/case.ts` | 用例指令解析、虚拟文件、编译选项推导 |
-| `src/classify.ts` | 正交用例标签与过滤 |
-| `src/baselines.ts` | 基线配置（tsc × 语料版本） |
-| `src/discover.ts` | 语料扫描与用例清单 |
-| `src/tsc.ts` | 通过固定版本 tsc CLI 生成并缓存期望诊断 |
-| `src/officialBaseline.ts` | 读取官方 `.errors.txt` 基线作为期望源（strada 平铺布局 + TS7 Go 布局，含平铺套件；缺基线视为无错误） |
-| `src/compare.ts` | 诊断匹配（含错锚配对）、T0–T3 一致性阶梯与指标；T3 比较 `.errors.txt` 中 `====` 前的摘要块，并记录逐案未达原因 |
+| `src/classify.ts` | 多维用例标签与过滤 |
+| `src/baselines.ts` | 参考配置（tsc × 测试集版本） |
+| `src/discover.ts` | 测试集扫描与用例列表 |
+| `src/tsc.ts` | 通过固定版本 tsc CLI 生成并缓存参考诊断；缓存键含解析管线版本、文件、参数、tsc 版本与参考二进制 sha256 |
+| `src/officialBaseline.ts` | 读取官方 `.errors.txt` 作为参考结果（支持两种布局；缺少结果文件时按零诊断处理） |
+| `src/compare.ts` | 诊断匹配（含位置差异配对）、现有 T0–T3 分级与指标；T3 比较 `.errors.txt` 中 `====` 前的摘要块，并记录逐案差异 |
 | `src/ratchet.ts` | `--ratchet` / `--ratchet-impl` 清单：按「实现 × 基线」只升不降，回落则运行失败 |
-| `src/gate.ts` | `--gate`：ratchet／假阳性／漏报／错锚／覆盖率检查及门禁摘要 |
+| `src/gate.ts` | `--gate`：回归记录／多报错误／漏报／位置差异／覆盖率检查及门禁摘要 |
 | `src/report.ts` | 从运行指标和明细生成 Markdown + 自包含 HTML 报告；支持 `run.ts --report-md/--report-html/--report-out` 及独立命令 `bun src/report.ts --from <out>`，指标缺失时生成失败占位报告 |
 | `src/run.ts` | 冒烟运行入口 |
-| `src/adapters/` | 参考 `tsc-cli` 适配器（保留多行阐述和关联信息用于 T3）、`checker-cli` 逐案适配器、通用 `cli:<bin>` 适配器、批量协议客户端及模拟实现 |
-| `config/baselines.json` | 基线配置（参考 tsc、期望侧参数、语料引用与默认用例清单） |
+| `src/adapters/` | `tsc-cli`、`ts7-api`、`bun-check`、`checker-cli`、通用 `cli:<bin>` 适配器、批量 NDJSON 客户端及模拟实现 |
+| `config/baselines.json` | 参考配置（参考 tsc、参考侧参数、测试集引用与默认用例列表） |
 | `config/implementations.json` | 第三方实现登记（获取方式、CLI 参数、固定版本／提交） |
-| `config/smoke-cases*.json` | 按语料维护的可复现冒烟用例清单 |
-| `config/anchor-cases.json` | 已知跨版本锚点差异的用例 |
-| `config/official-baseline-cases.json` | 可读取官方基线的样本用例清单 |
-| `config/smoke-cases-ts71-official.json` | TS7 官方基线冒烟清单（18 个报错用例 + 10 个无错用例） |
+| `config/smoke-cases*.json` | 按测试集维护的可复现冒烟用例列表 |
+| `config/anchor-cases.json` | 已知跨版本诊断位置差异的用例 |
+| `config/official-baseline-cases.json` | 可读取官方结果文件的样本用例列表 |
+| `config/smoke-cases-ts71-official.json` | TS7 官方结果文件对照的冒烟用例列表（18 个报错用例 + 10 个无错用例） |
 | `config/official-baseline-cases-ts71.json` | 120 个带错误的 TS7 用例（扩展本地样本） |
-| `config/ratchet/` | 按实现分账的 T0–T2 门禁 ratchet 清单（`<impl>-<baseline>.tsv`；T3 full 仅报告，清单中归一为 text）；`config/ratchet-ts71-official.tsv` 为旧版共用清单 |
-| `scripts/select-smoke.ts` | 重新生成按类过滤的冒烟用例清单 |
-| `scripts/select-official-baseline-cases.ts` | 扫描语料，筛选可读取官方基线的用例 |
+| `config/ratchet/` | 按检查器分别保存的 v2 回归记录（`<impl>-<baseline>.tsv`，两档 verdict 加逐字段状态）；根目录 `config/ratchet-ts71-official.tsv` 是仍被 `smoke.yml` 和 `ts7-official.yml` 显式使用的旧档记录 |
+| `scripts/select-smoke.ts` | 重新生成按类过滤的冒烟用例列表 |
+| `scripts/select-official-baseline-cases.ts` | 扫描测试集，筛选可读取官方结果文件的用例 |
 | `scripts/install-impl.ts` | 按登记信息获取第三方实现 |
-| `scripts/detect-changes.ts` | 每日定时变化检测：本地输入哈希、仓库 HEAD、外部固定引用漂移 → 运行套件或「无变化，跳过」 |
-| `scripts/merge-reports.ts` | 将各 CI 档位报告合并为步骤摘要（Markdown）和 HTML 索引 |
-| `.github/workflows/smoke.yml` | 推送／PR 的 CI 门禁：单测 + 自比 `--gate` 冒烟 + 官方基线门禁；逐档报告及合并摘要／产物；每日任务先检测变化 |
-| `.github/workflows/ts7-official.yml` | 手动 CI：TS7 官方基线冒烟（T0–T3 + ratchet + `--gate`） |
+| `scripts/detect-changes.ts` | 每日定时变化检测：本地输入哈希、仓库 HEAD、外部固定引用差异 → 运行测试或「无变化，跳过」 |
+| `scripts/merge-reports.ts` | 将各 CI 任务报告合并为步骤摘要（Markdown）和 HTML 索引 |
+| `.github/workflows/smoke.yml` | 推送／PR 的 CI 门禁：单测 + 三档 tsc 自比 + TS7 async API 严格自比 + 两档官方结果对照（共六档）；各任务报告与合并摘要／产物；每日任务先检测变化 |
+| `.github/workflows/ts7-official.yml` | 手动 CI：TS7 官方结果文件对照（兼容档回归记录 + `--gate`；`--limit` 时只出报告） |
 | `.github/workflows/third-party.yml` | 手动 CI：第三方实现 × 基线冒烟 |
-| `docs/DESIGN.md` | 设计思路、报告解读与术语 |
+| `.github/workflows/compatibility-reports.yml` | 手动 CI：固定版本 TypeScript／Bun／tsrs 的 120 例两种参考来源报告 |
+| `scripts/validate-compatibility.ts` | 本地固定版本复现：断言固定样本全部完成比较，再落 Markdown／HTML／JSON |
+| `docs/DESIGN.md` | 设计思路、候选接入方式与报告解读 |
 | `docs/REFERENCE.md` | 参数、字段、比较规则和适配器协议 |
 | `docs/STATUS.md` | 实现状态、版本配置、已知限制与待办 |
 | `docs/HISTORY.md` | 重要演进及历史认识修正 |
@@ -327,7 +378,9 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 ## 可选性能附录
 
 `--perf-ratio` 为常规兼容性运行增加性能**附录**，不改变通过／失败结论。
-常规运行时直接记录实现的逐案墙钟时间，并在同一次运行中用官方 tsc
+`ts7-api` 作为参考来源时，性能参考仍逐案调用 tsc CLI，不能把 API 参考和候选的计时
+直接当成同一进程成本。
+常规运行时直接记录实现的逐案实际耗时，并在同一次运行中用官方 tsc
 带 `--extendedDiagnostics` 执行固定分层样本（默认 300 例），生成性能比值。
 
 ```bash
@@ -335,17 +388,19 @@ bun src/run.ts --baseline 7.1.0-beta-official --expectation-source official-base
   --cases config/smoke-cases-ts71-official.json --adapter checker-cli:<bin> --perf-ratio
 ```
 
-参考 tsc 使用固定分层样本（套件 × 行数分桶 × 期望错误，默认 300 例，
+参考 tsc 使用固定分层样本（测试类别 × 行数分桶 × 参考错误，默认 300 例，
 通过 `--perf-sample` 调整）。每个用例两侧各运行一次，一半样本先运行参考 tsc，
 另一半先运行被测实现。两侧都报告 `--extendedDiagnostics` 时，
-主比值使用累计 Check 相位时间；否则使用扣除空程序基线后的墙钟时间
+主比值使用累计 Check 阶段时间；否则使用扣除空程序基线后的实际耗时
 （若参考侧固定成本占主导，则保护性地返回 null）。
-数字写入 `metrics.json` 的 `perf` 字段；测量方法见
+`metrics.json` 的 `perf` 还记录未扣除固定成本的实际耗时及比值，分别汇总双方都完成
+计时的样本和其中兼容档通过的子集；这些数字包含调用开销，不等同于 Check 阶段耗时。
+测量方法见
 [技术参考](docs/REFERENCE.md#9-性能指标)，设计思路见 `docs/DESIGN.md` §8。
 
-## 测试语料许可
+## 测试集许可
 
-TypeScript 编译器测试套件（`microsoft/TypeScript` 的 `tests/cases` 和基线）
-采用 Apache-2.0 许可，本仓库在 CI 运行时读取这些语料。
+TypeScript 编译器测试集（`microsoft/TypeScript` 的 `tests/cases` 和结果文件）
+采用 Apache-2.0 许可，本仓库在 CI 运行时读取这些测试集。
 本仓库自身的代码与数据同样采用 Apache-2.0 许可，见 [LICENSE](LICENSE)
 和 [NOTICE](NOTICE)。

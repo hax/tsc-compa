@@ -10,22 +10,9 @@
 #   - workflow_dispatch：默认同样先 detect；勾 force 输入可跳过检测强制跑。
 # 检测逻辑在 scripts/detect-changes.ts；检测项、不可查项与已知限制见 docs/CI.md。
 #
-# 套件五档（只在 detect 判「跑」时执行）：
-#   三档自比（期望源 = 实现）是 harness 正确性检查，走 --gate 的「零差异」自检口径：
-#   假阳性、漏报、错锚都必须为 0，否则 CI 变红。
-#
-# 每档跑完（无论门禁红绿、甚至运行提前失败）都会生成 Markdown/HTML 报告并上传
-# artifact `report-<slug>`；report job 再把各档合并成一份 $GITHUB_STEP_SUMMARY
-# 摘要（失败档位标注出来）并上传可下载的 HTML 索引 `report-summary`。
-#
-#   两个官方基线档是兼容性门禁（`--expectation-source official-baseline`）：
-#   - 7.1.0-beta-official 28 例：直接消费 TS7 Go 布局的官方 .errors.txt，按
-#     `config/ratchet-ts71-official.tsv` 的 ratchet 清单门禁（只记 T0–T2 门禁档、
-#     按用例只升不降，回落即红；T3 整份基线是报告档，未达只进 metrics，不判红）；
-#   - 6.0.3 官方基线子集 191 例：strada 平铺布局，容忍 harness 保真度缺口带来的
-#     已知偏差（当前 2 例假阳性共 12 条、4 条漏报，见 docs/RESULTS.md 结论 11），
-#     另设覆盖率下限 0.99；超出即红。12/4 是结论 11 的实测偏差，不是临时阈值：
-#     语料 pin 已对齐 npm gitHead（#7），不会让它归零，收紧需修 harness 或登记豁免。
+# 三档自比要求已完成用例兼容，并检查多报、漏报和位置差异。
+# 两档官方基线用分别审阅的回归记录；尚不兼容的用例仍运行并保留在报告中。
+# 门禁失败时也尝试上传 Markdown、HTML 和逐案 JSON。
 name: smoke
 
 on:
@@ -92,6 +79,8 @@ jobs:
           bun-version: 1.4.4
       - name: Install deps
         run: bun install --frozen-lockfile
+      - name: Type check the harness
+        run: bun run typecheck
       - name: Unit tests
         run: bun test ./test
 
@@ -137,6 +126,19 @@ jobs:
             gate_max_fp: ""
             gate_max_miss: ""
             gate_min_coverage: ""
+          - slug: 7.1.0-beta-api-self
+            name: 7.1.0-beta API 自比（严格一致 gate）
+            baseline: 7.1.0-beta-official
+            tsc: node_modules/typescript-7-1/bin/tsc
+            adapter: ts7-api
+            gate_profile: strict
+            corpus_path: tsc/testdata/tests/cases
+            cases: config/smoke-cases-ts71-official.json
+            expectation_source: ts7-api
+            ratchet: ""
+            gate_max_fp: ""
+            gate_max_miss: ""
+            gate_min_coverage: ""
           - slug: 7.1.0-beta-official
             name: 7.1.0-beta-official 28 例（官方基线 + ratchet gate）
             baseline: 7.1.0-beta-official
@@ -149,13 +151,13 @@ jobs:
             gate_max_miss: ""
             gate_min_coverage: ""
           - slug: 6.0.3-official-subset
-            name: 6.0.3 官方基线子集 191 例（gate，容忍已知 npm 偏差）
+            name: 6.0.3 官方基线子集 191 例（兼容档 gate）
             baseline: 6.0.3
             tsc: node_modules/typescript-6-0/bin/tsc
             corpus_path: tests/cases
             cases: config/official-baseline-cases.json
             expectation_source: official-baseline
-            ratchet: ""
+            ratchet: config/ratchet/typescript-6.0.3-official.tsv
             gate_max_fp: 12
             gate_max_miss: 4
             gate_min_coverage: 0.99
@@ -184,6 +186,8 @@ jobs:
         env:
           BASELINE: ${{ matrix.baseline }}
           TSC_PATH: ${{ matrix.tsc }}
+          ADAPTER: ${{ matrix.adapter }}
+          GATE_PROFILE: ${{ matrix.gate_profile }}
           CORPUS: ${{ github.workspace }}/reference/corpus/${{ matrix.corpus_path }}
           CASES: ${{ matrix.cases }}
           EXPECT: ${{ matrix.expectation_source }}
@@ -195,6 +199,8 @@ jobs:
         run: |
           set -euo pipefail
           GATE_ARGS=(--gate)
+          ADAPTER="${ADAPTER:-tsc-cli:$TSC_PATH}"
+          if [ -n "${GATE_PROFILE:-}" ]; then GATE_ARGS+=(--gate-profile "$GATE_PROFILE"); fi
           if [ -n "${EXPECT:-}" ]; then GATE_ARGS+=(--expectation-source "$EXPECT"); fi
           if [ -n "${RATCHET:-}" ]; then GATE_ARGS+=(--ratchet "$RATCHET"); fi
           if [ -n "${MAX_FP:-}" ]; then GATE_ARGS+=(--gate-max-fp "$MAX_FP"); fi
@@ -203,7 +209,7 @@ jobs:
           bun src/run.ts \
             --baseline "$BASELINE" \
             --corpus "$CORPUS" \
-            --adapter "tsc-cli:$TSC_PATH" \
+            --adapter "$ADAPTER" --option-strategy aligned \
             --cases "$CASES" \
             --out "$OUT" \
             --report-md "$OUT/report.md" \
@@ -229,7 +235,7 @@ jobs:
             echo ""
             if [ -f .cache/run/metrics.json ]; then
               echo '```json'
-              jq '{gate: (.meta.gate | {passed, thresholds, checks}), totals: (.totals | {cases, ran, skipped, fpCases, fpTotal, expectTotal, hitTotal, missTotal, misanchorTotal, coverage, byTier, t3Failures}), ratchet: .meta.ratchet}' .cache/run/metrics.json 2>/dev/null \
+              jq '{gate: (.meta.gate | {passed, thresholds, checks}), totals: (.totals | {cases, ran, skipped, fpCases, fpTotal, expectTotal, hitTotal, missTotal, misanchorTotal, coverage}), comparison: (.comparison | {compatibility, strict}), ratchet: (.meta.ratchet | if . == null then null else del(.regressionDetails) end)}' .cache/run/metrics.json 2>/dev/null \
                 || head -c 3000 .cache/run/metrics.json
               echo '```'
             else
@@ -311,6 +317,7 @@ jobs:
       - name: Aggregate detect / unit / smoke / report
         env:
           DETECT: ${{ needs.detect.result }}
+          PLAN_RUN: ${{ needs.detect.outputs.run }}
           UNIT: ${{ needs.unit.result }}
           SMOKE: ${{ needs.smoke.result }}
           REPORT: ${{ needs.report.result }}
@@ -321,13 +328,18 @@ jobs:
             echo "::error::变化检测失败（detect=$DETECT）"
             exit 1
           fi
+          case "$PLAN_RUN" in
+            true) expected=success ;;
+            false) expected=skipped ;;
+            *) echo "::error::变化检测未返回有效计划（run=$PLAN_RUN）"; exit 1 ;;
+          esac
           for result in "$UNIT" "$SMOKE" "$REPORT"; do
-            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
-              echo "::error::门禁未通过（unit/smoke/report 结果：$result）"
+            if [ "$result" != "$expected" ]; then
+              echo "::error::门禁未通过（根据计划应为 $expected，实际为 $result）"
               exit 1
             fi
           done
-          if [ "$UNIT" = "skipped" ]; then
+          if [ "$PLAN_RUN" = "false" ]; then
             echo "结论：no changes, skip（本次未跑套件）"
           else
             echo "结论：套件全部通过"
