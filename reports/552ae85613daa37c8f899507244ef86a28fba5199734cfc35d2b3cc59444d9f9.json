@@ -81,11 +81,11 @@
     "id": "fixed-120",
     "label": "固定诊断样本（120 例）"
   },
-  "generatedAt": "2026-11-27T09:16:57.645Z",
+  "generatedAt": "2026-11-27T09:19:13.884Z",
   "reportPath": "reports/552ae85613daa37c8f899507244ef86a28fba5199734cfc35d2b3cc59444d9f9.html",
-  "runUrl": "https://github.com/hax/tsc-compa/actions/runs/45972212728",
+  "runUrl": "https://github.com/hax/tsc-compa/actions/runs/45972515903",
   "workflowRun": {
-    "number": 15,
+    "number": 16,
     "attempt": 1
   },
   "summary": {
