@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
@@ -47,6 +47,58 @@ test("stages deterministic sidecar files without touching the catalog or existin
     expect(readFileSync(join(path, "comparison.json"), "utf8")).toBe(`${JSON.stringify(data, null, 2)}\n`);
     expect(() => stageCuratedComparison(root)).toThrow();
     for (const [file, body] of Object.entries(existing)) expect(readFileSync(join(reports, file), "utf8")).toBe(body);
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("a reports symlink to a sibling is rejected without writing outside the staging root", () => {
+  const root = mkdtempSync(join(tmpdir(), "curated-sidecar-links-"));
+  try {
+    const web = join(root, "web");
+    const sibling = join(root, "sibling");
+    mkdirSync(web);
+    mkdirSync(sibling);
+    writeFileSync(join(sibling, "sentinel"), "untouched");
+    symlinkSync(sibling, join(web, "reports"), "dir");
+    expect(() => stageCuratedComparison(web)).toThrow("Expected a real directory");
+    expect(readdirSync(sibling)).toEqual(["sentinel"]);
+    expect(readFileSync(join(sibling, "sentinel"), "utf8")).toBe("untouched");
+
+    const alias = join(root, "web-link");
+    symlinkSync(sibling, alias, "dir");
+    expect(() => stageCuratedComparison(alias)).toThrow("Expected a real directory");
+    expect(readdirSync(sibling)).toEqual(["sentinel"]);
+
+    const file = join(root, "file");
+    writeFileSync(file, "not a directory");
+    expect(() => stageCuratedComparison(file)).toThrow("Expected a real directory");
+    const otherWeb = join(root, "other");
+    mkdirSync(otherWeb);
+    writeFileSync(join(otherWeb, "reports"), "not a directory");
+    expect(() => stageCuratedComparison(otherWeb)).toThrow("Expected a real directory");
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("a fresh staging root under an ancestor alias can be used without following a sidecar symlink", () => {
+  const root = mkdtempSync(join(tmpdir(), "curated-sidecar-alias-"));
+  try {
+    const real = join(root, "real");
+    const alias = join(root, "alias");
+    mkdirSync(real);
+    symlinkSync(real, alias, "dir");
+    const web = join(alias, "web");
+    const path = stageCuratedComparison(web);
+    expect(path).toBe(join(web, "reports", suiteId));
+    expect(readdirSync(join(real, "web", "reports", suiteId)).sort()).toEqual(["comparison.json", "index.html"]);
+
+    const blocked = join(alias, "blocked", "reports");
+    mkdirSync(blocked, { recursive: true });
+    symlinkSync(real, join(blocked, suiteId), "dir");
+    expect(() => stageCuratedComparison(join(alias, "blocked"))).toThrow();
+    expect(readdirSync(real).sort()).toEqual(["blocked", "web"]);
   } finally {
     rmSync(root, { recursive: true });
   }

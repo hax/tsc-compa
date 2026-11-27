@@ -1,5 +1,5 @@
 // Read-only public-format projection of the committed #27 evidence, not a new evaluation or data-branch writer.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../src/baselines.ts";
 import { sha256 } from "../src/provenance.ts";
@@ -142,17 +142,29 @@ ${data.supplemental.probes.map((p) => `<tr><th scope="row"><a href="${esc(repoFi
 </main></body></html>\n`;
 }
 
+function ensureDirectory(path: string, recursive = false) {
+  if (!lstatSync(path, { throwIfNoEntry: false })) mkdirSync(path, { recursive });
+  // lstat rejects symlinks even if they point to a directory or are dangling.
+  requireInvariant(lstatSync(path).isDirectory(), `Expected a real directory: ${path}`);
+  return realpathSync(path);
+}
+
 /** Stage beside the catalog; never modify catalog/index/history or overwrite an existing v1 snapshot. */
 export function stageCuratedComparison(webRoot: string) {
   const data = loadCuratedComparison();
   const html = curatedComparisonHtml(data);
-  const reports = join(resolve(webRoot), "reports");
-  mkdirSync(reports, { recursive: true });
+  const requestedRoot = resolve(webRoot);
+  // Canonicalize ancestors (e.g. macOS /tmp) but require the requested root's final component to be real.
+  const root = ensureDirectory(requestedRoot, true);
+  const reports = join(root, "reports");
+  requireInvariant(ensureDirectory(reports) === reports, `Reports directory is not inside the staging root: ${reports}`);
   const destination = join(reports, suiteId);
-  mkdirSync(destination);
+  mkdirSync(destination); // A fresh real directory only; never follow or overwrite an existing entry.
+  requireInvariant(lstatSync(destination).isDirectory() && realpathSync(destination) === destination,
+    `Sidecar directory is not inside the staging root: ${destination}`);
   writeFileSync(join(destination, "index.html"), html, { flag: "wx" });
   writeFileSync(join(destination, "comparison.json"), `${JSON.stringify(data, null, 2)}\n`, { flag: "wx" });
-  return destination;
+  return join(requestedRoot, "reports", suiteId);
 }
 
 if (import.meta.main) {
