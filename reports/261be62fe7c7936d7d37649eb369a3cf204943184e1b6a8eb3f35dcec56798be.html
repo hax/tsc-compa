@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'"><title>tsrs 0.25.0-ts7.1.0-beta · 全量类型检查测试集（compiler / conformance） · tsc-compa</title></head>
+<body><main><p><a href="../">返回报告目录</a></p><h1>tsrs 0.25.0-ts7.1.0-beta · 全量类型检查测试集（compiler / conformance）</h1>
+<p>对照：TypeScript 7.1.0-beta 官方 .errors.txt。生成时间：2026-11-27T08:58:15.802Z。</p>
+<h2>比较结果</h2>
+<ul><li>运行完整性：8 个分片已核对。计划 12974 个源文件、14346 条配置记录；完成 9212，跳过 5134。</li>
+<li>兼容（通过 / 失败 / 未确认）：9169 / 43 / 0。</li><li>严格一致（通过 / 失败 / 未确认）：4829 / 77 / 4306。</li>
+<li>诊断命中：24060 / 24133（99.70%）；多报 47，漏报 71，错锚 2。</li></ul>
+<p>分片齐全不代表每条配置都能比较；诊断命中率只按实际比较的记录计算。</p>
+<h2>差异示例（最多 8 条）</h2><ul><li><code>compiler/declFileExportImportChain.ts</code>：多报 3，漏报 0，错锚 0</li><li><code>compiler/externalModuleAssignToVar.ts</code>：多报 2，漏报 0，错锚 0</li><li><code>conformance/classes/members/privateNames/privateNameEmitHelpers.ts</code>：多报 0，漏报 2，错锚 0</li><li><code>conformance/parser/ecmascript5/SuperExpressions/parserSuperExpression2.ts</code>：多报 0，漏报 1，错锚 0</li><li><code>conformance/types/thisType/declarationFiles.ts</code>：多报 0，漏报 4，错锚 0</li><li><code>compiler/alwaysStrictNoImplicitUseStrict.ts</code>：多报 1，漏报 0，错锚 0</li><li><code>compiler/collisionExportsRequireAndAlias.ts</code>：多报 0，漏报 2，错锚 0</li><li><code>compiler/collisionExportsRequireAndInternalModuleAlias.ts</code>：多报 0，漏报 2，错锚 0</li></ul>
+<h2>运行条件与证据</h2><ul><li>语料：<code>microsoft/TypeScript@3e9236361fa97a9e6c685f4833ac457ae2d8c50a</code></li><li>适配器：<code>tsc-cli</code></li>
+<li>候选可执行文件 SHA-256：<code>5df5caa2f34776a5c073487b63f4668ac7977af98229a6e77331a461ba0e547c</code></li>
+<li>测试集计划 SHA-256：<code>cf6f6bb315459507ef006400c6fb192375a24cdaf20dbaf7816436502cfe9f7b</code></li><li>执行器 SHA-256：<code>12a2ea8c937cfb4c7450a44394d340bdaf283d7dd483e93a3b5de9f52bf60792</code></li></ul>
+<p><a href="261be62fe7c7936d7d37649eb369a3cf204943184e1b6a8eb3f35dcec56798be.json">精简 JSON</a> · <a href="https://github.com/hax/tsc-compa/actions/runs/45969582556">GitHub Actions 运行（原始产物有保留期限）</a></p>
+</main></body></html>
