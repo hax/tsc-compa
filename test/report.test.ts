@@ -858,6 +858,61 @@ describe("报告 delta 与逐例回归", () => {
     expect(markdown).not.toContain("**逐例变化（1 例回归");
   });
 
+  test.each([
+    ["同源不同目标", "es2015", "es2020", "目标配置选择不同"],
+    ["只有旧报告有摘要", "es2015", null, "目标配置选择缺少一侧记录，无法对照"],
+    ["只有新报告有摘要", null, "es2020", "目标配置选择缺少一侧记录，无法对照"],
+  ])("v2 delta：%s 不可比，不把未选中的配置报成回归", (_name, before, after, reason) => {
+    const manifestFor = (target: string | null) => ({
+      ...SAME_V2_SCOPE,
+      ...(target === null ? {} : { selectedTargetsSha256: `selected-${target}` }),
+    });
+    const previous = {
+      metrics: v2Metrics({ manifest: manifestFor(before) }),
+      details: [newDetails({ id: "compiler/a(target=es2015).ts" })],
+    };
+    const current = {
+      metrics: v2Metrics({ manifest: manifestFor(after), strict: "fail" }),
+      details: [newDetails({ id: "compiler/a(target=es2020).ts", comparison: comparisonOf({ strict: "fail" }) })],
+    };
+    const { markdown, html } = generateReport(current, { previous });
+    for (const report of [markdown, html]) {
+      expect(report).toContain(reason);
+      expect(report).toContain("n/a（范围不可比）");
+      expect(report).not.toContain("已从本次范围移除");
+    }
+  });
+
+  test("精确配置报告与没有配置摘要的旧版 T0–T3 报告不可比", () => {
+    const id = "compiler/a(target=es2015).ts";
+    const previous = { metrics: metricsOf(), details: detailsWithTier([[id, "full"]]) };
+    const current = {
+      metrics: v2Metrics({ manifest: { ...SAME_V2_SCOPE, selectedTargetsSha256: "selected-es2015" } }),
+      details: [newDetails({ id, tier: "text" })],
+    };
+    const { markdown, html } = generateReport(current, { previous });
+    for (const report of [markdown, html]) {
+      expect(report).toContain("目标配置选择缺少一侧记录，无法对照");
+      expect(report).toContain("n/a（范围不可比）");
+      expect(report).not.toContain("T3 全文 → T2 文案");
+    }
+  });
+
+  test("v2 delta：目标配置摘要相同仍报告真实回归", () => {
+    const manifest = { ...SAME_V2_SCOPE, selectedTargetsSha256: "selected-es2015" };
+    const id = "compiler/a(target=es2015).ts";
+    const previous = { metrics: v2Metrics({ manifest }), details: [newDetails({ id })] };
+    const current = {
+      metrics: v2Metrics({ manifest, strict: "fail" }),
+      details: [newDetails({ id, comparison: comparisonOf({ strict: "fail" }) })],
+    };
+    const { markdown, html } = generateReport(current, { previous });
+    for (const report of [markdown, html]) {
+      expect(report).not.toContain("范围提示");
+      expect(report).toContain("严格一致档：通过 → 失败");
+    }
+  });
+
   test("v2 delta：officialInputsSha256 不同也提示范围不可比", () => {
     const previous = {
       metrics: v2Metrics({ manifest: SAME_V2_SCOPE }),
