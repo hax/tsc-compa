@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { REPO_ROOT } from "../src/baselines.ts";
 import { sha256 } from "../src/provenance.ts";
 
@@ -43,6 +43,9 @@ test.skipIf(process.env.TSC_COMPA_TEST_TSRS_ASYNC !== "1")("tsrs-async：独立�
       version: "Version 7.1.0-beta (tsrs 0.25.0-ts7.1.0-beta, microsoft/TypeScript@3e9236361fa9)",
       sdk: { module: "tsrs/async", version: "0.25.0-ts7.1.0-beta" },
     });
+    const pilotModules = realpathSync(join(REPO_ROOT, "config/tsrs-async/node_modules")) + sep;
+    expect(candidate.path.startsWith(pilotModules)).toBe(true);
+    expect(candidate.sdk.path.startsWith(pilotModules)).toBe(true);
     expect(candidate.path).toMatch(/[/\\]@tsrs[/\\]/);
     expect(candidate.sha256).toBe(sha256(readFileSync(candidate.path)));
     expect(candidate.sdk.sha256).toBe(sha256(readFileSync(candidate.sdk.path)));

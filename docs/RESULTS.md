@@ -394,7 +394,8 @@ SDK 入口为 `d28f34c05665`，独立的官方原生程序为 `29f5eb8daa5c`。�
 ```sh
 bun install --frozen-lockfile
 unset TSRS_BINARY
-bun scripts/install-impl.ts --name tsrs --source npm --dest .cache/tsrs-async/sdk
+test -f config/tsrs-async/bun.lock && \
+  bun install --cwd config/tsrs-async --frozen-lockfile --registry=https://registry.npmjs.org
 TSC_COMPA_TEST_TSRS_ASYNC=1 bun test test/tsrs-async.test.ts
 for MANIFEST in smoke-cases-ts71-official official-baseline-cases-ts71; do
   OUT=".cache/tsrs-async-pilot/$MANIFEST"

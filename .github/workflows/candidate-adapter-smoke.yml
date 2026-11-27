@@ -7,6 +7,7 @@ on:
       - config/baselines.json
       - config/implementations.json
       - config/smoke-cases-ts71-official.json
+      - config/tsrs-async/**
       - scripts/install-impl.ts
       - src/**
       - test/tsrs-async.test.ts
@@ -162,8 +163,10 @@ jobs:
           sparse-checkout: tsc/testdata/tests/cases
           persist-credentials: false
       - run: bun install --frozen-lockfile
-      - name: Install the pinned tsrs SDK
-        run: bun scripts/install-impl.ts --name tsrs --source npm --dest .cache/tsrs-async/sdk
+      - name: Install the locked tsrs SDK and platform backend
+        run: |
+          test -f config/tsrs-async/bun.lock
+          bun install --cwd config/tsrs-async --frozen-lockfile --registry=https://registry.npmjs.org
       - name: Test structured diagnostics and tool identities
         run: TSC_COMPA_TEST_TSRS_ASYNC=1 bun test test/tsrs-async.test.ts
       - name: Run the shared TS7 smoke list against tsrs/async

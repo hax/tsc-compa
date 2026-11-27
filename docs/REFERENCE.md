@@ -414,8 +414,9 @@ T3 未达原因分为 `missing`、`extra`、`diagnostics`、`order`、
   关闭内置会话时，超过宽限期仍在执行的自有子进程会被终止；不强制终止宿主注入的客户端。
 
 `--adapter tsrs-async` 是独立的实验候选。它复用上述诊断收集和会话规则，但从
-`.cache/tsrs-async/sdk` 加载 `tsrs@0.25.0-ts7.1.0-beta` 的 `tsrs/async`，并显式启动同一
-npm 发布的平台原生程序。`TSRS_BINARY` 非空时拒绝运行，不回退到官方 `tsc` 或逐案 CLI。
+`config/tsrs-async` 的隔离安装目录加载 `tsrs@0.25.0-ts7.1.0-beta` 的 `tsrs/async`，并显式启动同一
+npm 发布的平台原生程序。该目录的 `bun.lock` 固定 SDK 和各平台原生包的版本及 tarball 完整性。
+`TSRS_BINARY` 非空时拒绝运行，不回退到官方 `tsc` 或逐案 CLI。
 `--expectation-source ts7-api` 仍单独加载官方 `typescript-7-1/async`。报告中的
 `meta.tools.candidate.{path,version,sha256}` 记录实际用于启动 API 的原生程序；
 `meta.tools.candidate.sdk` 记录模块名、版本、入口路径和入口文件的 SHA-256（不是整个 SDK 包的哈希）。
