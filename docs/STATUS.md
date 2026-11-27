@@ -196,13 +196,12 @@ cargo 路径在需要时拉取固定提交并构建，不只是查找已有产�
 | workflow | 当前职责 |
 | --- | --- |
 | `smoke.yml` | 推送／PR 单测（含 typecheck）与六档门禁冒烟（含 TS7 API 严格自比）；定时／手动变化检测；逐档报告及合并摘要 |
-| `ts7-official.yml` | 手动 TS7 官方结果文件对照，带回归检查与门禁 |
 | `third-party.yml` | 手动实现 × 基线冒烟，按实现隔离清单 |
 | `native-suite.yml` | 接收外部二进制，使用批量适配器运行测试并上传指标 |
 
 workflow 已存在不等于已验证远端运行成功。
 分支保护的必需状态检查也需要仓库设置，不能只凭 YAML 判定已启用。
-操作与具体矩阵见 [CI.md](CI.md)。
+其他任务见[工作流索引](../.github/workflows/README.md)，操作与具体矩阵见 [CI.md](CI.md)。
 
 ## 5. 已知限制与待办
 

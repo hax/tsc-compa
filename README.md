@@ -32,9 +32,9 @@
 
 ## 查阅公开报告
 
-公开报告目录部署到 GitHub Pages 后，可以按「候选检查器和版本 → 参考 TypeScript → 测试集」筛选，或分享当前选择。首版只开放登记的官方 TypeScript、Bun 和 tsrs 版本，参考为 TS 7.1.0-beta 的官方基线。固定的 120 例诊断样本和全量报告分开列出；28 例冒烟只为 CI 校准运行器和候选适配器，不是公开评估选项。
+[公开报告目录](https://johnhax.net/tsc-compa/)可以按「候选检查器和版本 → 参考 TypeScript → 测试集」筛选，也可以分享当前选择。公开评测只开放固定版本的官方 TypeScript（对照组）、两版 Bun 和 tsrs CLI，参考为 TS 7.1.0-beta 的官方结果文件。固定的 120 例诊断样本与全量报告分开列出；28 例冒烟用于校准运行器和候选适配器，不是公开评估选项。
 
-目录只展示已发布的报告，未见结果不表示检查器不兼容，也不会自动启动 CI。有仓库写权限的维护者可在 [GitHub Actions 评测工作流](https://github.com/hax/tsc-compa/actions/workflows/public-evaluation.yml)点 **Run workflow**。Pages 需先由仓库管理员配置，才会提供公开目录；未部署时可查看 Actions 的运行记录。参见 [CI 使用说明](docs/CI.md)。
+目录只展示已发布的报告，未见结果不表示检查器不兼容，也不会自动启动 CI。有仓库写权限的维护者可在 [GitHub Actions 评测工作流](https://github.com/hax/tsc-compa/actions/workflows/public-evaluation.yml)点 **Run workflow**。评测和发布是两个操作，参见 [CI 使用说明](docs/CI.md#公开评测与报告目录public-evaluationyml)。
 
 ## 快速开始
 
@@ -220,11 +220,10 @@ workflow 令牌为只读（`contents: read`），因此只通过步骤摘要和�
 它汇总 `detect` / `unit` / `smoke` / `report`：无变化而跳过时通过；
 测试、检测或报告任务失败时失败。
 必需状态检查属于仓库设置，不能仅通过 workflow 文件声明。
-本仓库现有记录只能证明本地命令跑过；远端 GitHub Actions 的运行结果不能从
-workflow 文件或本地报告推出。`ts7-official.yml` 仍是手动 workflow，已带 `--gate`，
-但尚未确认在 GitHub Actions 上执行成功；应先手动触发并核对报告，再考虑独立定时任务。
-`smoke.yml` 的每日变化检测判「有变化」时，会重跑相同的 28 例官方结果文件对照用例；
-新增的 API 自比档同样只有在检测判定需要运行或推送／PR 时执行，不能在远端运行前写成已通过。
+在 Actions 手动运行 `smoke` 时勾选 `force`，可跳过变化检测并重跑六档门禁，
+包括 TS7 官方结果文件的 28 例回归检查。只跑前几例或换用自选适配器，请按
+[本地 TS7 官方结果文件对照](docs/CI.md#本地-ts7-官方结果文件对照)运行；
+远端结果以相应 GitHub Actions 运行的 Summary 和产物为准。
 
 ## 用例分类
 
@@ -309,77 +308,15 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 [docs/RESULTS.md](docs/RESULTS.md)。这些是本地实测，不代表 GitHub Actions 的
 `third-party.yml` 已成功运行。
 
-固定版本复现脚本 `scripts/validate-compatibility.ts` 对每个候选分别跑现场 tsc 与
-官方 `.errors.txt` 两种参考来源，并从 manifest 读取固定样本数；任一次没有完成全部
-比较、出现执行失败或适配器不能接受用例选项，脚本即非零退出。120 例样本当前要求
-`totals.ran === 120`，不会把「跑了一部分」当完整结果：
+要在同一份 120 例样本上分别对照现场 tsc 与官方 `.errors.txt`，见
+[本地固定版本双来源对照](docs/CI.md#本地固定版本双来源对照)。公开评测只用官方参考结果，
+与双来源复现不是同一个入口。
 
-```bash
-TS71_CASES=/path/to/ts71/tsc/testdata/tests/cases
-bun scripts/validate-compatibility.ts "$TS71_CASES" .cache/compatibility/typescript typescript
-```
+## 目录导航
 
-固定版本的 Bun 1.4.4／1.4.5 与 tsrs 也走同一入口：
-
-```bash
-for V in 1.4.4 1.4.5; do
-  BIN=$(vp env exec --package-manager "bun@$V" -- bun -p process.execPath)
-  vp env exec --package-manager "bun@$V" -- bun scripts/validate-compatibility.ts \
-    "$TS71_CASES" ".cache/compatibility/bun-$V" "bun-$V" "$BIN"
-done
-
-TSRS=$(bun scripts/install-impl.ts --name tsrs --dest .cache/checkers | tail -n 1)
-bun scripts/validate-compatibility.ts "$TS71_CASES" .cache/compatibility/tsrs tsrs "$TSRS"
-```
-
-`.github/workflows/compatibility-reports.yml` 只负责在 Linux 上手动生成同类报告，
-本地 `darwin/arm64` 的哈希和耗时不能直接当作 CI 结果。Bun 1.4.x 的 `bun check`
-拒绝 `target=es2026`，这份 120 例列表的用例都显式覆盖了 target，所以不能把结果
-外推到 Bun 的默认 target 或项目配置；它的 `process.versions.typescript` 是内置的
-`7.0.2`，不是参考 tsc 的版本。`tsrs` 的自报版本包含它跟踪的 TypeScript 提交，
-不等于 tsrs 自身的源码提交；npm provenance 与二进制 sha256 要分别记录。
-
-## 目录结构
-
-| 路径 | 用途 |
-| --- | --- |
-| `src/case.ts` | 用例指令解析、虚拟文件、编译选项推导 |
-| `src/classify.ts` | 多维用例标签与过滤 |
-| `src/baselines.ts` | 参考配置（tsc × 测试集版本） |
-| `src/discover.ts` | 测试集扫描与用例列表 |
-| `src/tsc.ts` | 通过固定版本 tsc CLI 生成并缓存参考诊断；缓存键含解析管线版本、文件、参数、tsc 版本与参考二进制 sha256 |
-| `src/officialBaseline.ts` | 读取官方 `.errors.txt` 作为参考结果（支持两种布局；缺少结果文件时按零诊断处理） |
-| `src/compare.ts` | 诊断匹配（含位置差异配对）、现有 T0–T3 分级与指标；T3 比较 `.errors.txt` 中 `====` 前的摘要块，并记录逐案差异 |
-| `src/ratchet.ts` | `--ratchet` / `--ratchet-impl` 清单：按「实现 × 基线」只升不降，回落则运行失败 |
-| `src/gate.ts` | `--gate`：回归记录／多报错误／漏报／位置差异／覆盖率检查及门禁摘要 |
-| `src/report.ts` | 从运行指标和明细生成 Markdown + 自包含 HTML 报告；支持 `run.ts --report-md/--report-html/--report-out` 及独立命令 `bun src/report.ts --from <out>`，指标缺失时生成失败占位报告 |
-| `src/run.ts` | 冒烟运行入口 |
-| `src/adapters/` | `tsc-cli`、`ts7-api`、`bun-check`、`checker-cli`、通用 `cli:<bin>` 适配器、批量 NDJSON 客户端及模拟实现 |
-| `config/baselines.json` | 参考配置（参考 tsc、参考侧参数、测试集引用与默认用例列表） |
-| `config/implementations.json` | 第三方实现登记（获取方式、CLI 参数、固定版本／提交） |
-| `config/smoke-cases*.json` | 按测试集维护的可复现冒烟用例列表 |
-| `config/anchor-cases.json` | 已知跨版本诊断位置差异的用例 |
-| `config/official-baseline-cases.json` | 可读取官方结果文件的样本用例列表 |
-| `config/smoke-cases-ts71-official.json` | TS7 官方结果文件对照的冒烟用例列表（18 个报错用例 + 10 个无错用例） |
-| `config/official-baseline-cases-ts71.json` | 120 个带错误的 TS7 用例（扩展本地样本） |
-| `config/ratchet/` | 按检查器分别保存的 v2 回归记录（`<impl>-<baseline>.tsv`，两档 verdict 加逐字段状态）；根目录 `config/ratchet-ts71-official.tsv` 是仍被 `smoke.yml` 和 `ts7-official.yml` 显式使用的旧档记录 |
-| `scripts/select-smoke.ts` | 重新生成按类过滤的冒烟用例列表 |
-| `scripts/select-official-baseline-cases.ts` | 扫描测试集，筛选可读取官方结果文件的用例 |
-| `scripts/install-impl.ts` | 按登记信息获取第三方实现 |
-| `scripts/detect-changes.ts` | 每日定时变化检测：本地输入哈希、仓库 HEAD、外部固定引用差异 → 运行测试或「无变化，跳过」 |
-| `scripts/merge-reports.ts` | 将各 CI 任务报告合并为步骤摘要（Markdown）和 HTML 索引 |
-| `.github/workflows/smoke.yml` | 推送／PR 的 CI 门禁：单测 + 三档 tsc 自比 + TS7 async API 严格自比 + 两档官方结果对照（共六档）；各任务报告与合并摘要／产物；每日任务先检测变化 |
-| `.github/workflows/ts7-official.yml` | 手动 CI：TS7 官方结果文件对照（兼容档回归记录 + `--gate`；`--limit` 时只出报告） |
-| `.github/workflows/third-party.yml` | 手动 CI：第三方实现 × 基线冒烟 |
-| `.github/workflows/compatibility-reports.yml` | 手动 CI：固定版本 TypeScript／Bun／tsrs 的 120 例两种参考来源报告 |
-| `scripts/validate-compatibility.ts` | 本地固定版本复现：断言固定样本全部完成比较，再落 Markdown／HTML／JSON |
-| `docs/DESIGN.md` | 设计思路、候选接入方式与报告解读 |
-| `docs/REFERENCE.md` | 参数、字段、比较规则和适配器协议 |
-| `docs/STATUS.md` | 实现状态、版本配置、已知限制与待办 |
-| `docs/HISTORY.md` | 重要演进及历史认识修正 |
-| `docs/RESULTS.md` | 自比、默认值漂移及跨版本结果 |
-| `src/perf.ts` | 可选性能附录：固定样本与官方 tsc 的参考比值 |
-| `test/` | 单元测试（`bun test ./test`） |
+- 使用和维护：[项目文档](docs/README.md) · [测试配置](config/README.md) · [维护脚本](scripts/README.md)
+- 开发：[运行器和适配器](src/README.md) · [自动化测试](test/README.md)
+- 报告和自动化：[公开报告站点](site/README.md) · [GitHub 配置和工作流](.github/README.md)
 
 ## 可选性能附录
 

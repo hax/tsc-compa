@@ -65,12 +65,11 @@ describe("官方基线语料 pin（#7）", () => {
     expect(corpusOf(config, "7.1.0-beta").ref).toBe(corpusOf(config, "6.0.3").ref);
   });
 
-  test("CI workflow 从 config/baselines.json 现场解析语料 ref，不硬编码 SHA", () => {
-    for (const file of ["smoke.yml", "ts7-official.yml"]) {
-      const text = readFileSync(join(REPO_ROOT, ".github", "workflows", file), "utf8");
-      expect(text, `${file} 应有「Resolve corpus ref」步骤`).toContain("Resolve corpus ref");
-      expect(text, `${file} 应从 config/baselines.json 解析 ref`).toContain("config/baselines.json");
-      expect(text, `${file} 不应硬编码 40 位提交 SHA（应从配置解析）`).not.toMatch(/[0-9a-f]{40}/);
-    }
+  test("smoke workflow 从 config/baselines.json 现场解析语料 ref，不硬编码 SHA", () => {
+    const file = "smoke.yml";
+    const text = readFileSync(join(REPO_ROOT, ".github", "workflows", file), "utf8");
+    expect(text, `${file} 应有「Resolve corpus ref」步骤`).toContain("Resolve corpus ref");
+    expect(text, `${file} 应从 config/baselines.json 解析 ref`).toContain("config/baselines.json");
+    expect(text, `${file} 不应硬编码 40 位提交 SHA（应从配置解析）`).not.toMatch(/[0-9a-f]{40}/);
   });
 });
