@@ -120,6 +120,36 @@
         "id": "full",
         "label": "全量类型检查测试集（compiler / conformance）"
       }
+    },
+    {
+      "candidate": {
+        "id": "ts-rust",
+        "name": "ts-rust (pingdotgg)",
+        "version": "0.8.0"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "full",
+        "label": "全量类型检查测试集（compiler / conformance）"
+      }
+    },
+    {
+      "candidate": {
+        "id": "tsz",
+        "name": "tsz",
+        "version": "v0.1.75"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "full",
+        "label": "全量类型检查测试集（compiler / conformance）"
+      }
     }
   ]
 }
