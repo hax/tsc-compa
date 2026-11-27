@@ -5,14 +5,14 @@ import { join, resolve } from "node:path";
 import { corpusRefOf, findBaseline, loadBaselines, resolveBaselineTsc, REPO_ROOT } from "../src/baselines.ts";
 import { expandCaseVariants } from "../src/case.ts";
 import { isValidCaseId, readCase } from "../src/discover.ts";
-import { activePolicies, isAddedCandidate } from "./public-evaluation-policy.ts";
+import { activePolicies, isAddedCandidate, type AddedCandidate } from "./public-evaluation-policy.ts";
 import { identifyTool, sha256 } from "../src/provenance.ts";
 import type { Metrics, ToolIdentity } from "../src/compare.ts";
 
 export const baseline = "7.1.0-beta-official";
 const candidates = ["typescript", "bun-1.4.4", "bun-1.4.5", "tsrs"] as const;
 export type LegacyCandidate = typeof candidates[number];
-export type Candidate = LegacyCandidate | "ts-rust" | "tsc-rs" | "tsz";
+export type Candidate = LegacyCandidate | AddedCandidate;
 type Source = "official-baseline" | "tsc";
 type Unit = { id: string; records: string[] };
 type Shard = { id: string; units: Unit[]; estimatedCost: number };
@@ -88,7 +88,7 @@ export function verifyVersion(candidate: Candidate, bin: string): void {
   if (result.status !== 0 || result.stdout?.trim() !== expected) throw new Error(`${candidate}: expected ${expected}, got ${result.stdout || result.stderr || result.error}`);
 }
 
-export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus: string, dir: string, binArg?: string, candidateArgs: readonly string[] = [], candidateEnv: Readonly<Record<string, string>> = {}, invocation?: "project", stackBytes?: number): void {
+export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus: string, dir: string, binArg?: string, candidateArgs: readonly string[] = [], candidateEnv: Readonly<Record<string, string>> = {}): void {
   const config = loadBaselines();
   const referenceWrapper = resolveBaselineTsc(findBaseline(config, baseline));
   // Bypass the npm JavaScript launcher for each case, not the pinned native compiler.
@@ -102,14 +102,10 @@ export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus:
   mkdirSync(dir, { recursive: true });
   const manifest = join(dir, "cases.json");
   writeJson(manifest, shard.units.map((unit) => unit.id));
-  const args = ["src/run.ts", "--baseline", baseline, "--tsc", reference,
+  const result = spawnSync(process.execPath, ["src/run.ts", "--baseline", baseline, "--tsc", reference,
     "--corpus", corpus, "--cases", manifest, "--expectation-source", plan.source, "--option-strategy", "aligned",
-    "--adapter", `${isBun ? "bun-check" : "tsc-cli"}:${candidateBin}`, "--out", dir];
-  // Set only the soft limit of this process tree; retain the exact pinned
-  // checker and report real crashes if they persist at this bounded limit.
-  const result = spawnSync(stackBytes === undefined ? process.execPath : "/usr/bin/prlimit",
-    stackBytes === undefined ? args : [`--stack=${stackBytes}:`, "--", process.execPath, ...args], {
-    cwd: REPO_ROOT, env: { ...process.env, ...candidateEnv, TSC_COMPA_ADAPTER_ARGS: candidateArgs.join(" "), TSC_COMPA_TSC_CLI_PROJECT: invocation === "project" ? "1" : "", TSC_BIN: "" }, stdio: "inherit",
+    "--adapter", `${isBun ? "bun-check" : "tsc-cli"}:${candidateBin}`, "--out", dir], {
+    cwd: REPO_ROOT, env: { ...process.env, ...candidateEnv, TSC_COMPA_ADAPTER_ARGS: candidateArgs.join(" "), TSC_BIN: "" }, stdio: "inherit",
   });
   if (result.status !== 0) throw new Error(`${slug(candidate, shard)} exited: ${result.error ?? result.status}`);
 }

@@ -56,7 +56,7 @@ export async function createAdapter(name: string): Promise<Adapter> {
     // 适配器在临时目录里 spawn，带分隔符的相对路径必须先转绝对路径。
     const bin = raw.includes("/") ? resolve(raw) : raw;
     const extraArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter((s) => s.length > 0);
-    return new TscCliAdapter({ name: embedded.length > 0 ? name : "tsc-cli", bin, extraArgs, project: process.env.TSC_COMPA_TSC_CLI_PROJECT === "1" });
+    return new TscCliAdapter({ name: embedded.length > 0 ? name : "tsc-cli", bin, extraArgs });
   }
   if (name === "ts7-api") return new Ts7ApiAdapter();
   if (name === "tsrs-async") return createTsrsAsyncAdapter();

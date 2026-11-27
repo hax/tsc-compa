@@ -1,7 +1,7 @@
 // Read-only public evaluation of pinned third-party CLI distributions.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { baseline, verifyVersion } from "./full-compatibility.ts";
@@ -9,15 +9,14 @@ import { fileTree } from "./public-evaluation-inputs.ts";
 import { REPO_ROOT } from "../src/baselines.ts";
 import { sha256 } from "../src/provenance.ts";
 
-import { activePolicies, rustToolchain, type AddedCandidate, type PreparedSource } from "./public-evaluation-policy.ts";
+import { activePolicies, type AddedCandidate, type PreparedSource } from "./public-evaluation-policy.ts";
 
-const compilerPath = { "ts-rust": "lib/tsc", "tsc-rs": "tsc-rs", tsz: "tsz" } as const;
+const compilerPath = { "ts-rust": "lib/tsc", tsz: "tsz" } as const;
 
 type Implementation = {
   displayName: string; adapter: string; baselines: string[]; cliArgs: string[];
   acquisition: {
     npm?: { package: string; version: string };
-    cargo?: { git?: { url: string; ref: string }; command: string; bin: string; env?: { CI: string } };
   };
 };
 function implementation(id: AddedCandidate): Implementation {
@@ -39,7 +38,6 @@ const exec = (exe: string, args: string[], cwd?: string, env?: NodeJS.ProcessEnv
 const digestFile = (file: string) => sha256(readFileSync(file));
 const hash = (value: unknown) => sha256(JSON.stringify(value));
 type NpmSource = Extract<PreparedSource, { kind: "npm" }>;
-type CargoSource = Extract<PreparedSource, { kind: "cargo" }>;
 type ReleaseSource = Extract<PreparedSource, { kind: "release" }>;
 
 export function verifyNpmArchive(bytes: Uint8Array, digest: string, integrity: string) {
@@ -80,46 +78,9 @@ function acquireNpm(root: string, distribution: string): NpmSource {
   return npm;
 }
 
-function buildCargo(root: string, distribution: string): CargoSource {
-  const policy = activePolicies["tsc-rs"];
-  const pin = policy.source;
-  if (pin.kind !== "cargo" || !("cargoVersion" in policy)) throw new Error("Invalid pinned Cargo source");
-  const url = `https://github.com/${pin.repository}`;
-  const words = ["build", "--release", "--locked", "--manifest-path", "crates/compiler/Cargo.toml"];
-  const source = join(root, "source"), target = join(root, "target"), home = join(root, "home");
-  mkdirSync(source); mkdirSync(home);
-  const env = {
-    PATH: "/usr/bin:/bin", HOME: home, LC_ALL: "C.UTF-8", TZ: "UTC", CI: "true",
-    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0",
-    CARGO_HOME: join(root, "cargo"), CARGO_TARGET_DIR: target, CARGO_INCREMENTAL: "0", CARGO_BUILD_JOBS: "4",
-    CARGO_ENCODED_RUSTFLAGS: `--remap-path-prefix=${root}=/build/tsc-compa`,
-    RUSTUP_HOME: process.env.RUSTUP_HOME ?? join(process.env.HOME!, ".rustup"),
-  };
-  const buildImage = process.env.ImageVersion;
-  if (process.env.ImageOS !== "ubuntu24" || !buildImage || !/^\d[\w.-]{1,63}$/.test(buildImage)) throw new Error("Cargo public builds require the Ubuntu 24.04 hosted build profile");
-  exec("git", ["init", "-q"], source, env);
-  exec("git", ["fetch", "--depth=1", "--no-tags", url, `refs/tags/${pin.tag}`], source, env);
-  exec("git", ["-c", "core.hooksPath=/dev/null", "checkout", "--detach", "FETCH_HEAD"], source, env);
-  if (exec("git", ["rev-parse", "HEAD"], source, env) !== pin.commit || exec("git", ["status", "--porcelain"], source, env)) throw new Error("Cargo checkout does not match the pinned source");
-  const rustup = Bun.which("rustup");
-  if (!rustup) throw new Error("Install the pinned Rust toolchain before planning");
-  const rustcPath = exec(rustup, ["which", "--toolchain", rustToolchain, "rustc"], source, env);
-  const cargoPath = exec(rustup, ["which", "--toolchain", rustToolchain, "cargo"], source, env);
-  const rustc = exec(rustcPath, ["--version"], source, env);
-  const cargo = exec(cargoPath, ["--version"], source, env);
-  if (rustc !== pin.rustc || cargo !== policy.cargoVersion) throw new Error("Unexpected Rust build toolchain");
-  const linker = exec("cc", ["-dumpfullversion"], source, env);
-  const lockPath = join(source, "Cargo.lock");
-  if (digestFile(lockPath) !== pin.lockSha256) throw new Error("Pinned Cargo.lock digest changed");
-  const build = spawnSync(cargoPath, words, { cwd: source, env: { ...env, PATH: `${dirname(rustcPath)}:${env.PATH}`, RUSTC: rustcPath }, stdio: "inherit", timeout: 25 * 60_000 });
-  if (build.status !== 0 || digestFile(lockPath) !== pin.lockSha256) throw new Error(`Pinned Cargo build failed: ${build.error ?? build.status}`);
-  mkdirSync(distribution);
-  copyFileSync(join(target, "release", compilerPath["tsc-rs"]), join(distribution, compilerPath["tsc-rs"]));
-  return { ...pin, cargo, linker, buildImage };
-}
-
 function acquireRelease(root: string, distribution: string): ReleaseSource {
-  const pin = activePolicies.tsz.source;
+  const policy = activePolicies.tsz;
+  const pin = policy.source;
   if (pin.kind !== "release") throw new Error("Missing TSZ release policy");
   const base = `https://github.com/${pin.repository}/releases/download/${pin.tag}`;
   const download = (name: string, expected: string) => {
@@ -139,7 +100,9 @@ function acquireRelease(root: string, distribution: string): ReleaseSource {
   if (!listing.startsWith("-") || listing.includes("\n")) throw new Error("TSZ archive does not contain exactly one regular CLI entry");
   mkdirSync(distribution);
   const path = join(distribution, compilerPath.tsz);
-  writeFileSync(path, execFileSync("tar", ["-xOzf", archive, entry], { maxBuffer: 128 * 1024 * 1024 }));
+  const bytes = execFileSync("tar", ["-xOzf", archive, entry], { maxBuffer: 128 * 1024 * 1024 });
+  if (sha256(bytes) !== policy.nativeSha256) throw new Error("Unexpected TSZ native executable");
+  writeFileSync(path, bytes);
   return pin;
 }
 
@@ -150,7 +113,7 @@ export function prepareDistribution(id: AddedCandidate, dir: string): PreparedSo
   mkdirSync(dirname(dir), { recursive: true });
   const root = mkdtempSync(join(tmpdir(), "tsc-public-build-"));
   try {
-    const source = id === "ts-rust" ? acquireNpm(root, dir) : id === "tsc-rs" ? buildCargo(root, dir) : acquireRelease(root, dir);
+    const source = id === "ts-rust" ? acquireNpm(root, dir) : acquireRelease(root, dir);
     chmodSync(join(dir, compilerPath[id]), 0o755);
     return source;
   } finally {
@@ -163,7 +126,7 @@ export function distributionContents(id: AddedCandidate, dir: string) {
   const binary = files.find(([path]) => path === compilerPath[id]);
   if (!binary) throw new Error("Compiler executable is missing from the public distribution");
   const policy = activePolicies[id];
-  if (id === "ts-rust" && (!files.some(([path]) => path === "lib/lib.es5.d.ts") || !("nativeSha256" in policy) || binary[1] !== policy.nativeSha256)) {
+  if (id === "ts-rust" && (!files.some(([path]) => path === "lib/lib.es5.d.ts") || binary[1] !== policy.nativeSha256)) {
     throw new Error("Unexpected ts-rust native distribution");
   }
   if (id !== "ts-rust" && files.length !== 1) throw new Error("Unexpected files beside the standalone compiler");
@@ -195,7 +158,7 @@ export function inspectDistribution(id: AddedCandidate, dir: string, source: Pre
   implementation(id);
   const environment = activePolicies[id].environment;
   verifyVersion(id, files.bin);
-  return { ...files, prepared: { source, runtimeLibrariesSha256: libraries, environment }, cliArgs: [...activePolicies[id].cliArgs], invocation: activePolicies[id].invocation, stackBytes: activePolicies[id].stackBytes };
+  return { ...files, prepared: { source, runtimeLibrariesSha256: libraries, environment }, cliArgs: [...activePolicies[id].cliArgs] };
 }
 
 export function probeDistribution(id: AddedCandidate, tools: ReturnType<typeof inspectDistribution>) {

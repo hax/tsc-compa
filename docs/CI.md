@@ -292,7 +292,7 @@ bun run probes:versions --candidate tsrs --bin "$BIN"
 
 公开候选与固定版本见[候选检查器一览](CHECKERS.md)。`typescript`、`bun-1.4.4`、
 `bun-1.4.5` 和 `tsrs` 可选 `fixed-120`（120 个固定诊断样本）或 `full`；
-`ts-rust`、`tsc-rs`、`tsz` 只能选 `full`。后者覆盖 `compiler/` 与 `conformance/`
+`ts-rust` 和 `tsz` 只能选 `full`。后者覆盖 `compiler/` 与 `conformance/`
 下的 TS 源用例，按配置展开后分 8 片。所有组合都对照固定提交的 TS 7.1.0-beta 官方
 `.errors.txt`。Bun 走 `bun-check`，其余走 `tsc-cli`；不用填写二进制地址或 adapter。
 
@@ -339,18 +339,17 @@ TS7／tsrs 的原生发行包（包含声明库）指纹。无论是否勾选 `f
 
 1. `ts-rust`（pingdotgg）：npm `tsc-rs@0.8.0`，校验启动器包和 Linux x64 平台包的 SHA-256 与 npm SHA-512 完整性值，
    用包自己的路径解析器确认原生 CLI，保留平台包和声明库的目录结构。自报 `7.1.0-dev` 不是 npm 版本。
-2. `tsc-rs`（kazhiramatsu）：正式发行 `v0.1.0`（`ed173ea`），按发行说明用 Cargo 和上游固定的 Rust 1.93.0 构建。
-   自报 TypeScript `6.0.3`，因此是与 TS7 官方结果的**跨版本对照**。候选用 `TSRS_CHECKERS=1`，通过生成的
-   `tsconfig` 接收用例选项；不把不支持的 `es2026` 换成其他值。检查进程的 32 MiB 栈软上限记入请求，崩溃仍阻断报告。
-3. `tsz`：正式发行 `v0.1.75`（`0c0e53f`），校验发布的 `SHA256SUMS` 与 Linux x64 GNU 归档。
+2. `tsz`：正式发行 `v0.1.75`（`0c0e53f`），校验发布的 `SHA256SUMS` 与 Linux x64 GNU 归档。
    只提取 `tsz` CLI（不运行同包的 LSP），强制使用二进制内置的声明库。
 
 以上按顺序选择 `full`。合并前可在分支上用 `preview=true` 验证；合并后由有权限的维护者在
 默认分支按同一顺序执行非预演，检查分片和报告后，再手动部署 Pages。预演不写公开数据。
-这三项只在只读 Ubuntu 24.04 规划任务准备一次发行目录；Cargo 使用 `--locked` 并核对锁文件摘要。
-分片只下载同一份产物，不重新获取上游发行包或构建候选。每个分片核对候选可执行文件、发行目录、宿主动态库和
-固定的 CLI 参数；字节不一致时任务失败，不会产生可发布报告。构建工具、源码或发行包来源和 CLI 自报版本分别记录。
-公开发行固定策略与冒烟版本独立维护。
+两项都只在只读 Ubuntu 24.04 规划任务准备一次发行目录。分片只下载同一份产物，不向上游重新获取发行包。
+每个分片核对候选可执行文件、发行目录、宿主动态库和固定的 CLI 参数；不一致时任务失败，不会产生可发布报告。
+发行来源和 CLI 自报版本分别记录。公开发行固定策略与冒烟版本独立维护。
+
+`tsc-rs`（kazhiramatsu）不是公开选项：其正式发行的[全量预演未完成](RESULTS.md#tsc-rs-v010-全量预演未完成)。
+登记的源码快照仍用于适配器冒烟，不替代公开发行。
 
 ### 首次发布与更新
 
@@ -372,7 +371,7 @@ TS7／tsrs 的原生发行包（包含声明库）指纹。无论是否勾选 `f
   同时勾选 `preview` 和 `force` 后，用 `typescript` / `fixed-120` 应只生成 Actions 产物，
   不改变 `public-report-data`。
 - 默认分支首次运行 `typescript` / `fixed-120`：检查只有 1 个执行任务，`persist` 写入 1 条索引，
-  `catalog.json` 有 11 个组合。在相同输入条件下勾选 `force` 再派发：检查用例确实重跑，
+  `catalog.json` 有 10 个组合。在相同输入条件下勾选 `force` 再派发：检查用例确实重跑，
   同一 ID 的索引和报告指向新运行，没有新增同 ID 的索引。最后不勾选 `force` 再派发，
   检查 `plan` 命中、不启动执行分片，数据分支不变。
 - 再用 `full`：检查只跑所选候选、总共 8 片。缺片或有执行异常时，检查无新增索引；

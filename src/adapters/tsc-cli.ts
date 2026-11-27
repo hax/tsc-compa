@@ -8,10 +8,9 @@
 // cwd 解析相对路径、同样忽略临时目录外的 lib 诊断），否则自比会出现假差异。
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
-import { compilerOptionsFromArgs } from "./bun-check.ts";
+import { join } from "node:path";
 import { materializeCase } from "../case.ts";
 import { parseExtendedDiagnostics } from "../perf.ts";
 import type { Adapter, CaseInput, CaseOutcome, Diagnostic } from "../types.ts";
@@ -70,8 +69,6 @@ export interface TscCliAdapterOptions {
    */
   extraArgs?: string[];
   timeoutMs?: number;
-  /** Explicit project invocation for releases with a restricted direct CLI. */
-  project?: boolean;
 }
 
 export class TscCliAdapter implements Adapter {
@@ -82,7 +79,6 @@ export class TscCliAdapter implements Adapter {
   private readonly bin: string;
   private readonly extraArgs: string[];
   private readonly timeoutMs: number;
-  private readonly project: boolean;
 
   constructor(options: TscCliAdapterOptions) {
     this.name = options.name ?? "tsc-cli";
@@ -93,7 +89,6 @@ export class TscCliAdapter implements Adapter {
     // 这些统计行，性能附录则用它拿 Check 时间（缺失时退 wall 口径）。
     this.extraArgs = ["--noEmit", "--pretty", "false", "--extendedDiagnostics", ...(options.extraArgs ?? [])];
     this.timeoutMs = options.timeoutMs ?? 30_000;
-    this.project = options.project === true;
   }
 
   async check(input: CaseInput): Promise<CaseOutcome> {
@@ -101,19 +96,7 @@ export class TscCliAdapter implements Adapter {
     try {
       const paths = materializeCase(tmp, input.files);
       // extraArgs 放在用例参数之前：它们只提供「版本默认值」，case 指令优先。
-      let invocation = [...this.extraArgs, ...input.args, ...paths];
-      let generatedConfig: string | undefined;
-      if (this.project) {
-        // The v0.1.0 direct CLI does not expose the full compiler option
-        // catalog or timing switch. Keep effective option values in an
-        // explicit project; never substitute another target for ES2026.
-        const compilerOptions = { ...compilerOptionsFromArgs(input.args), noEmit: true };
-        const config = join(mkdtempSync(join(tmp, "tsc-compa-project-")), "tsconfig.json");
-        writeFileSync(config, JSON.stringify({ compilerOptions, files: paths.map((path) => relative(join(config, ".."), path)) }));
-        generatedConfig = relative(tmp, config);
-        invocation = ["--noEmit", "--pretty", "false", ...this.extraArgs.slice(4), "-p", config];
-      }
-      const r = spawnSync(this.bin, invocation, {
+      const r = spawnSync(this.bin, [...this.extraArgs, ...input.args, ...paths], {
         cwd: tmp,
         encoding: "utf8",
         maxBuffer: 1 << 28,
@@ -163,15 +146,6 @@ export class TscCliAdapter implements Adapter {
           exitCode,
           rawOutput,
         };
-      }
-
-      if (generatedConfig && parsed.diagnostics.some((d) => d.file === generatedConfig)) {
-        const rejectedOptions = parsed.headerLines === parsed.diagnostics.length && parsed.unpositioned.length === 0 &&
-          parsed.diagnostics.every((d) => d.file === generatedConfig) && rejectsCompilerOptions(exitCode, {
-            ...parsed, headerLines: 0, unpositioned: parsed.diagnostics.map((d) => ({ severity: "error", code: d.code, text: "" })),
-          });
-        return { id: input.id, status: rejectedOptions ? "skip" : "crash", diagnostics: [],
-          skipReason: rejectedOptions ? "候选拒绝生成的 tsconfig 编译选项" : "候选未能读取或执行生成的 tsconfig", exitCode, rawOutput };
       }
 
       // 只有明确拒绝该配置时把无位置诊断记成 skip；命令失败仍要阻断。

@@ -61,15 +61,22 @@ function createFixture(root: string) {
   return { root, data, bundle, metrics, metricsFile, plan, request, receipt };
 }
 
-test("adds three full-only combinations in rollout order without implying they have run", () => {
+test("adds two full-only combinations in rollout order without implying they have run", () => {
   const catalog = publicCatalog();
   expect(catalog.schemaVersion).toBe(1);
-  expect(catalog.combinations).toHaveLength(11);
+  expect(catalog.combinations).toHaveLength(10);
   expect(catalog.combinations.slice(8).map((row) => [row.candidate.id, row.candidate.name, row.candidate.version, row.suite.id])).toEqual([
-    ["ts-rust", "ts-rust (pingdotgg)", "0.8.0", "full"], ["tsc-rs", "tsc-rs (kazhiramatsu)", "v0.1.0", "full"], ["tsz", "tsz", "v0.1.75", "full"],
+    ["ts-rust", "ts-rust (pingdotgg)", "0.8.0", "full"], ["tsz", "tsz", "v0.1.75", "full"],
   ]);
-  expect(new Set(catalog.combinations.map((row) => `${row.candidate.id}:${row.candidate.version}:${row.suite.id}`)).size).toBe(11);
+  expect(new Set(catalog.combinations.map((row) => `${row.candidate.id}:${row.candidate.version}:${row.suite.id}`)).size).toBe(10);
   expect(catalog.combinations.every((row) => row.reference.id === "7.1.0-beta-official")).toBe(true);
+});
+
+test("rejects the blocked tsc-rs release and fixed samples for the new full-only candidates before reading the corpus", () => {
+  const plan = (candidate: string, suite: string) => execFileSync(process.execPath,
+    ["scripts/public-evaluation.ts", "plan", candidate, suite, "missing-corpus", "tools", "request", "public-data"], { stdio: "pipe" });
+  expect(() => plan("tsc-rs", "full")).toThrow("Not a public candidate: tsc-rs");
+  for (const candidate of ["ts-rust", "tsz"]) expect(() => plan(candidate, "fixed-120")).toThrow("only selectable with the full suite");
 });
 
 test("verified compact evidence is reusable, and distinct request fingerprints preserve history", () => fixture(({ data, bundle, root, request, plan, receipt }) => {
@@ -336,22 +343,22 @@ test("source Markdown does not affect request identity, but harness code does", 
 }));
 
 test("validates prepared compiler provenance and exact shard options without promoting local paths", () => fixture(({ root, data, bundle, request, plan, metrics }) => {
-  plan.candidates = ["tsc-rs"];
+  plan.candidates = ["tsz"];
   const { version: _version, ...old } = request;
-  const policyAtRun = activePolicies["tsc-rs"];
-  if (policyAtRun.source.kind !== "cargo" || !("cargoVersion" in policyAtRun)) throw new Error("Missing fixture policy");
-  const q = { ...old, version: 3 as const, candidate: "tsc-rs" as const, candidateVersion: policyAtRun.candidate.version, planSha256: hash(plan),
-    options: { ...old.options, invocation: "project" as const, stackBytes: policyAtRun.stackBytes, candidateEnvArgs: [] },
-    candidateTool: { ...old.candidateTool, version: policyAtRun.selfReport },
-    prepared: { source: { ...policyAtRun.source, cargo: policyAtRun.cargoVersion, linker: "13.3.0", buildImage: "20261127.1.1" },
-      runtimeLibrariesSha256: sha256("runtime"), environment: policyAtRun.environment },
+  const policyAtRun = activePolicies.tsz;
+  if (policyAtRun.source.kind !== "release") throw new Error("Missing fixture policy");
+  const q = { ...old, version: 3 as const, candidate: "tsz" as const, candidateVersion: policyAtRun.candidate.version, planSha256: hash(plan),
+    options: { ...old.options, candidateEnvArgs: [...policyAtRun.cliArgs] },
+    candidateTool: { ...old.candidateTool, version: policyAtRun.selfReport, sha256: policyAtRun.nativeSha256 },
+    prepared: { source: policyAtRun.source, runtimeLibrariesSha256: sha256("runtime"), environment: policyAtRun.environment },
   } satisfies Request;
   const oldDir = join(root, "full-typescript-01");
-  const dir = join(root, "full-tsc-rs-01");
+  const dir = join(root, "full-tsz-01");
   cpSync(oldDir, dir, { recursive: true });
   const receipt = join(dir, "public-request.json");
   write(receipt, shardReceipt(q, hash(q), "01"));
   metrics.meta.tools.candidate.version = q.candidateTool.version;
+  metrics.meta.tools.candidate.sha256 = q.candidateTool.sha256;
   const metricsFile = join(dir, "metrics.json");
   metrics.meta.options.candidateEnvArgs = ["--checkers", "1"];
   write(metricsFile, metrics);
@@ -360,8 +367,8 @@ test("validates prepared compiler provenance and exact shard options without pro
   write(metricsFile, metrics);
   const report = makeReport(q, plan, root, run);
   expect(() => verifyReport(report, report.id)).not.toThrow();
-  expect(reportHtml(report)).toContain("kazhiramatsu/tsc-rs v0.1.0@ed173ea");
-  expect(reportHtml(report)).toContain("CLI 自报版本：<code>Version 6.0.3");
+  expect(reportHtml(report)).toContain("tsz-org/tsz v0.1.75@0c0e53f");
+  expect(reportHtml(report)).toContain("CLI 自报版本：<code>Version 7.0.2");
   expect(JSON.stringify(report)).not.toContain("/tmp/private");
   for (const prepared of [
     { ...q.prepared, environment: { TSZ_LIB_DIR: "/tmp/private" } },
@@ -381,21 +388,14 @@ test("validates prepared compiler provenance and exact shard options without pro
   for (const path of ["scripts", "config", "src"]) cpSync(path, join(checkout, path), { recursive: true });
   const policyPath = join(checkout, "scripts/public-evaluation-policy.ts");
   const policy = readFileSync(policyPath, "utf8");
-  const oldPolicy = activePolicies["tsc-rs"];
-  const nextPin = "a".repeat(40);
-  const next = { ...oldPolicy, candidate: { ...oldPolicy.candidate, version: nextPin.slice(0, 7) }, cliArgs: ["--checkers", "2"],
-    source: { ...oldPolicy.source, commit: nextPin } };
-  writeFileSync(policyPath, policy.replace('];\nexport const activePolicies', `];\n(policyGenerations as Generation[]).push({ policies: { ...policyGenerations[0]!.policies, "tsc-rs": ${JSON.stringify(next)} } });\nexport const activePolicies`));
-  const registryPath = join(checkout, "config/implementations.json");
-  const registry = JSON.parse(readFileSync(registryPath, "utf8"));
-  registry.implementations["tsc-rs"].acquisition.cargo.git.ref = nextPin;
-  registry.implementations["tsc-rs"].cliArgs = next.cliArgs;
-  write(registryPath, registry);
+  const next = { ...policyAtRun, candidate: { ...policyAtRun.candidate, version: "v0.1.76" }, cliArgs: ["--example"],
+    source: { ...policyAtRun.source, tag: "v0.1.76", commit: "a".repeat(40) } };
+  writeFileSync(policyPath, policy.replace('];\nexport const activePolicies', `];\n(policyGenerations as Generation[]).push({ policies: { ...policyGenerations[0]!.policies, tsz: ${JSON.stringify(next)} } });\nexport const activePolicies`));
   const stage = join(root, "staged");
   const stageCommand = join(checkout, "scripts/stage-public-reports.ts");
   execFileSync(process.execPath, [stageCommand, data, stage]);
   expect(readFileSync(join(stage, `${report.id}.html`), "utf8")).toBe(reportHtml(report));
-  expect(JSON.parse(readFileSync(join(stage, "catalog.json"), "utf8")).combinations.at(-2).candidate.version).toBe("aaaaaaa");
+  expect(JSON.parse(readFileSync(join(stage, "catalog.json"), "utf8")).combinations.at(-1).candidate.version).toBe("v0.1.76");
   // A report relabeled to the new tuple but holding the old source/args is
   // still rejected even when its own ID is recomputed.
   const relabeledRequest = { ...q, candidateVersion: next.candidate.version };

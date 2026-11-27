@@ -13,10 +13,10 @@ on:
       candidate:
         description: Pinned public candidate
         type: choice
-        options: [typescript, bun-1.4.4, bun-1.4.5, tsrs, ts-rust, tsc-rs, tsz]
+        options: [typescript, bun-1.4.4, bun-1.4.5, tsrs, ts-rust, tsz]
         default: typescript
       suite:
-        description: TS7 test suite (select full for ts-rust, tsc-rs or tsz)
+        description: TS7 test suite (select full for ts-rust or tsz)
         type: choice
         options: [fixed-120, full]
         default: fixed-120
@@ -41,7 +41,7 @@ env:
 jobs:
   plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 10
     outputs:
       id: ${{ steps.plan.outputs.id }}
       should-run: ${{ steps.plan.outputs.should-run }}
@@ -90,9 +90,6 @@ jobs:
             git fetch --no-tags --depth=1 origin refs/heads/public-report-data
             if git cat-file -e FETCH_HEAD:reports; then git archive FETCH_HEAD reports/ | tar -x -C public-data; fi
           fi
-      - name: Install the v0.1.0 source release Rust toolchain
-        if: inputs.candidate == 'tsc-rs'
-        run: rustup toolchain install 1.93.0-x86_64-unknown-linux-gnu --profile minimal --no-self-update
       - name: Plan shards and look for exact completed evidence
         id: plan
         env:
@@ -137,7 +134,7 @@ jobs:
           retention-days: 14
 
       - uses: actions/upload-artifact@v4
-        if: steps.plan.outputs.should-run == 'true' && (env.EVAL_CANDIDATE == 'ts-rust' || env.EVAL_CANDIDATE == 'tsc-rs' || env.EVAL_CANDIDATE == 'tsz')
+        if: steps.plan.outputs.should-run == 'true' && (env.EVAL_CANDIDATE == 'ts-rust' || env.EVAL_CANDIDATE == 'tsz')
         with:
           name: public-evaluation-compiler
           path: request/compiler/
@@ -149,7 +146,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.should-run == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -182,7 +179,7 @@ jobs:
           name: public-evaluation-request
           path: request
       - uses: actions/download-artifact@v4
-        if: env.EVAL_CANDIDATE == 'ts-rust' || env.EVAL_CANDIDATE == 'tsc-rs' || env.EVAL_CANDIDATE == 'tsz'
+        if: env.EVAL_CANDIDATE == 'ts-rust' || env.EVAL_CANDIDATE == 'tsz'
         with:
           name: public-evaluation-compiler
           path: request/compiler
