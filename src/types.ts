@@ -128,6 +128,15 @@ export interface CaseOutcome {
   rawOutput?: { stdout?: string; stderr?: string };
 }
 
+export interface ToolIdentity {
+  path: string;
+  version: string | null;
+  sha256: string | null;
+  native?: { path: string; sha256: string | null };
+  embeddedTypeScript?: string;
+  sdk?: { module: string; path: string; version: string; sha256: string };
+}
+
 /**
  * 适配器接口。
  *
@@ -140,6 +149,8 @@ export interface Adapter {
   readonly kind: "per-case" | "batch" | "api";
   /** false 表示实现不接受外部编译选项（例如固定 strict+esnext 的实现）。 */
   readonly supportsOptions: boolean;
+  /** 适配器自行选择后端时，提供与启动参数相同的工具来源。 */
+  readonly toolIdentity?: ToolIdentity;
   /**
    * supportsOptions=false 时实现实际采用的选项。只用于「刻意对齐」
    * 的冒烟模式（--mode fixed），这种模式的结果不能作为兼容性结论。

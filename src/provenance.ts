@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
-import type { ToolIdentity } from "./compare.ts";
+import type { ToolIdentity } from "./types.ts";
 
 export const sha256 = (value: string | Uint8Array): string => createHash("sha256").update(value).digest("hex");
 

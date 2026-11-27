@@ -1,0 +1,7 @@
+{
+  "name": "tsc-compa-tsrs-async-pilot",
+  "private": true,
+  "dependencies": {
+    "tsrs": "0.25.0-ts7.1.0-beta"
+  }
+}

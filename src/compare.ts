@@ -7,7 +7,8 @@ import { comparisonFields, compareDiagnostics, type ComparisonField, type Compar
 import { summaryBlockOf } from "./officialBaseline.ts";
 import type { GateProfile, GateReport } from "./gate.ts";
 import type { RatchetStateRegression } from "./ratchet.ts";
-import type { CaseOutcome, CompilerOptions, Diagnostic } from "./types.ts";
+import type { CaseOutcome, CompilerOptions, Diagnostic, ToolIdentity } from "./types.ts";
+export type { ToolIdentity } from "./types.ts";
 
 /**
  * 与官方基线的四级一致性（对齐 reference/tsc-rs 的 Agreement 枚举）：
@@ -263,14 +264,6 @@ export interface RunMeta {
   };
   /** 设置了 --gate 时的门禁结论（逐项检查结果，CI 用它判断红绿）。 */
   gate?: GateReport;
-}
-
-export interface ToolIdentity {
-  path: string;
-  version: string | null;
-  sha256: string | null;
-  native?: { path: string; sha256: string | null };
-  embeddedTypeScript?: string;
 }
 
 type VerdictCounts = Record<Verdict, number>;
