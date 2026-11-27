@@ -1,49 +1,8 @@
-# 接收检查器二进制并运行兼容性测试（native-suite）
+# 持续集成与兼容性报告
 
-本文说明 CI 操作。设计与术语见 [DESIGN.md](DESIGN.md)，
-参数和比较规则见 [REFERENCE.md](REFERENCE.md)，
-当前能力和限制见 [STATUS.md](STATUS.md)，历史变化见 [HISTORY.md](HISTORY.md)。
-
-实现侧 CI 构建二进制后，会把它作为本仓的 Release Asset 上传，并发送 `repository_dispatch`（`event_type = checker-binary`）触发本 workflow。本仓用自带的 `GITHUB_TOKEN` 下载自己的 release asset，不需要额外凭据。
-
-## 触发
-
-1. `repository_dispatch`（自动）：payload 形如
-
-```json
-{
-  "implementation": "checker",
-  "source_sha": "<源码提交 sha>",
-  "release_tag": "binary-checker-<sha>-linux-x64",
-  "asset_name": "checker-<sha>-linux-x64",
-  "platform": "linux-x64",
-  "baseline": "7.1.0-beta"
-}
-```
-
-2. `workflow_dispatch`（手动回退）：填 `release_tag` + `asset_name` 从本仓 release 下载；
-   或给 `binary_url` 直接下载任意实现的二进制。可指定 `baseline` / `mode` / `limit`。
-   `limit=0` 表示该基线冒烟集全部；非 0 只取前 N 项，指标里用 `meta.selectedCases`
-   和 `details.json` 记录实际范围，不能当作完整套件结果。
-
-## 做什么
-
-1. 按 `baseline` 从 `config/baselines.json` 解析测试集版本，将官方的
-   `microsoft/TypeScript` 仓库检出到 `reference/corpus`；
-2. 下载 release asset 并校验可执行；
-3. 用 `checker-batch` 适配器跑该参考配置的默认冒烟集（`meta.selectedCases` 记录实际数量）；
-4. 上传 `metrics-<impl>-<baseline>` artifact，并在 job summary 里贴
-   多报错误／漏报／覆盖率／跳过／`verdictEligible` 摘要。
-
-`native-suite.yml` 把 `--corpus` 固定指向 `reference/corpus/tests/cases`；
-选择 `7.1.0-beta-official` 时，该 workflow 没有改写为 TS7 Go 的
-`tsc/testdata/tests/cases` 布局，因此不能直接照搬为官方结果对照任务。
-`checker-batch` 在工厂里固定 `supportsOptions=false`；`mode=official` 不会被这个
-workflow 转成可作兼容性结论。该 workflow 当前没有接 `--gate`，也没有逐档
-Markdown／HTML 报告：它上传的是 `metrics.json` / `details.json`，失败运行不会
-回填报告占位。
-`ts7-official.yml` 只在 `limit=0` 时使用清单和门禁；非零 `limit` 是评估范围，
-不能拿来代替完整回归。
+本文说明如何运行门禁、查看公开评测和发布报告。通过受控 Release 接入自有检查器的流程见
+[接入自有检查器](NATIVE-CHECKERS.md)；该入口不参与公开报告部署。
+设计与术语见 [DESIGN.md](DESIGN.md)，参数和比较规则见 [REFERENCE.md](REFERENCE.md)。
 
 ## CI 兼容性门禁（`smoke.yml`）
 
@@ -183,23 +142,19 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 
 ## 当前限制
 
-- `native-suite.yml` 的默认冒烟集来自参考配置；当前任务描述中的 28 例不能
-  推广到所有基线或 `--limit`。全量样本仍走批量协议，尚未把 12k 用例作为本 workflow
-  的默认输入。
 - `smoke.yml` 的六档运行纳入 `compat-gate`。手动任务中，`ts7-official.yml` 在不限制
   用例数时启用兼容档门禁；`third-party.yml` 仅在官方结果对照已有「实现 × 参考配置」
-  回归记录且 `limit=0` 时启用门禁。`native-suite.yml` 不启用门禁。
+  回归记录且 `limit=0` 时启用门禁。
 - 每日 cron 的变化检测只覆盖上表列出的输入：范围版本、非 GitHub 获取源、无网络/API
   限流时按「未变化」处理；上游发了新版本但 pin 未改不会触发重跑（需要人工改 pin，
   走推送门禁）。无变化时当天不产出新的兼容性指标，历史指标以最近一次运行为准。
-- 目前只接 linux-x64；其它平台在实现侧加构建矩阵即可，本 workflow 不区分平台。
 - 本地实测不等于远端 CI 通过。当前仓库记录没有证明 GitHub Actions 上已经跑过
   `smoke.yml` 的六档、`ts7-official.yml` 或 `third-party.yml`；远端状态需以对应 run
   的 Summary 与 artifact 为准。
 
 ## TS7 官方结果文件对照（`ts7-official.yml`）
 
-与上面「接收二进制」的流程独立，手动触发，直接读取 TS7 官方仓库的 errors 结果文件：
+该任务手动触发，直接读取 TS7 官方仓库的 errors 结果文件：
 
 - 测试集提交：`config/baselines.json` 的 `ts71-official` 配置（当前 `3e92363`，= npm
   `typescript@7.1.0-beta` 的 gitHead；workflow 现场解析 ref，不硬编码）。Go 布局：cases 在
@@ -333,11 +288,13 @@ gh workflow run public-evaluation.yml -R hax/tsc-compa --ref main \
 ```
 
 选非默认分支时，只有勾选 `preview` 才允许运行；预演产物留在本次 Actions，永远不写公开报告分支。
-公开评测 workflow 须先存在于默认分支，才能从 GitHub 手动派发。合并前可在本地验证，或用独立的
-测试仓库默认分支做端到端预演，不在本仓进行测试写入。
+公开评测 workflow 须先存在于默认分支，才能从 GitHub 手动派发。修改评测 workflow 或相关脚本、测试的 PR
+会自动用 `typescript` / `fixed-120` 做只读验证，不读写公开数据分支。
 
 `plan` 用固定版本与可执行文件指纹、语料提交、用例清单／分片计划、参考来源、执行器代码、
-平台与关键选项计算请求 ID。只有同一 ID 的索引、HTML 和精简 JSON 都在且一致，才会跳过评测；
+平台与关键选项计算请求 ID。规划与执行都校验检出的语料和官方基线字节；请求还绑定各分片的输入摘要及
+TS7／tsrs 的原生发行包（包含声明库）指纹。只有当前目录有效，且同一 ID 的索引、HTML 和精简 JSON 都一致，
+才会跳过评测；
 历史报告仍可浏览，但不能代替条件已变化的运行。重复运行时即使命中，仍会核对输入与二进制身份，
 不会重跑测试用例。没有缓存时，只有分片和配置记录全部核对、且无执行异常，才保存新的公开报告。
 不兼容和明确跳过会计入结果：分片齐全不表示所有用例都能比较，更不表示全部通过。
@@ -353,6 +310,7 @@ gh workflow run public-evaluation.yml -R hax/tsc-compa --ref main \
    结果索引、HTML 和精简 JSON；目录列出已支持的组合，索引只列出完成的结果。
 2. 管理员在 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
    发布 workflow 不会替维护者启用 Pages；不把 `public-report-data` 设为「Deploy from a branch」。
+   在 `github-pages` 部署环境的分支策略中只允许默认分支（本仓为 `main`），不需要为此改动 PR 分支保护策略。
 3. 在默认分支手动运行 **Publish public reports to Pages**（`publish-public-reports.yml`）。
    它将默认分支的站点与数据分支的 `reports/` 一起部署，站点地址见部署结果。
    之后保存新报告后再运行该发布任务，评测不会自动部署。

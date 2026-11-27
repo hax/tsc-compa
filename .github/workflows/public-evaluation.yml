@@ -1,6 +1,11 @@
 name: public-evaluation
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/public-evaluation.yml
+      - scripts/public-evaluation*.ts
+      - test/public-evaluation*.test.ts
   workflow_dispatch:
     inputs:
       candidate:
@@ -41,7 +46,7 @@ jobs:
           DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
           PREVIEW: ${{ inputs.preview }}
         run: |
-          if [[ "$GITHUB_REF" != "$DEFAULT_REF" && "$PREVIEW" != true ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" != "$DEFAULT_REF" && "$PREVIEW" != true ]]; then
             echo 'Publishing requires the default branch. Select preview for a read-only run.' >&2
             exit 1
           fi
@@ -61,10 +66,13 @@ jobs:
           repository: ${{ steps.pin.outputs.repo }}
           ref: ${{ steps.pin.outputs.ref }}
           path: reference/corpus
-          sparse-checkout: tsc/testdata/tests/cases
+          sparse-checkout: |
+            tsc/testdata/tests/cases
+            tsc/testdata/baselines/reference
           persist-credentials: false
       - run: bun install --frozen-lockfile
       - name: Read durable public data if initialized
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           mkdir public-data
@@ -77,8 +85,8 @@ jobs:
       - name: Plan shards and look for exact completed evidence
         id: plan
         env:
-          CANDIDATE: ${{ inputs.candidate }}
-          SUITE: ${{ inputs.suite }}
+          CANDIDATE: ${{ inputs.candidate || 'typescript' }}
+          SUITE: ${{ inputs.suite || 'fixed-120' }}
         run: bun scripts/public-evaluation.ts plan "$CANDIDATE" "$SUITE" reference/corpus .cache/public-tools request public-data
       - name: Report cache hit
         if: steps.plan.outputs.cached == 'true'
@@ -107,7 +115,7 @@ jobs:
     env:
       SHARD: ${{ matrix.shard }}
       REQUEST_ID: ${{ needs.plan.outputs.id }}
-      CANDIDATE: ${{ inputs.candidate }}
+      CANDIDATE: ${{ inputs.candidate || 'typescript' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -137,7 +145,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: full-${{ inputs.candidate }}-${{ matrix.shard }}
+          name: full-${{ inputs.candidate || 'typescript' }}-${{ matrix.shard }}
           path: out/
           if-no-files-found: warn
           overwrite: true
@@ -184,7 +192,7 @@ jobs:
   persist:
     needs: [plan, report]
     if: >-
-      always() && !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      always() && github.event_name == 'workflow_dispatch' && !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       && needs.plan.result == 'success' && needs.report.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
