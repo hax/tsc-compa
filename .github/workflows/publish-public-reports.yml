@@ -20,12 +20,25 @@ jobs:
       contents: read
       pages: read
     steps:
+      - name: Require the exact default-branch ref
+        shell: bash
+        env:
+          DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          if ! [[ "$GITHUB_REF" == "$DEFAULT_REF" ]]; then
+            echo '::error::Pages deployments require the exact default-branch ref'
+            exit 1
+          fi
       - name: Check out site code at the triggering default-branch commit
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           path: source
-          sparse-checkout: site
+          sparse-checkout: |
+            site
+            scripts
+            src
+            config
           persist-credentials: false
       - name: Check out published report data
         uses: actions/checkout@v4
@@ -34,20 +47,19 @@ jobs:
           path: data
           sparse-checkout: reports
           persist-credentials: false
-      - name: Assemble Pages artifact
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - name: Validate and stage Pages artifact
         run: |
           set -euo pipefail
-          test -f source/site/index.html
-          test ! -e source/site/reports
-          test -f data/reports/catalog.json
-          test -f data/reports/index.json
-          if [ -n "$(find source/site data/reports -type l -print -quit)" ]; then
-            echo '::error::Pages inputs may not contain symbolic links'
-            exit 1
-          fi
           mkdir _site
-          cp -R source/site/. _site/
-          cp -R data/reports _site/reports
+          for asset in index.html styles.css app.js catalog.js; do
+            path="source/site/$asset"
+            test -f "$path" && test ! -L "$path" || exit 1
+            cp "$path" _site/
+          done
+          bun source/scripts/stage-public-reports.ts data _site/reports
       - name: Check Pages configuration
         uses: actions/configure-pages@v5
         with:
@@ -64,6 +76,7 @@ jobs:
     permissions:
       pages: write
       id-token: write
+    # Also restrict this environment to the exact default branch in repo settings.
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
