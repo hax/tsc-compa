@@ -241,6 +241,20 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 `third-party.yml` 已在远端跑过。`tsrs` 的 npm 二进制自报的 TypeScript 提交仍是 TS7
 测试集 pin，不是 tsrs 自己的源码提交；报告里的二进制 sha256 与 provenance 需要分开读。
 
+## 候选检查器的适配器冒烟（`candidate-adapter-smoke.yml`）
+
+同一份 TS7 官方 28 例列表也用于候选适配器的端到端验证。工作流从
+`config/implementations.json` 选出支持 `7.1.0-beta-official` 的固定版本，
+用各自登记的适配器逐一运行，对照同一提交里的官方 `.errors.txt`。它在改到适配器、
+运行器或相关配置的 PR 上触发，也可以手动运行，不纳入 `smoke.yml` 的 `compat-gate`。
+
+下载／构建失败、执行崩溃／超时或所有用例都跳过会使对应任务失败。单案跳过和原因
+单列（例如 Bun 1.4.x 不支持继承的 `target=es2026`），诊断差异写入报告但不阻断。
+执行失败说明候选与适配器的组合出现问题，不能只凭这一步断定是哪一侧的缺陷。
+每个候选在 Actions Summary 和 `adapter-smoke-<id>` artifact 留下结果，后者包含
+`metrics.json`、`details.json` 和 Markdown／HTML 报告。需要评估候选兼容性时，
+看后文的全量报告而不是这 28 例。
+
 ## 固定版本兼容性报告（`compatibility-reports.yml`）
 
 手动运行。矩阵分别执行 TypeScript 7.1.0-beta、`bun check` 1.4.4 和 1.4.5、`oxc-project/tsrs`。
