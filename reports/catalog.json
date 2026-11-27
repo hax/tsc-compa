@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "combinations": [
+    {
+      "candidate": {
+        "id": "typescript",
+        "name": "TypeScript",
+        "version": "7.1.0-beta"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "fixed-120",
+        "label": "固定诊断样本（120 例）"
+      }
+    },
+    {
+      "candidate": {
+        "id": "typescript",
+        "name": "TypeScript",
+        "version": "7.1.0-beta"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "full",
+        "label": "全量类型检查测试集（compiler / conformance）"
+      }
+    },
+    {
+      "candidate": {
+        "id": "bun",
+        "name": "Bun",
+        "version": "1.4.4"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "fixed-120",
+        "label": "固定诊断样本（120 例）"
+      }
+    },
+    {
+      "candidate": {
+        "id": "bun",
+        "name": "Bun",
+        "version": "1.4.4"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "full",
+        "label": "全量类型检查测试集（compiler / conformance）"
+      }
+    },
+    {
+      "candidate": {
+        "id": "bun",
+        "name": "Bun",
+        "version": "1.4.5"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "fixed-120",
+        "label": "固定诊断样本（120 例）"
+      }
+    },
+    {
+      "candidate": {
+        "id": "bun",
+        "name": "Bun",
+        "version": "1.4.5"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "full",
+        "label": "全量类型检查测试集（compiler / conformance）"
+      }
+    },
+    {
+      "candidate": {
+        "id": "tsrs",
+        "name": "tsrs",
+        "version": "0.25.0-ts7.1.0-beta"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "fixed-120",
+        "label": "固定诊断样本（120 例）"
+      }
+    },
+    {
+      "candidate": {
+        "id": "tsrs",
+        "name": "tsrs",
+        "version": "0.25.0-ts7.1.0-beta"
+      },
+      "reference": {
+        "id": "7.1.0-beta-official",
+        "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+      },
+      "suite": {
+        "id": "full",
+        "label": "全量类型检查测试集（compiler / conformance）"
+      }
+    }
+  ]
+}
