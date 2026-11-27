@@ -335,6 +335,24 @@ TS7／tsrs 的原生发行包（包含声明库）指纹。无论是否勾选 `f
 分片缺失、编译进程崩溃或超时不会新增或刷新公开报告。排查用的逐案明细留在本次 Actions 产物，
 不进入 Git 数据分支或网站，并按产物保留期限过期。
 
+### 并列查看兼容性差异样本 v1（只读产物）
+
+`curated-difference-v1` 是独立的版本化比较产物，不是 `public-evaluation.yml` 的派发选项。
+它从 [#27 固定的六份全量运行证据](../config/curated-difference-v1/README.md) 提取 33 个目标配置，
+不重新运行或保存评测；其中两份是只读预演，不冒充正式发布结果。页面逐案区分兼容、有差异、无法确认和跳过，
+单列官方 CLI 与 `.errors.txt` 的差异和五个官方 TS6／TS7 校准探针。不用这组刻意挑选的用例估计总体兼容率。
+
+```sh
+# 写入本地暂存根目录，不写入公开数据分支，也不触发部署。
+bun scripts/curated-comparison.ts .cache/curated-web
+```
+
+入口为暂存根目录下的 `reports/curated-difference-v1/index.html`，相邻的 `comparison.json` 提供同一份数据。
+脚本校验已审阅的 v1 输入字节，不覆盖同名产物，也不修改现有目录、报告索引或历史报告。
+Pages 发布工作流在暂存公开目录和历史报告后生成此页。部署完成后可从首页链接打开；它不会出现在评测选择器中。
+要重跑源文件或校准探针，请用[本地复现命令](../config/curated-difference-v1/README.md#本地跑选中的源文件)。
+本地运行会展开同文件的配置；按「源文件 + 目标配置」筛选才能与只读产物对照。
+
 ### 新增候选：全量评测顺序
 
 1. `ts-rust`（pingdotgg）：npm `tsc-rs@0.8.0`，校验启动器包和 Linux x64 平台包的 SHA-256 与 npm SHA-512 完整性值，

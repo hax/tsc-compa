@@ -60,6 +60,7 @@ jobs:
             cp "$path" _site/
           done
           bun source/scripts/stage-public-reports.ts data _site/reports
+          bun source/scripts/curated-comparison.ts _site
       - name: Check Pages configuration
         uses: actions/configure-pages@v5
         with:
