@@ -39,8 +39,11 @@ test("stages deterministic sidecar files without touching the catalog or existin
     for (const [file, body] of Object.entries(existing)) writeFileSync(join(reports, file), body);
     const path = stageCuratedComparison(root);
     expect(path).toBe(join(reports, suiteId));
+    const homepage = readFileSync(join(REPO_ROOT, "site", "index.html"), "utf8");
+    const href = homepage.match(/href="(\.\/reports\/curated-difference-v1\/index\.html)"/)?.[1];
+    expect(href).toBe(`./reports/${suiteId}/index.html`);
+    expect(readFileSync(join(root, href!), "utf8")).toBe(curatedComparisonHtml(data));
     expect(readdirSync(path).sort()).toEqual(["comparison.json", "index.html"]);
-    expect(readFileSync(join(path, "index.html"), "utf8")).toBe(curatedComparisonHtml(data));
     expect(readFileSync(join(path, "comparison.json"), "utf8")).toBe(`${JSON.stringify(data, null, 2)}\n`);
     expect(() => stageCuratedComparison(root)).toThrow();
     for (const [file, body] of Object.entries(existing)) expect(readFileSync(join(reports, file), "utf8")).toBe(body);

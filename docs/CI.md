@@ -349,7 +349,7 @@ bun scripts/curated-comparison.ts .cache/curated-web
 
 入口为暂存根目录下的 `reports/curated-difference-v1/index.html`，相邻的 `comparison.json` 提供同一份数据。
 脚本校验已审阅的 v1 输入字节，不覆盖同名产物，也不修改现有目录、报告索引或历史报告。
-部署集成和页面入口另行安排；在此之前可以直接打开本地产物，或由有权限的维护者在部署暂存阶段调用该命令。
+Pages 发布工作流在暂存公开目录和历史报告后生成此页。部署完成后可从首页链接打开；它不会出现在评测选择器中。
 要重跑源文件或校准探针，请用[本地复现命令](../config/curated-difference-v1/README.md#本地跑选中的源文件)。
 本地运行会展开同文件的配置；按「源文件 + 目标配置」筛选才能与只读产物对照。
 
