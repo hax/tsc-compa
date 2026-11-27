@@ -1,0 +1,238 @@
+{
+  "schemaVersion": 1,
+  "id": "c39b32e929eef994d8ed3b952859aa8120fcee9485bbd04bc49d1ae27ad03603",
+  "request": {
+    "version": 2,
+    "candidate": "typescript",
+    "candidateVersion": "7.1.0-beta",
+    "reference": "7.1.0-beta-official",
+    "source": "official-baseline",
+    "suite": "full",
+    "corpus": "microsoft/TypeScript@3e9236361fa97a9e6c685f4833ac457ae2d8c50a",
+    "planSha256": "192a7dfad36ea42b615b2a82c86b641205c03f53e539c32df7e4478f87337b2e",
+    "planCounts": {
+      "shards": 8,
+      "sourceFiles": 12974,
+      "records": 14346
+    },
+    "manifestSha256": null,
+    "harnessSha256": "12a2ea8c937cfb4c7450a44394d340bdaf283d7dd483e93a3b5de9f52bf60792",
+    "runner": "Bun 1.4.5 (a7733435cf40429e3b35c36072769df2052b80f1)",
+    "platform": "linux/x64",
+    "runnerImage": "ubuntu24",
+    "node": "v22.18.0",
+    "locale": "C.UTF-8",
+    "timezone": "UTC",
+    "adapter": "tsc-cli",
+    "options": {
+      "mode": "official",
+      "strategy": "aligned",
+      "referenceBaseArgs": [
+        "--noEmit",
+        "--ignoreConfig",
+        "--pretty",
+        "false",
+        "--target",
+        "es2026",
+        "--module",
+        "es2022",
+        "--moduleResolution",
+        "bundler",
+        "--strict",
+        "true",
+        "--skipDefaultLibCheck",
+        "--noErrorTruncation"
+      ]
+    },
+    "referenceTool": {
+      "version": "7.1.0-beta",
+      "sha256": "a183b1956edbe7e7d98f2249858eedf2d8a9790809cc4909db1276e202faaa70",
+      "nativeSha256": null,
+      "embeddedTypeScript": null
+    },
+    "candidateTool": {
+      "version": "Version 7.1.0-beta",
+      "sha256": "a183b1956edbe7e7d98f2249858eedf2d8a9790809cc4909db1276e202faaa70",
+      "nativeSha256": null,
+      "embeddedTypeScript": null
+    },
+    "distributions": {
+      "reference": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4",
+      "candidate": "5bb83e8b5d9eff76bece24494b6e176086a3cffbc01afa035515c344f77be7d4"
+    },
+    "inputs": [
+      {
+        "shard": "01",
+        "parsedInputsSha256": "36882890eef7db2ec81d3a289dbaabf95037cfea4002d6976a165bb339458c14",
+        "officialInputsSha256": "a05eb4b289814fe2fe3a0fdad23a3c15ce7a8d8cc2e665519147cb2d96430e8f"
+      },
+      {
+        "shard": "02",
+        "parsedInputsSha256": "12dffaf135fe0b559263a8796011814393788bc89bd38b5ebb6639d0b30a5b14",
+        "officialInputsSha256": "bcb6877b804eb65aa35b538ba4e6f1a7a4f81c0600f2ffc3b690b27ffc886b8c"
+      },
+      {
+        "shard": "03",
+        "parsedInputsSha256": "d2aa65d983c61f0b4060ea4bb65f6ba4d17080cce0b9d57e6d22813ae2c4ff7d",
+        "officialInputsSha256": "35799fd21fbf7b7bf232b5d20d75242756bf65e0f4d1730c56ef130987e7e62a"
+      },
+      {
+        "shard": "04",
+        "parsedInputsSha256": "9d85608ae06fbcb10fe3bc9cb312217f1b5dad3bac30c41256adb37aa0ace892",
+        "officialInputsSha256": "400ab3d89fe043343a48bfe56540e43e350232a36630966ab270f948c55e0eea"
+      },
+      {
+        "shard": "05",
+        "parsedInputsSha256": "cb42414a2aa08ab69a8d2b7354edf7f1c20ccbe50f4bab93eaedc8c043e1258e",
+        "officialInputsSha256": "7af7dc5636281d684f9dd8e1d70dc40b241a2ef5b748aa0575528bd4c0d64e3f"
+      },
+      {
+        "shard": "06",
+        "parsedInputsSha256": "9bd1ff3d1dfbdc01a0c6c06b4d3abfa857df73341942e19e370e67ddf00ba317",
+        "officialInputsSha256": "1dff0de1222c36e27b8986e36e488a70a1ea38dd2c320aff4bff7685056b4226"
+      },
+      {
+        "shard": "07",
+        "parsedInputsSha256": "3e124fa5e405f1bd5229aa59381f026c8db7ae4faf8ccf80d267d2e58ad87ce7",
+        "officialInputsSha256": "c1abf1326bf32a52baa9e2692323cfd096353e967937833c5c12af9c00ebf089"
+      },
+      {
+        "shard": "08",
+        "parsedInputsSha256": "5cd2327892cfeaad86ea0e2b00baacef014fb5977216235f705f7d5da4870cac",
+        "officialInputsSha256": "e02e446b061ecd64584141e81fb1757cfe25a1445d8361a9f6a670d60844d6e0"
+      }
+    ]
+  },
+  "candidate": {
+    "id": "typescript",
+    "name": "TypeScript",
+    "version": "7.1.0-beta"
+  },
+  "reference": {
+    "id": "7.1.0-beta-official",
+    "label": "TypeScript 7.1.0-beta 官方 .errors.txt"
+  },
+  "suite": {
+    "id": "full",
+    "label": "全量类型检查测试集（compiler / conformance）"
+  },
+  "generatedAt": "2026-11-27T08:57:36.240Z",
+  "reportPath": "reports/c39b32e929eef994d8ed3b952859aa8120fcee9485bbd04bc49d1ae27ad03603.html",
+  "runUrl": "https://github.com/hax/tsc-compa/actions/runs/45969353606",
+  "summary": {
+    "complete": true,
+    "shards": 8,
+    "sourceFiles": 12974,
+    "records": 14346,
+    "ran": 9212,
+    "skipped": 5134,
+    "coverage": 0.9969750963411097,
+    "hits": 24060,
+    "expected": 24133,
+    "fp": 47,
+    "missed": 71,
+    "misanchor": 2,
+    "compatibility": {
+      "pass": 9169,
+      "fail": 43,
+      "unknown": 0
+    },
+    "strict": {
+      "pass": 4829,
+      "fail": 77,
+      "unknown": 4306
+    }
+  },
+  "evidence": [
+    {
+      "shard": "01",
+      "parsedInputsSha256": "36882890eef7db2ec81d3a289dbaabf95037cfea4002d6976a165bb339458c14",
+      "officialInputsSha256": "a05eb4b289814fe2fe3a0fdad23a3c15ce7a8d8cc2e665519147cb2d96430e8f"
+    },
+    {
+      "shard": "02",
+      "parsedInputsSha256": "12dffaf135fe0b559263a8796011814393788bc89bd38b5ebb6639d0b30a5b14",
+      "officialInputsSha256": "bcb6877b804eb65aa35b538ba4e6f1a7a4f81c0600f2ffc3b690b27ffc886b8c"
+    },
+    {
+      "shard": "03",
+      "parsedInputsSha256": "d2aa65d983c61f0b4060ea4bb65f6ba4d17080cce0b9d57e6d22813ae2c4ff7d",
+      "officialInputsSha256": "35799fd21fbf7b7bf232b5d20d75242756bf65e0f4d1730c56ef130987e7e62a"
+    },
+    {
+      "shard": "04",
+      "parsedInputsSha256": "9d85608ae06fbcb10fe3bc9cb312217f1b5dad3bac30c41256adb37aa0ace892",
+      "officialInputsSha256": "400ab3d89fe043343a48bfe56540e43e350232a36630966ab270f948c55e0eea"
+    },
+    {
+      "shard": "05",
+      "parsedInputsSha256": "cb42414a2aa08ab69a8d2b7354edf7f1c20ccbe50f4bab93eaedc8c043e1258e",
+      "officialInputsSha256": "7af7dc5636281d684f9dd8e1d70dc40b241a2ef5b748aa0575528bd4c0d64e3f"
+    },
+    {
+      "shard": "06",
+      "parsedInputsSha256": "9bd1ff3d1dfbdc01a0c6c06b4d3abfa857df73341942e19e370e67ddf00ba317",
+      "officialInputsSha256": "1dff0de1222c36e27b8986e36e488a70a1ea38dd2c320aff4bff7685056b4226"
+    },
+    {
+      "shard": "07",
+      "parsedInputsSha256": "3e124fa5e405f1bd5229aa59381f026c8db7ae4faf8ccf80d267d2e58ad87ce7",
+      "officialInputsSha256": "c1abf1326bf32a52baa9e2692323cfd096353e967937833c5c12af9c00ebf089"
+    },
+    {
+      "shard": "08",
+      "parsedInputsSha256": "5cd2327892cfeaad86ea0e2b00baacef014fb5977216235f705f7d5da4870cac",
+      "officialInputsSha256": "e02e446b061ecd64584141e81fb1757cfe25a1445d8361a9f6a670d60844d6e0"
+    }
+  ],
+  "differences": [
+    {
+      "id": "compiler/declFileExportImportChain.ts",
+      "extra": 3,
+      "missed": 0,
+      "misanchor": 0
+    },
+    {
+      "id": "compiler/externalModuleAssignToVar.ts",
+      "extra": 2,
+      "missed": 0,
+      "misanchor": 0
+    },
+    {
+      "id": "conformance/classes/members/privateNames/privateNameEmitHelpers.ts",
+      "extra": 0,
+      "missed": 2,
+      "misanchor": 0
+    },
+    {
+      "id": "conformance/parser/ecmascript5/SuperExpressions/parserSuperExpression2.ts",
+      "extra": 0,
+      "missed": 1,
+      "misanchor": 0
+    },
+    {
+      "id": "conformance/types/thisType/declarationFiles.ts",
+      "extra": 0,
+      "missed": 4,
+      "misanchor": 0
+    },
+    {
+      "id": "compiler/alwaysStrictNoImplicitUseStrict.ts",
+      "extra": 1,
+      "missed": 0,
+      "misanchor": 0
+    },
+    {
+      "id": "compiler/collisionExportsRequireAndAlias.ts",
+      "extra": 0,
+      "missed": 2,
+      "misanchor": 0
+    },
+    {
+      "id": "compiler/collisionExportsRequireAndInternalModuleAlias.ts",
+      "extra": 0,
+      "missed": 2,
+      "misanchor": 0
+    }
+  ]
+}
