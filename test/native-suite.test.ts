@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, test } from "bun:test";
@@ -32,6 +32,16 @@ function mockFetch(callback: (url: string, options: RequestInit) => Response): t
   return Object.assign(async (input: Parameters<typeof fetch>[0], options: RequestInit = {}) => callback(String(input), options), {
     preconnect: fetch.preconnect,
   });
+}
+
+function harnessFixtureEnv(dir: string) {
+  const binDir = join(dir, "bin");
+  mkdirSync(binDir);
+  // The pinned tsc launchers use /usr/bin/env node. Give the isolated HOME a
+  // known launcher (the Bun already running these tests), not a host Node shim
+  // that might try to install Node again under that empty HOME.
+  symlinkSync(process.execPath, join(binDir, "node"));
+  return { PATH: `${binDir}:/usr/bin:/bin`, RUNNER_TEMP: dir, TMPDIR: dir };
 }
 
 test("legacy automatic inputs keep all three baselines and fixed full-smoke defaults", () => {
@@ -174,7 +184,7 @@ test("verified synthetic batch executable produces the four standard reports and
     const request = manual({ baseline: "7.1.0-beta", limit: "1", sha256: digest });
     const plan = { request, assetId: asset.id, size: Buffer.byteLength(checker), binarySha256: digest, releaseDigestVerified: true };
     expect(await executeNativePlan(repo, plan, corpus, out, {
-      ...process.env, GH_TOKEN: "synthetic-token", GITHUB_ENV: "synthetic-env", NATIVE_PLAN: "synthetic-plan",
+      ...harnessFixtureEnv(dir), GH_TOKEN: "synthetic-token", GITHUB_ENV: "synthetic-env", NATIVE_PLAN: "synthetic-plan",
     }, mockFetch((url, opts) => {
       expect(url).toBe(`https://api.github.com/repos/${repo}/releases/assets/${asset.id}`);
       expect(new Headers(opts.headers).get("Accept")).toBe("application/octet-stream");
@@ -204,7 +214,7 @@ test("native harness failure produces a fallback report but not false success", 
     const checker = `#!/bin/sh\ntouch '${marker}'\nexit 2\n`;
     const out = join(dir, "reports");
     const plan = { request: manual({ limit: "1" }), assetId: asset.id, size: checker.length, binarySha256: hash(checker), releaseDigestVerified: false };
-    const result = await executeNativePlan(repo, plan, join(dir, "missing-corpus"), out, process.env, mockFetch(() => new Response(checker)));
+    const result = await executeNativePlan(repo, plan, join(dir, "missing-corpus"), out, harnessFixtureEnv(dir), mockFetch(() => new Response(checker)));
     expect(result).toEqual({ harness: { status: "missing-corpus" }, fallbackReport: { status: "ok" } });
     expect(JSON.parse(readFileSync(join(out, "run-status.json"), "utf8"))).toEqual(result);
     expect(existsSync(marker)).toBe(false);
@@ -243,7 +253,7 @@ test("a per-case checker crash stays visible in the standard non-gating reports"
     const checker = "#!/bin/sh\nexit 2\n";
     const out = join(dir, "reports");
     const plan = { request: manual({ limit: "1" }), assetId: asset.id, size: checker.length, binarySha256: hash(checker), releaseDigestVerified: false };
-    expect(await executeNativePlan(repo, plan, corpus, out, process.env, mockFetch(() => new Response(checker))))
+    expect(await executeNativePlan(repo, plan, corpus, out, harnessFixtureEnv(dir), mockFetch(() => new Response(checker))))
       .toEqual({ harness: { status: "ok" } });
     const metrics = JSON.parse(readFileSync(join(out, "metrics.json"), "utf8"));
     expect(metrics.meta.executionFailures).toMatchObject([{ side: "candidate", status: "crash" }]);
@@ -265,7 +275,7 @@ test("nonzero harness and failed fallback are recorded separately without raw er
     mkdirSync(join(out, "report.html"), { recursive: true });
     const checker = "#!/bin/sh\nexit 2\n";
     const plan = { request: manual({ limit: "1" }), assetId: asset.id, size: checker.length, binarySha256: hash(checker), releaseDigestVerified: false };
-    const result = await executeNativePlan(repo, plan, corpus, out, process.env, mockFetch(() => new Response(checker)));
+    const result = await executeNativePlan(repo, plan, corpus, out, harnessFixtureEnv(dir), mockFetch(() => new Response(checker)));
     expect(result).toEqual({ harness: { status: "exit", exitCode: 1 }, fallbackReport: { status: "exit", exitCode: 1 } });
     const safeStatus = readFileSync(join(out, "run-status.json"), "utf8");
     expect(JSON.parse(safeStatus)).toEqual(result);
