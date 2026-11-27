@@ -30,6 +30,12 @@
 自比与跨版本结果（包括不同 tsc 版本的默认选项漂移）见 [docs/RESULTS.md](docs/RESULTS.md)；
 任务通过本仓库的 [Issue 列表](https://github.com/hax/tsc-compa/issues) 跟踪。
 
+## 查阅公开报告
+
+公开报告目录部署到 GitHub Pages 后，可以按「候选检查器和版本 → 参考 TypeScript → 测试集」筛选，或分享当前选择。首版只开放登记的官方 TypeScript、Bun 和 tsrs 版本，参考为 TS 7.1.0-beta 的官方基线。固定的 120 例诊断样本和全量报告分开列出；28 例冒烟只为 CI 校准运行器和候选适配器，不是公开评估选项。
+
+目录只展示已发布的报告，未见结果不表示检查器不兼容，也不会自动启动 CI。有仓库写权限的维护者可在 [GitHub Actions 评测工作流](https://github.com/hax/tsc-compa/actions/workflows/public-evaluation.yml)点 **Run workflow**。Pages 需先由仓库管理员配置，才会提供公开目录；未部署时可查看 Actions 的运行记录。参见 [CI 使用说明](docs/CI.md)。
+
 ## 快速开始
 
 环境要求：[Bun](https://bun.com) ≥ 1.3、`microsoft/TypeScript` 测试集检出，

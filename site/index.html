@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="浏览 tsc-compa 已发布的 TypeScript 检查器兼容性报告。">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>兼容性报告 · tsc-compa</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="shell masthead">
+    <a class="brand" href="./">tsc-compa</a>
+    <a href="https://github.com/hax/tsc-compa">项目仓库</a>
+  </header>
+  <main class="shell">
+    <header class="intro">
+      <h1>检查器兼容性报告</h1>
+      <p>选择候选检查器、参考 TypeScript 和测试集，查看已公开的运行结果。页面不会启动 CI。</p>
+    </header>
+    <section class="panel" aria-labelledby="filters-heading">
+      <h2 id="filters-heading">选择比较条件</h2>
+      <div id="filters" class="filters" hidden>
+        <label for="candidate">候选检查器<select id="candidate"></select></label>
+        <label for="version">候选版本<select id="version"></select></label>
+        <label for="reference">参考 TypeScript<select id="reference"></select></label>
+        <label for="suite">测试集<select id="suite" aria-describedby="suite-note"></select></label>
+      </div>
+      <p id="suite-note" class="note">120 例是固定的诊断样本，不是全量覆盖率。全量报告另列，并说明实际完成和跳过的范围。</p>
+      <p id="load-status" class="note" role="status">正在读取公开目录和报告索引…</p>
+      <noscript><p>需要 JavaScript 来读取和筛选公开目录。</p></noscript>
+      <a id="share" class="share" hidden>当前选择链接</a>
+    </section>
+    <section id="results" class="panel" aria-labelledby="results-heading" hidden>
+      <h2 id="results-heading">公开报告</h2>
+      <p id="result-status" role="status"></p>
+      <div id="latest" hidden></div>
+      <details id="history" hidden>
+        <summary>查看历史报告 <span id="history-count"></span></summary>
+        <ul id="history-list" class="history-list"></ul>
+      </details>
+    </section>
+    <aside class="panel" aria-labelledby="maintainer-heading">
+      <h2 id="maintainer-heading">缺少一份报告？</h2>
+      <p>有仓库写权限的维护者可以在 GitHub Actions 选择 <span lang="en">Run workflow</span>。普通访客可以查阅已有报告，不能从这个页面发起运行。</p>
+      <a href="https://github.com/hax/tsc-compa/actions/workflows/public-evaluation.yml">打开评测工作流 <span aria-hidden="true">↗</span></a>
+    </aside>
+  </main>
+</body>
+</html>
