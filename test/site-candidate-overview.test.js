@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { readReports } from '../site/catalog.js';
-import { compatibilityCounts, displayDate, latestFullReport } from '../site/candidate-overview.js';
+import { compatibilityCounts, displayDate, formatCompatibilityCounts, latestFullReport } from '../site/candidate-overview.js';
 import snapshot from '../site/candidate-overview.json';
 import implementations from '../config/implementations.json';
 import { publicCatalog } from '../scripts/public-evaluation.ts';
@@ -65,4 +65,15 @@ test('the newest exact full tuple wins, and counts come from that report', () =>
   expect(compatibilityCounts({ summary: { skipped: 0, compatibility: { pass: -1, fail: 0, unknown: 0 } } })).toBeNull();
   expect(compatibilityCounts({ summary: { skipped: 0, compatibility: { pass: 0, fail: 0, unknown: 0 } } }))
     .toEqual({ pass: 0, fail: 0, skipped: 0, unknown: 0 });
+});
+
+
+test('overview shows crash and timeout as a subset of failures and preserves historical counts', () => {
+  const summary = { compatibility: { pass: 8, fail: 4, unknown: 1 }, skipped: 2 };
+  expect(formatCompatibilityCounts(compatibilityCounts({ summary })))
+    .toBe('兼容通过 8 / 不兼容 4 / 跳过 2 / 无法确认 1');
+  const current = { ...summary, executionFailures: { crash: 1, timeout: 2 } };
+  expect(formatCompatibilityCounts(compatibilityCounts({ summary: current })))
+    .toBe('兼容通过 8 / 不兼容 4（含崩溃 1、超时 2） / 跳过 2 / 无法确认 1');
+  expect(compatibilityCounts({ summary: { ...summary, executionFailures: { crash: 2, timeout: 3 } } })).toBeNull();
 });

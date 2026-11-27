@@ -8,6 +8,7 @@ import { isValidCaseId, readCase } from "../src/discover.ts";
 import { activePolicies, isAddedCandidate, type AddedCandidate } from "./public-evaluation-policy.ts";
 import { identifyTool, sha256 } from "../src/provenance.ts";
 import type { Metrics, ToolIdentity } from "../src/compare.ts";
+import { verifyPublicShardCases, type PublicCaseResult } from "./public-evaluation-failures.ts";
 
 export const baseline = "7.1.0-beta-official";
 const candidates = ["typescript", "bun-1.4.4", "bun-1.4.5", "tsrs"] as const;
@@ -134,7 +135,7 @@ export function verifyShard(plan: Plan, shard: Shard, dir: string, candidate?: C
   return metrics;
 }
 
-export function aggregate(plan: Plan, root: string) {
+export function aggregate(plan: Plan, root: string, publicReport = false) {
   const issues: string[] = [];
   const plans = plan.shards.flatMap((shard) => shard.units);
   const recordIds = plans.flatMap((unit) => unit.records);
@@ -146,6 +147,7 @@ export function aggregate(plan: Plan, root: string) {
   const rows = plan.candidates.map((candidate) => {
     const output = { candidate, shards: 0, sourceFiles: 0, records: 0, ran: 0, skipped: 0, hits: 0, expected: 0,
       fp: 0, missed: 0, misanchor: 0, executionFailures: 0,
+      candidateFailures: [] as PublicCaseResult["failures"], differences: [] as PublicCaseResult["differences"],
       compatibility: { pass: 0, fail: 0, unknown: 0 }, strict: { pass: 0, fail: 0, unknown: 0 },
       skipReasons: Object.create(null) as Record<string, number>, tools: null as Metrics["meta"]["tools"] | null,
     };
@@ -154,6 +156,7 @@ export function aggregate(plan: Plan, root: string) {
       const name = slug(candidate, shard);
       try {
         const metrics = verifyShard(plan, shard, join(root, name), candidate);
+        const results = publicReport ? verifyPublicShardCases(metrics, join(root, name)) : undefined;
         const tools = metrics.meta.tools;
         if (!tools?.reference.sha256 || !tools.candidate?.sha256) throw new Error("Missing executable identity");
         const identity = JSON.stringify([tools.runner, tools.platform, toolKey(tools.reference), toolKey(tools.candidate)]);
@@ -177,16 +180,24 @@ export function aggregate(plan: Plan, root: string) {
         output.misanchor += metrics.totals.misanchorTotal;
         const failures = metrics.meta.executionFailures!.length;
         output.executionFailures += failures;
-        if (failures) issues.push(`${name}: ${failures} execution failures (see shard artifact)`);
+        if (results) {
+          output.candidateFailures.push(...results.failures);
+          output.differences.push(...results.differences.slice(0, 8 - output.differences.length));
+          output.skipped -= results.failures.length;
+          for (const profile of ["compatibility", "strict"] as const) output[profile].fail += results.failures.length;
+        } else if (failures) issues.push(`${name}: ${failures} execution failures (see shard artifact)`);
         for (const profile of ["compatibility", "strict"] as const) {
           for (const verdict of ["pass", "fail", "unknown"] as const) output[profile][verdict] += metrics.comparison[profile][verdict];
         }
         for (const [reason, n] of metrics.skips) output.skipReasons[reason] = (output.skipReasons[reason] ?? 0) + n;
+        if (results) for (const { reason } of metrics.meta.executionFailures!) {
+          if (--output.skipReasons[reason]! === 0) delete output.skipReasons[reason];
+        }
       } catch (error) {
         issues.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    if (output.ran === 0) issues.push(`${candidate}: no comparable records`);
+    if (output.ran === 0 && output.candidateFailures.length === 0) issues.push(`${candidate}: no comparable records`);
     return { ...output, coverage: output.expected === 0 ? null : output.hits / output.expected };
   });
   const sourceFiles = plans.length;

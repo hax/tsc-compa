@@ -11,10 +11,22 @@ export function latestFullReport(reports, candidateId, version, referenceId) {
 }
 
 export function compatibilityCounts(report) {
-  const { compatibility, skipped } = report.summary ?? {};
+  const { compatibility, skipped, executionFailures } = report.summary ?? {};
   const { pass, fail, unknown } = compatibility ?? {};
-  return [pass, fail, skipped, unknown].every((count) => Number.isSafeInteger(count) && count >= 0)
-    ? { pass, fail, skipped, unknown } : null;
+  const valid = (value) => Number.isSafeInteger(value) && value >= 0;
+  if (![pass, fail, skipped, unknown].every(valid)) return null;
+  if (executionFailures === undefined) return { pass, fail, skipped, unknown };
+  const { crash, timeout } = executionFailures ?? {};
+  if (![crash, timeout].every(valid) || crash + timeout > fail) return null;
+  return { pass, fail, skipped, unknown, crash, timeout };
+}
+
+export function formatCompatibilityCounts(counts) {
+  if (!counts) return '兼容性计数暂不可用';
+  const count = (name) => numberFormat.format(counts[name]);
+  const execution = counts.crash || counts.timeout ? `（含崩溃 ${count('crash')}、超时 ${count('timeout')}）` : '';
+  const unknown = counts.unknown ? ` / 无法确认 ${count('unknown')}` : '';
+  return `兼容通过 ${count('pass')} / 不兼容 ${count('fail')}${execution} / 跳过 ${count('skipped')}${unknown}`;
 }
 
 function element(tag, text) {
@@ -91,11 +103,7 @@ function reportLine(report, candidateName, version, root, indexAvailable) {
   }
   const fullLink = link('全量报告', reportHref(report.reportPath, root));
   fullLink.setAttribute('aria-label', `查看 ${candidateName} ${version} 全量报告`);
-  const counts = compatibilityCounts(report);
-  const count = (name) => numberFormat.format(counts[name]);
-  line.append(fullLink, counts
-    ? ` · 兼容通过 ${count('pass')} / 不兼容 ${count('fail')} / 跳过 ${count('skipped')}${counts.unknown ? ` / 无法确认 ${count('unknown')}` : ''}`
-    : ' · 兼容性计数暂不可用');
+  line.append(fullLink, ` · ${formatCompatibilityCounts(compatibilityCounts(report))}`);
   return line;
 }
 
@@ -145,6 +153,6 @@ export function renderCandidateOverview(snapshot, reports, root) {
   const versions = snapshot.families.reduce((total, family) => total + family.versions.length, 0);
   scope.append(`${snapshot.families.length} 个家族、${versions} 个候选配置。下方计数来自各配置最近发布的全量报告，参考为 `,
     link(snapshot.reference.label, `${repoUrl(snapshot.reference.repo)}/commit/${snapshot.reference.commit}`),
-    '。跳过的配置未纳入诊断比较。');
+    '。跳过和候选执行失败的配置不参与诊断比较。');
   return [scope, asOf, grid, internal];
 }

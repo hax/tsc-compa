@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIXED_STRICT_ESNEXT, materializeCase } from "../case.ts";
 import type { Adapter, CaseInput, CaseOutcome, CompilerOptions, Diagnostic } from "../types.ts";
+import { processFailure } from "./process-failure.ts";
 import { parsePlainDiagnostics } from "./plain-diagnostics.ts";
 
 /** 只控制 harness/输出、不属于 tsconfig 的 CLI 选项。 */
@@ -244,40 +245,43 @@ export class BunCheckAdapter implements Adapter {
       const stderr = r.stderr ?? "";
       const rawOutput = { stdout, stderr };
       const exitCode = r.error === undefined ? r.status : null;
-      const fail = (status: "skip" | "crash" | "timeout", skipReason: string, message?: string): CaseOutcome => ({
+      const fail = (status: "skip" | "crash" | "timeout", skipReason: string, message?: string,
+        failure?: CaseOutcome["processFailure"]): CaseOutcome => ({
         id: input.id,
         status,
         diagnostics: [],
         skipReason,
         message,
+        ...(failure && { processFailure: failure }),
         exitCode,
         rawOutput,
       });
       if (r.error !== undefined) {
-        const timeout = /ETIMEDOUT|timed out/i.test(String(r.error));
-        return fail(timeout ? "timeout" : "crash", timeout ? "Bun check 超时（30s）" : "Bun check 崩溃", String(r.error));
+        const failure = processFailure(r, 1);
+        const timeout = failure?.kind === "deadline";
+        return fail(timeout ? "timeout" : "crash", timeout ? `Bun check 超时（${this.timeoutMs}ms）` : "Bun check 进程未能完成（启动或采集异常）", String(r.error), failure);
       }
 
+      const text = `${stdout}\n${stderr}`;
+      // 进程异常优先于诊断文本：崩溃前输出的选项错误不能把失败降为跳过。
+      if (r.status === null) {
+        return fail("crash", "Bun check 未正常退出", text.slice(0, 300), processFailure(r, 1));
+      }
+      if (r.status > 1) {
+        return fail("crash", `Bun check 异常退出（status=${r.status}）`, text.slice(0, 300), processFailure(r, 1));
+      }
       // 同一个流内的重复诊断是真实重复，保留；只有跨流重复按多重集抵消。
       const merged = mergeDiagnostics(tmp, stdout, stderr);
       const known = new Set(input.files.map((f) => f.path));
       const diagnostics = merged.filter((d) => known.has(d.file));
 
-      const text = `${stdout}\n${stderr}`;
-      // 只有「可证明的选项/配置不受支持」才 skip；运行失败或输出不可解析是 crash，
-      // 否则门禁会把漏掉的执行错误当成正常静默。
+      // 只有「可证明的选项/配置不受支持」才 skip。
       const config = CONFIG_ERROR.exec(text);
       if (config !== null) {
         const code = Number(config[1]);
         return OPTION_CONFIG_CODES.has(code)
           ? fail("skip", `Bun 配置不兼容（TS${code}）：${config[2]!.trim()}`, text.slice(0, 500))
           : fail("crash", `Bun 配置输出无法处理（TS${code}）：${config[2]!.trim()}`, text.slice(0, 500));
-      }
-      if (r.status === null) {
-        return fail("crash", "Bun check 未正常退出", text.slice(0, 300));
-      }
-      if (r.status > 1) {
-        return fail("crash", `Bun check 异常退出（status=${r.status}）`, text.slice(0, 300));
       }
       if (diagnostics.length === 0) {
         const hasUnmapped = parsePlainDiagnostics(tmp, withoutSummaryLines(text)).headerLines > 0;

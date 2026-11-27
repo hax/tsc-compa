@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { materializeCase } from "../case.ts";
+import { processFailure } from "./process-failure.ts";
 import { parseExtendedDiagnostics } from "../perf.ts";
 import type { Adapter, CaseInput, CaseOutcome, Diagnostic } from "../types.ts";
 import { containsOnlyKnownAuxiliaryLines, looksLikePrettyDiagnostics, parsePlainDiagnostics, rejectsCompilerOptions, unsupportedCliDiagnostics } from "./plain-diagnostics.ts";
@@ -103,12 +104,14 @@ export class TscCliAdapter implements Adapter {
         timeout: this.timeoutMs,
       });
       if (r.error !== undefined) {
-        const timeout = /ETIMEDOUT|timed out/i.test(String(r.error));
+        const failure = processFailure(r, 2);
+        const timeout = failure?.kind === "deadline";
         return {
           id: input.id,
           status: timeout ? "timeout" : "crash",
           diagnostics: [],
-          skipReason: timeout ? "实现超时（30s）" : "实现崩溃",
+          skipReason: timeout ? `实现超时（${this.timeoutMs}ms）` : "实现进程未能完成（启动或采集异常）",
+          ...(failure && { processFailure: failure }),
           message: String(r.error),
           exitCode: r.status,
           rawOutput: { stdout: r.stdout ?? "", stderr: r.stderr ?? "" },
@@ -120,11 +123,13 @@ export class TscCliAdapter implements Adapter {
       // 退出码 3+ 是 InvalidProject/NotImplemented/ProjectReferenceCycle 一类
       // 命令失败；不是可比较诊断，也不能落成零诊断。
       if (r.status === null || r.status > 2) {
+        const failure = processFailure(r, 2);
         return {
           id: input.id,
           status: "crash",
           diagnostics: [],
           skipReason: `实现异常退出（status=${r.status}）`,
+          ...(failure && { processFailure: failure }),
           message: text.slice(0, 200),
           exitCode: r.status,
           rawOutput: { stdout: r.stdout ?? "", stderr: r.stderr ?? "" },

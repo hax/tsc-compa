@@ -41,7 +41,7 @@ import {
   type PerfCaseMeta,
   type ReferenceRun,
 } from "./perf.ts";
-import type { Adapter, CaseFile } from "./types.ts";
+import type { Adapter, CaseFile, CaseOutcome } from "./types.ts";
 
 const DEFAULT_BASE_ARGS = ["--noEmit", "--ignoreConfig", "--pretty", "false"];
 
@@ -567,7 +567,8 @@ async function main(): Promise<void> {
   const perfBaseArgs = toTscArgs([], baseArgs);
   let perfReferenceFailed = 0;
   const records: CaseRecord[] = [];
-  const executionFailures: { id: string; side: "reference" | "candidate"; status: "crash" | "timeout"; reason: string }[] = [];
+  const executionFailures: NonNullable<RunMeta["executionFailures"]> = [];
+  const candidateProcessFailures = new Map<string, NonNullable<CaseOutcome["processFailure"]>>();
   let optionDirectiveIgnored = 0;
   let excludedStatic = 0;
   let excludedRuntime = 0;
@@ -669,7 +670,10 @@ async function main(): Promise<void> {
     }
     if (outcome.status !== "ok") {
       const reason = outcome.skipReason ?? `实现返回 ${outcome.status}`;
-      if (outcome.status !== "skip") executionFailures.push({ id, side: "candidate", status: outcome.status, reason });
+      if (outcome.status !== "skip") {
+        executionFailures.push({ id, side: "candidate", status: outcome.status, reason });
+        if (outcome.processFailure) candidateProcessFailures.set(id, outcome.processFailure);
+      }
       records.push({ ...skipRecord(id, reason, tags),
         expected: expectation.diagnostics, actual: outcome.diagnostics,
         expectedRawOutput: expectation.rawOutput, actualRawOutput: outcome.rawOutput,
@@ -803,12 +807,16 @@ async function main(): Promise<void> {
 
   const namedVariants = new Map(executions.flatMap(({ variant }) =>
     variant === undefined || variant.configName === "" ? [] : [[variant.variantId, variant] as const]));
+  const failuresById = new Map(executionFailures.map((failure) => [failure.id, failure]));
   const detailsJson = records.map((r) => ({
     id: r.id,
     caseId: namedVariants.get(r.id)?.caseId,
     configuration: namedVariants.get(r.id)?.configName,
     status: r.status,
     skipReason: r.skipReason,
+    executionFailure: failuresById.has(r.id) ? {
+      ...failuresById.get(r.id)!, process: candidateProcessFailures.get(r.id),
+    } : undefined,
     classes: r.classes,
     expected: r.expected,
     actual: r.actual,
