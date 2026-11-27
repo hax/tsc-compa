@@ -24,7 +24,7 @@ function createFixture(root: string) {
     id: "01", units: [{ id: "compiler/<fixture>.ts", records: ["compiler/<fixture>.ts"] }, { id: "compiler/skip.ts", records: ["compiler/skip.ts"] }], estimatedCost: 1,
   }] };
   const request: Request = { version: 1, candidate: "typescript", candidateVersion: "7.1.0-beta", reference: "7.1.0-beta-official", source: "official-baseline",
-    suite: "full", corpus: plan.corpusRef, planSha256: hash(plan), manifestSha256: null, harnessSha256: sha256("harness"), runner,
+    suite: "full", corpus: plan.corpusRef, planSha256: hash(plan), planCounts: { shards: 1, sourceFiles: 2, records: 2 }, manifestSha256: null, harnessSha256: sha256("harness"), runner,
     platform, runnerImage: "ubuntu24", node: "v22.18.0", locale: "C.UTF-8", timezone: "UTC", adapter: "tsc-cli",
     options: { mode: "official", strategy: "aligned", referenceBaseArgs: [] }, referenceTool: tool, candidateTool,
   };
@@ -83,6 +83,8 @@ test("verified compact evidence is reusable, and distinct request fingerprints p
   expect(cached(data, first.id)).toBe(false);
   saveReport(data, bundle, first.id);
   expect(cached(data, first.id)).toBe(true);
+  write(firstJson, { ...first, summary: { ...first.summary, records: 1, sourceFiles: 1, skipped: 0 } });
+  expect(() => saveReport(data, bundle, first.id)).toThrow("Invalid or incomplete");
   write(firstJson, { ...first, summary: { ...first.summary, complete: false } });
   expect(() => saveReport(data, bundle, first.id)).toThrow("Invalid or incomplete");
   expect(readFileSync(indexPath, "utf8")).toBe(snapshot);

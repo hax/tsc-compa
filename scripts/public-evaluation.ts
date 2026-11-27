@@ -112,12 +112,18 @@ function installTools(candidate: Candidate, dest: string) {
   return { bin, reference: toolEvidence(identifyTool(tsc, "7.1.0-beta")), candidate: toolEvidence(candidateTool) };
 }
 
+const planCounts = (plan: Plan) => ({
+  shards: plan.shards.length,
+  sourceFiles: plan.shards.reduce((n, shard) => n + shard.units.length, 0),
+  records: plan.shards.reduce((n, shard) => n + shard.units.reduce((m, unit) => m + unit.records.length, 0), 0),
+});
+
 function makeRequest(plan: Plan, suiteId: keyof typeof suites, tools: ReturnType<typeof installTools>) {
   const candidate = plan.candidates[0]!;
   const { definition } = configuration();
   return {
     version: 1, candidate, candidateVersion: candidates[candidate].version, reference: baseline, source,
-    suite: suiteId, corpus: plan.corpusRef, planSha256: hash(plan),
+    suite: suiteId, corpus: plan.corpusRef, planSha256: hash(plan), planCounts: planCounts(plan),
     manifestSha256: suiteId === "fixed-120" ? sha256(readFileSync(join(REPO_ROOT, manifest))) : null,
     harnessSha256: semanticFingerprint(), runner: `Bun ${Bun.version} (${Bun.revision})`,
     platform: `${process.platform}/${process.arch}`, runnerImage: process.env.ImageOS ?? "local",
@@ -144,7 +150,7 @@ export function verifyRunIdentity(request: Request, tools: Metrics["meta"]["tool
 const noDifferences = (r: CaseRecord) => r.fp.length === 0 && r.missed.length === 0 && r.misanchor === 0;
 export function makeReport(request: Request, plan: Plan, root: string, runUrl: string, generatedAt = new Date().toISOString()) {
   if (!runUrlPattern.test(runUrl) || !Number.isFinite(Date.parse(generatedAt)) || request.planSha256 !== hash(plan) ||
-      plan.candidates.length !== 1 || request.candidate !== plan.candidates[0] || plan.source !== source || request.corpus !== plan.corpusRef) {
+      hash(request.planCounts) !== hash(planCounts(plan)) || plan.candidates.length !== 1 || request.candidate !== plan.candidates[0] || plan.source !== source || request.corpus !== plan.corpusRef) {
     throw new Error("Invalid public evaluation plan or run provenance");
   }
   const summary = aggregate(plan, root);
@@ -228,7 +234,9 @@ function verifyReport(report: Report, id: string) {
       report.request.version !== 1 || report.request.reference !== baseline || report.request.suite !== report.suite.id ||
       hash(candidates[asCandidate(report.request.candidate)]) !== hash(report.candidate) || report.request.candidateVersion !== report.candidate.version ||
       !isHash(report.request.planSha256) || !isHash(report.request.harnessSha256) || !isHash(report.request.candidateTool.sha256) ||
-      !isHash(report.request.referenceTool.sha256) || report.evidence.length !== report.summary.shards ||
+      !isHash(report.request.referenceTool.sha256) ||
+      report.request.planCounts.shards !== report.summary.shards || report.request.planCounts.records !== report.summary.records ||
+      report.request.planCounts.sourceFiles !== report.summary.sourceFiles || report.evidence.length !== report.summary.shards ||
       report.evidence.some((s) => !isHash(s.parsedInputsSha256) || !isHash(s.officialInputsSha256)) || report.differences.length > 8 ||
       report.differences.some((d) => typeof d.id !== "string" || ![d.extra, d.missed, d.misanchor].every(count))) {
     throw new Error("Invalid or incomplete public report");
