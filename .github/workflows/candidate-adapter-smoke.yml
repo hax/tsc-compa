@@ -7,8 +7,10 @@ on:
       - config/baselines.json
       - config/implementations.json
       - config/smoke-cases-ts71-official.json
+      - config/tsrs-async/**
       - scripts/install-impl.ts
       - src/**
+      - test/tsrs-async.test.ts
       - package.json
       - bun.lock
   workflow_dispatch:
@@ -136,6 +138,77 @@ jobs:
         with:
           name: adapter-smoke-${{ matrix.id }}
           path: out/
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 14
+
+  tsrs-async:
+    needs: plan
+    name: tsrs / tsrs-async
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CASES: ${{ needs.plan.outputs.cases }}
+      OUT: out/tsrs-async
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.plan.outputs.repository }}
+          ref: ${{ needs.plan.outputs.ref }}
+          path: reference/corpus
+          sparse-checkout: tsc/testdata/tests/cases
+          persist-credentials: false
+      - run: bun install --frozen-lockfile
+      - name: Install the locked tsrs SDK and platform backend
+        run: |
+          test -f config/tsrs-async/bun.lock
+          bun install --cwd config/tsrs-async --frozen-lockfile --registry=https://registry.npmjs.org
+      - name: Test structured diagnostics and tool identities
+        run: TSC_COMPA_TEST_TSRS_ASYNC=1 bun test test/tsrs-async.test.ts
+      - name: Run the shared TS7 smoke list against tsrs/async
+        run: |
+          set -euo pipefail
+          bun src/run.ts \
+            --baseline 7.1.0-beta-official \
+            --corpus reference/corpus/tsc/testdata/tests/cases \
+            --cases "$CASES" --expectation-source ts7-api \
+            --mode official --option-strategy aligned --adapter tsrs-async \
+            --out "$OUT" --report-out "$OUT" --report-impl-name tsrs-async
+          # Report agreement without making it an adapter-health gate.
+          jq -e --argjson selected "$(jq length "$CASES")" '
+            .meta.selectedCases == $selected and .totals.ran == $selected and
+            .totals.skipped == 0 and .meta.verdictEligible == true and .meta.executionFailures == [] and
+            .meta.tools.candidate.sdk.module == "tsrs/async" and
+            .meta.tools.candidate.sha256 != .meta.tools.reference.native.sha256
+          ' "$OUT/metrics.json" >/dev/null || {
+            echo '::error::tsrs/async smoke did not complete all cases with separate tool identities.'
+            exit 1
+          }
+      - name: Summarize tsrs/async execution and diagnostic differences
+        if: always()
+        run: |
+          {
+            printf '### tsrs / tsrs-async\n\n'
+            if [ -f "$OUT/metrics.json" ]; then
+              echo '```json'
+              jq '{candidate: .meta.tools.candidate, officialNative: .meta.tools.reference.native,
+                selected: .meta.selectedCases, completed: .totals.ran, skipped: .totals.skipped,
+                skipReasons: .skips, executionFailures: .meta.executionFailures,
+                compatibility: .comparison.compatibility, strict: .comparison.strict}' "$OUT/metrics.json"
+              echo '```'
+            else
+              echo 'No metrics were produced; check the job log for acquisition or execution errors.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adapter-smoke-tsrs-async
+          path: ${{ env.OUT }}/
           if-no-files-found: warn
           overwrite: true
           retention-days: 14
