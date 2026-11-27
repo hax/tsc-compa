@@ -1,6 +1,6 @@
 # 兼容性差异样本 v1（草案）
 
-这份样本优先重现兼容差异，不用于估计检查器在整个测试集上的通过率。它不接入公开评测、CI 门禁或历史报告发布，也不替换原有 [fixed-120](../official-baseline-cases-ts71.json)。
+这份样本优先重现兼容差异，不用于估计检查器在整个测试集上的通过率。本文记录六方只读证据的生成流程，不作为 CI 门禁，也不替换原有 [fixed-120](../official-baseline-cases-ts71.json)。
 
 - [`inputs.json`](inputs.json) 锁定 Actions 运行号、重试次数、提交、报告 ID 和分类预算。
 - [`artifacts.lock.json`](artifacts.lock.json) 锁定从 Actions 下载的全部 211 个输入文件的原始字节。
@@ -45,6 +45,8 @@ for f in cases.json evidence.json; do diff -u "config/curated-difference-v1/$f" 
 各组按不同家族数、可比较家族数排序；单家族差异中优先保留在 fixed-120 上出现的新差异。其后优先保留较少诊断、路径及配置名排序靠前的记录。按「分类、家族及多报／漏报／位置差异的诊断码组合」合并近似差异，每个源文件、同路径编号系列只选一例。控制例按测试集分区和诊断码去重，既保留有诊断的例，也保留明确无诊断的例。fixed-120 只从控制组排除；重叠数写在 `fixed120OverlapByBucket`。草案可以改选；发布 v1 后锁定输入、规则和产物，变更样本、参考提交或取证口径时另建版本，不覆盖旧结果。
 
 ## 本地跑选中的源文件
+
+要**只跑 33 个目标配置**，或派发公开单候选运行，使用 [CI 文档的精选样本命令](../../docs/CI.md#精选差异样本-v1单候选重跑与六方对照)。下列旧命令用于核对源文件及其同级配置。
 
 先按 [CI 文档](../../docs/CI.md#本地-ts7-官方结果文件对照)获取测试集和设置 `TS71_CASES`；其提交必须匹配 `inputs.json`，同时要保留配套的官方 `.errors.txt`。先用官方 TS7 CLI 做参考自检；换候选时按 `evidence.json` 选择对应的固定版本、适配器、`candidateArgs` 和 `prepared.environment`。特别是 tsz 使用正式 `v0.1.75` 的 GNU x64 Release，须设置 `TSZ_USE_EMBEDDED_LIBS=1`；不要用主分支的 cargo pin 替代。最可靠的归档复核仍是上一节的产物重建。
 

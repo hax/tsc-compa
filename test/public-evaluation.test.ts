@@ -1,8 +1,10 @@
+import { configuredRecordId } from "../src/case-targets.ts";
+import { curatedCorpus, curatedTargetHash, curatedTargets } from "../scripts/public-evaluation-curated.ts";
 import { execFileSync } from "node:child_process";
 import { expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type Plan } from "../scripts/full-compatibility.ts";
 import { cached, makeReport, planExecution, publicCatalog, reportHtml, resultPolicy, saveReport, semanticFingerprint, shardReceipt, verifyPublic, verifyReport, type Request } from "../scripts/public-evaluation.ts";
 import { activePolicies } from "../scripts/public-evaluation-policy.ts";
@@ -67,23 +69,97 @@ function createFixture(root: string) {
   return { root, data, bundle, metrics, metricsFile, plan, request, receipt, detailsFile, details, shardRoot };
 }
 
-test("adds two full-only combinations in rollout order without implying they have run", () => {
+test("retains ten historical combinations and adds six curated combinations without implying they have run", () => {
   const catalog = publicCatalog();
   expect(catalog.schemaVersion).toBe(1);
-  expect(catalog.combinations).toHaveLength(10);
-  expect(catalog.combinations.slice(8).map((row) => [row.candidate.id, row.candidate.name, row.candidate.version, row.suite.id])).toEqual([
+  expect(catalog.combinations).toHaveLength(16);
+  expect(catalog.combinations.slice(8, 10).map((row) => [row.candidate.id, row.candidate.name, row.candidate.version, row.suite.id])).toEqual([
     ["ts-rust", "ts-rust (pingdotgg)", "0.8.0", "full"], ["tsz", "tsz", "v0.1.75", "full"],
   ]);
-  expect(new Set(catalog.combinations.map((row) => `${row.candidate.id}:${row.candidate.version}:${row.suite.id}`)).size).toBe(10);
+  expect(new Set(catalog.combinations.map((row) => `${row.candidate.id}:${row.candidate.version}:${row.suite.id}`)).size).toBe(16);
+  expect(catalog.combinations.slice(10).map((row) => [row.candidate.id, row.suite.id])).toEqual(
+    (["typescript", "bun", "bun", "tsrs", "ts-rust", "tsz"] as const).map((id) => [id, "curated-difference-v1" as const]));
   expect(catalog.combinations.every((row) => row.reference.id === "7.1.0-beta-official")).toBe(true);
 });
 
-test("rejects the blocked tsc-rs release and fixed samples for the new full-only candidates before reading the corpus", () => {
+test("rejects the blocked tsc-rs release and fixed samples for the prepared candidates before reading the corpus", () => {
   const plan = (candidate: string, suite: string) => execFileSync(process.execPath,
     ["scripts/public-evaluation.ts", "plan", candidate, suite, "missing-corpus", "tools", "request", "public-data"], { stdio: "pipe" });
   expect(() => plan("tsc-rs", "full")).toThrow("Not a public candidate: tsc-rs");
-  for (const candidate of ["ts-rust", "tsz"]) expect(() => plan(candidate, "fixed-120")).toThrow("only selectable with the full suite");
+  for (const candidate of ["ts-rust", "tsz"]) expect(() => plan(candidate, "fixed-120")).toThrow("is not selectable with fixed-120");
 });
+
+test("curated reports bind the exact configurations for differences and candidate failures", () => fixture(({ root, data, bundle, request, metrics, metricsFile, receipt, plan, details }) => {
+  const targets = curatedTargets();
+  const historical = makeReport(request, plan, root, run);
+  const oldId = historical.id;
+  write(join(bundle, `${oldId}.json`), historical);
+  saveReport(data, bundle, oldId);
+  const pinnedPlan: Plan = { ...plan, corpusRef: curatedCorpus, shards: [{ id: "01", estimatedCost: 1,
+    units: targets.map((target) => ({ id: target.source, records: [configuredRecordId(target)], target })) }] };
+  const pinned: Request = { ...request, suite: "curated-difference-v1", corpus: curatedCorpus,
+    planSha256: hash(pinnedPlan), manifestSha256: curatedTargetHash, planCounts: { shards: 1, sourceFiles: 33, records: 33 } };
+  const crash = targets.find(({ configuration }) => configuration !== null)!;
+  const timeout = targets.find((target) => target !== crash && target.configuration !== null)!;
+  const skipped = targets[0]!;
+  const different = targets.find((target) => target !== skipped && target !== crash && target !== timeout)!;
+  const failures = [
+    { id: configuredRecordId(crash), status: "crash", process: { kind: "signal", signal: "SIGABRT" } },
+    { id: configuredRecordId(timeout), status: "timeout", process: { kind: "deadline", errorCode: "ETIMEDOUT", signal: "SIGTERM" } },
+  ] as const;
+  const failureEvidence = failures.map(({ id, status }) => ({ id, status, side: "candidate", reason: `fixture ${status}` }));
+  const shard = dirname(metricsFile);
+  const records = targets.map((target) => {
+    const id = configuredRecordId(target);
+    const identity = { id, ...(target.configuration === null ? {} : { caseId: target.source, configuration: target.configuration }) };
+    const failure = failures.findIndex((f) => f.id === id);
+    if (failure !== -1) {
+      const entry = failureEvidence[failure]!;
+      return { ...details[1], ...identity, skipReason: entry.reason, actualOutput: null, actualExitCode: null,
+        actualRawOutput: { stdout: "", stderr: "/tmp/private-file" }, executionFailure: { ...entry, process: failures[failure]!.process } };
+    }
+    if (target === skipped) return { ...details[1], ...identity };
+    if (target === different) return { ...details[0], ...identity };
+    return { ...details[0], ...identity, expected: [], missed: [], comparison: { compatibility: "pass", strict: "unknown" } };
+  });
+  write(join(shard, "cases.json"), targets);
+  write(join(shard, "details.json"), records);
+  write(metricsFile, { ...metrics, meta: { ...metrics.meta, corpusRef: curatedCorpus, selectedCases: 33, executionFailures: failureEvidence,
+    manifest: { ...metrics.meta.manifest, selectedIdsSha256: hash(targets.map((t) => t.source)), selectedTargetsSha256: curatedTargetHash } },
+    totals: { ...metrics.totals, cases: 33, ran: 30, skipped: 3 },
+    skips: [...metrics.skips, ...failureEvidence.map(({ reason }) => [reason, 1])],
+    comparison: { compatibility: { pass: 29, fail: 1, unknown: 0 }, strict: { pass: 0, fail: 0, unknown: 30 } } });
+  const id = hash(pinned);
+  write(receipt, shardReceipt(pinned, id, "01"));
+  const curated = makeReport(pinned, pinnedPlan, root, run);
+  expect(curated.id).not.toBe(oldId);
+  expect(curated.schemaVersion).toBe(2);
+  expect(curated.request.resultPolicy).toBe(resultPolicy);
+  expect(curated.summary).toMatchObject({ sourceFiles: 33, records: 33, ran: 30, skipped: 1, executionFailures: { crash: 1, timeout: 1 },
+    compatibility: { pass: 29, fail: 3, unknown: 0 }, strict: { pass: 0, fail: 2, unknown: 30 } });
+  expect(curated.candidateFailures).toEqual([...failures]);
+  expect(curated.differences).toEqual([{ id: configuredRecordId(different), extra: 0, missed: 1, misanchor: 0 }]);
+  expect(reportHtml(curated)).toContain("五个官方校准探针单列");
+  expect(reportHtml(curated)).toContain("候选崩溃 1，候选超时 1");
+  expect(reportHtml(curated)).not.toMatch(/\d+%/);
+  expect(JSON.stringify(curated)).not.toContain("/tmp/private-file");
+  expect(() => verifyReport(curated, id)).not.toThrow();
+  for (const invalidId of [crash.source, configuredRecordId({ ...crash, configuration: "target=es5" }), "compiler/other.ts"]) {
+    expect(() => verifyReport({ ...curated, candidateFailures: [{ ...failures[0], id: invalidId }, failures[1]] }, id)).toThrow("Invalid or incomplete");
+    expect(() => verifyReport({ ...curated, differences: [{ ...curated.differences[0], id: invalidId }] }, id)).toThrow("Invalid or incomplete");
+  }
+  const { resultPolicy: _policy, ...withoutPolicy } = curated.request;
+  const missingPolicyId = hash(withoutPolicy);
+  expect(() => verifyReport({ ...curated, request: withoutPolicy, id: missingPolicyId, reportPath: `reports/${missingPolicyId}.html` }, missingPolicyId)).toThrow("Invalid or incomplete");
+  const siblingPlan = structuredClone(pinnedPlan);
+  siblingPlan.shards[0]!.units[0]!.records = ["compiler/sibling.ts"];
+  expect(() => makeReport({ ...pinned, planSha256: hash(siblingPlan) }, siblingPlan, root, run)).toThrow("Invalid curated v1 plan");
+  write(join(bundle, `${id}.json`), curated);
+  expect(saveReport(data, bundle, id)).toBe("stored");
+  expect(cached(data, oldId)).toBe(true);
+  expect(cached(data, id)).toBe(true);
+  expect(() => verifyPublic(data)).not.toThrow();
+}));
 
 test("verified compact evidence is reusable, and distinct request fingerprints preserve history", () => fixture(({ data, bundle, root, request, plan, receipt }) => {
   const first = makeReport(request, plan, root, run, "2026-10-31T00:00:00Z");
@@ -330,6 +406,9 @@ test("retains historical HTML and IDs while accepting the exact legacy catalog",
   expect(cached(data, report.id)).toBe(true);
   expect(() => verifyPublic(data)).not.toThrow();
   expect(readFileSync(join(data, report.reportPath), "utf8")).toBe(html);
+  write(path, { ...publicCatalog(), combinations: publicCatalog().combinations.slice(0, 10) });
+  expect(() => verifyPublic(data)).not.toThrow();
+  expect(cached(data, report.id)).toBe(true);
   write(path, { ...priorCatalog, combinations: priorCatalog.combinations.slice(0, 7) });
   expect(() => verifyPublic(data)).toThrow("catalog or index");
 }));
@@ -401,7 +480,7 @@ test("validates prepared compiler provenance and exact shard options without pro
   const stageCommand = join(checkout, "scripts/stage-public-reports.ts");
   execFileSync(process.execPath, [stageCommand, data, stage]);
   expect(readFileSync(join(stage, `${report.id}.html`), "utf8")).toBe(reportHtml(report));
-  expect(JSON.parse(readFileSync(join(stage, "catalog.json"), "utf8")).combinations.at(-1).candidate.version).toBe("v0.1.76");
+  expect(JSON.parse(readFileSync(join(stage, "catalog.json"), "utf8")).combinations.find((c: { candidate: { id: string }; suite: { id: string } }) => c.candidate.id === "tsz" && c.suite.id === "full").candidate.version).toBe("v0.1.76");
   // A report relabeled to the new tuple but holding the old source/args is
   // still rejected even when its own ID is recomputed.
   const relabeledRequest = { ...q, candidateVersion: next.candidate.version };

@@ -2,13 +2,15 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { baseline, aggregate, buildPlan, buildPlanForIds, runShard, verifyShard, verifyVersion, type Candidate, type Plan } from "./full-compatibility.ts";
+import { baseline, aggregate, buildPlan, buildPlanForIds, runShard, shardTargets, verifyShard, verifyVersion, type Candidate, type Plan } from "./full-compatibility.ts";
 import { corpusRefOf, findBaseline, loadBaselines, REPO_ROOT, resolveBaselineTsc } from "../src/baselines.ts";
+import { configuredRecordId } from "../src/case-targets.ts";
 import type { Metrics, ToolIdentity } from "../src/compare.ts";
 import { isValidCaseId, loadManifest } from "../src/discover.ts";
 import { identifyTool, sha256 } from "../src/provenance.ts";
 import { inspectDistribution, prepareDistribution, probeDistribution } from "./public-evaluation-tools.ts";
 import { activePolicies, addedCandidates, isAddedCandidate, policyGenerations, validPrepared, type PreparedEvidence } from "./public-evaluation-policy.ts";
+import { curatedCorpus, curatedSuite, curatedTargetCount, curatedTargetHash, curatedTargetRecordIds, curatedTargets } from "./public-evaluation-curated.ts";
 import { count, exactKeys, validFailureCounts, validPublicExecutionFailure, verifyPublicShardCases,
   type FailureCounts, type PublicExecutionFailure } from "./public-evaluation-failures.ts";
 import { distributionSha256, shardInputEvidence, verifyCorpus, type ShardInputEvidence } from "./public-evaluation-inputs.ts";
@@ -20,10 +22,11 @@ const legacyCandidates = {
   tsrs: { id: "tsrs", name: "tsrs", version: "0.25.0-ts7.1.0-beta" },
 } as const;
 const candidates = { ...legacyCandidates, "ts-rust": activePolicies["ts-rust"].candidate, tsz: activePolicies.tsz.candidate } satisfies Record<Candidate, { id: string; name: string; version: string }>;
-const suites = {
+const historicalSuites = {
   "fixed-120": { id: "fixed-120", label: "固定诊断样本（120 例）" },
   full: { id: "full", label: "全量类型检查测试集（compiler / conformance）" },
 } as const;
+const suites = { ...historicalSuites, [curatedSuite.id]: curatedSuite } as const;
 const manifest = "config/official-baseline-cases-ts71.json";
 const reference = { id: baseline, label: "TypeScript 7.1.0-beta 官方 .errors.txt" };
 const expectedRepository = "microsoft/TypeScript";
@@ -63,7 +66,7 @@ const command = (program: string, args: string[]): string => {
 
 export function semanticFingerprint(root = REPO_ROOT): string {
   const files = [manifest, "config/baselines.json", "config/implementations.json", "package.json", "bun.lock",
-    "scripts/full-compatibility.ts", "scripts/public-evaluation.ts", "scripts/public-evaluation-failures.ts", "scripts/public-evaluation-inputs.ts", "scripts/public-evaluation-tools.ts", "scripts/public-evaluation-policy.ts", "scripts/install-impl.ts", ".npmrc", ".github/workflows/public-evaluation.yml"];
+    "scripts/full-compatibility.ts", "scripts/public-evaluation.ts", "scripts/public-evaluation-failures.ts", "scripts/public-evaluation-inputs.ts", "scripts/public-evaluation-tools.ts", "scripts/public-evaluation-policy.ts", "scripts/public-evaluation-curated.ts", "scripts/install-impl.ts", ".npmrc", ".github/workflows/public-evaluation.yml"];
   const list = (dir: string) => {
     for (const item of readdirSync(join(root, dir), { withFileTypes: true })) {
       const path = `${dir}/${item.name}`;
@@ -75,13 +78,29 @@ export function semanticFingerprint(root = REPO_ROOT): string {
   return hash(files.sort().map((path) => [path, sha256(readFileSync(join(root, path)))]));
 }
 
-const supportsSuite = (candidate: Candidate, suite: keyof typeof suites) => !isAddedCandidate(candidate) || suite === "full";
+const supportsSuite = (candidate: Candidate, suite: keyof typeof suites) => !isAddedCandidate(candidate) || suite !== "fixed-120";
 const legacyCatalog = () => ({ schemaVersion: 1, combinations: Object.values(legacyCandidates).flatMap((candidate) =>
-  Object.values(suites).map((suite) => ({ candidate, reference, suite }))) });
+  Object.values(historicalSuites).map((suite) => ({ candidate, reference, suite }))) });
 const catalogFor = (policies: typeof activePolicies) => ({ schemaVersion: 1, combinations: [...legacyCatalog().combinations,
   ...addedCandidates.map((id) => ({ candidate: policies[id].candidate, reference, suite: suites.full }))] });
-export const publicCatalog = () => catalogFor(activePolicies);
-const supportedCatalogs = [legacyCatalog(), ...policyGenerations.map(({ policies }) => catalogFor(policies))];
+const curatedCatalogFor = (policies: typeof activePolicies) => ({ schemaVersion: 1, combinations: [...catalogFor(policies).combinations,
+  ...[...Object.values(legacyCandidates), ...addedCandidates.map((id) => policies[id].candidate)].map((candidate) =>
+    ({ candidate, reference, suite: curatedSuite }))] });
+export const publicCatalog = () => curatedCatalogFor(activePolicies);
+const supportedCatalogs = [legacyCatalog(), ...policyGenerations.flatMap(({ policies }) => [catalogFor(policies), curatedCatalogFor(policies)])];
+
+const equalRecord = (records: string[], id: string) => records.length === 1 && records[0] === id;
+
+function validateSuitePlan(suite: keyof typeof suites, plan: Plan) {
+  const targets = plan.shards.flatMap((shard) => shardTargets(shard) ?? []);
+  if (suite !== curatedSuite.id) {
+    if (targets.length) throw new Error("Exact targets are only supported by the curated suite");
+    return;
+  }
+  if (plan.corpusRef !== curatedCorpus || plan.source !== source || plan.shards.length !== 1 ||
+      plan.shards[0]?.units.length !== curatedTargetCount || !plan.shards[0].units.every((unit) => unit.target && equalRecord(unit.records, configuredRecordId(unit.target))) ||
+      hash(targets) !== curatedTargetHash) throw new Error("Invalid curated v1 plan: expected the pinned 33 target configurations");
+}
 
 // Store no local paths in public provenance. A wrapper-only fingerprint is not
 // sufficient for npm TS7 or tsrs; identifyTool resolves their platform binaries.
@@ -152,11 +171,13 @@ export const resultPolicy = "candidate-execution-failures-v1" as const;
 
 function makeRequest(plan: Plan, suiteId: keyof typeof suites, tools: Tools, inputs: ShardInputEvidence[]) {
   const candidate = plan.candidates[0]!;
+  validateSuitePlan(suiteId, plan);
   const { definition } = configuration();
   const common = {
     resultPolicy, candidate, candidateVersion: candidates[candidate].version, reference: baseline, source,
     suite: suiteId, corpus: plan.corpusRef, planSha256: hash(plan), planCounts: planCounts(plan),
-    manifestSha256: suiteId === "fixed-120" ? sha256(readFileSync(join(REPO_ROOT, manifest))) : null,
+    manifestSha256: suiteId === "fixed-120" ? sha256(readFileSync(join(REPO_ROOT, manifest)))
+      : suiteId === curatedSuite.id ? curatedTargetHash : null,
     harnessSha256: semanticFingerprint(), runner: `Bun ${Bun.version} (${Bun.revision})`,
     platform: `${process.platform}/${process.arch}`, runnerImage: process.env.ImageOS ?? "local",
     node: command("node", ["--version"]), locale: process.env.LC_ALL ?? null, timezone: process.env.TZ ?? null,
@@ -205,6 +226,7 @@ export function makeReport(request: Request, plan: Plan, root: string, runUrl: s
       hash(request.planCounts) !== hash(planCounts(plan)) || plan.candidates.length !== 1 || request.candidate !== plan.candidates[0] || plan.source !== source || request.corpus !== plan.corpusRef) {
     throw new Error("Invalid public evaluation plan or run provenance");
   }
+  validateSuitePlan(request.suite, plan);
   const summary = aggregate(plan, root, true);
   if (!summary.complete) throw new Error(`Evaluation incomplete; no public entry created:\n${summary.issues.join("\n")}`);
   const row = summary.candidates[0]!;
@@ -255,6 +277,7 @@ export function reportHtml(r: Report): string {
   const compared = execution ? `比较 ${s.ran}，跳过 ${s.skipped}；候选崩溃 ${execution.crash}，候选超时 ${execution.timeout}。`
     : `完成 ${s.ran}，跳过 ${s.skipped}。`;
   const title = escapeHtml(`${candidate.name} ${candidate.version} · ${suite.label}`);
+  const curated = suite.id === curatedSuite.id;
   return `<!doctype html>
 <html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'"><title>${title} · tsc-compa</title></head>
@@ -263,9 +286,9 @@ export function reportHtml(r: Report): string {
 <h2>比较结果</h2>
 <ul><li>运行完整性：${s.shards} 个分片已核对。计划 ${s.sourceFiles} 个源文件、${s.records} 条配置记录；${compared}</li>
 <li>兼容（通过 / 失败 / 未确认）：${verdict(s.compatibility)}。</li><li>严格一致（通过 / 失败 / 未确认）：${verdict(s.strict)}。</li>
-<li>诊断命中：${s.hits} / ${s.expected}（${s.coverage === null ? "无期望诊断" : `${(s.coverage * 100).toFixed(2)}%`}）；多报 ${s.fp}，漏报 ${s.missed}，错锚 ${s.misanchor}。</li></ul>
-<p>${suite.id === "fixed-120" ? "本测试集是固定诊断样本，不代表全量覆盖。" : "分片齐全不代表每条配置都能比较；诊断命中率只按实际比较的记录计算。"}</p>
-${execution ? `<p>兼容和严格一致的失败数均包含候选执行失败；普通诊断比较的兼容失败 ${s.compatibility.fail - execution.crash - execution.timeout} 条。诊断命中率只按实际比较的配置计算。</p>\n${r.schemaVersion === 2 && r.candidateFailures.length ? `<h2>候选执行失败的配置</h2><ul>${r.candidateFailures.map((f) => `<li><code>${escapeHtml(f.id)}</code>：${f.status === "crash" ? "崩溃" : "超时"}</li>`).join("")}</ul>\n` : ""}` : ""}${r.differences.length ? `<h2>差异示例（最多 8 条）</h2><ul>${r.differences.map((d) => `<li><code>${escapeHtml(d.id)}</code>：多报 ${d.extra}，漏报 ${d.missed}，错锚 ${d.misanchor}</li>`).join("")}</ul>` : ""}
+<li>诊断命中：${s.hits} / ${s.expected}（${s.coverage === null ? "无期望诊断" : curated ? "只计已比较的目标配置" : `${(s.coverage * 100).toFixed(2)}%`}）；多报 ${s.fp}，漏报 ${s.missed}，错锚 ${s.misanchor}。</li></ul>
+<p>${curated ? '这是刻意选出的 33 个目标配置，不包含同源的其他配置；跳过不是通过，不可据此估计总体兼容率或排名。五个官方校准探针单列在<a href="./curated-difference-v1/index.html">六方比较页</a>，不计入本次运行。' : suite.id === "fixed-120" ? "本测试集是固定诊断样本，不代表全量覆盖。" : "分片齐全不代表每条配置都能比较；诊断命中率只按实际比较的记录计算。"}</p>
+${execution ? `<p>兼容和严格一致的失败数均包含候选执行失败；普通诊断比较的兼容失败 ${s.compatibility.fail - execution.crash - execution.timeout} 条。${curated ? "诊断命中" : "诊断命中率"}只按实际比较的配置计算。</p>\n${r.schemaVersion === 2 && r.candidateFailures.length ? `<h2>候选执行失败的配置</h2><ul>${r.candidateFailures.map((f) => `<li><code>${escapeHtml(f.id)}</code>：${f.status === "crash" ? "崩溃" : "超时"}</li>`).join("")}</ul>\n` : ""}` : ""}${r.differences.length ? `<h2>差异示例（最多 8 条）</h2><ul>${r.differences.map((d) => `<li><code>${escapeHtml(d.id)}</code>：多报 ${d.extra}，漏报 ${d.missed}，错锚 ${d.misanchor}</li>`).join("")}</ul>` : ""}
 <h2>运行条件与证据</h2><ul><li>语料：<code>${escapeHtml(request.corpus)}</code></li><li>适配器：<code>${escapeHtml(request.adapter)}</code></li>
 <li>候选可执行文件 SHA-256：<code>${escapeHtml(request.candidateTool.nativeSha256 ?? request.candidateTool.sha256)}</code></li>${request.version === 3 ? preparedHtml(request.prepared, request) : ""}
 <li>测试集计划 SHA-256：<code>${escapeHtml(request.planSha256)}</code></li><li>执行器 SHA-256：<code>${escapeHtml(request.harnessSha256)}</code></li></ul>
@@ -326,6 +349,11 @@ export function readIndex(data: string): { schemaVersion: 1; reports: IndexEntry
   return index;
 }
 
+function validCuratedRecordIds(differences: Report["differences"], failures: PublicExecutionFailure[]) {
+  const ids = curatedTargetRecordIds();
+  return differences.every(({ id }) => ids.has(id)) && failures.every(({ id }) => ids.has(id));
+}
+
 // A strict public allowlist, not a type assertion on untrusted JSON. No
 // report, index row or child object may smuggle raw data into the public branch.
 export function verifyReport(value: unknown, id: string): asserts value is Report {
@@ -343,10 +371,12 @@ export function verifyReport(value: unknown, id: string): asserts value is Repor
       (q.version !== 2 && q.version !== 3) || !isString(q.candidate) || !Object.hasOwn(candidates, q.candidate) ||
       prepared !== isAddedCandidate(q.candidate) || q.candidateVersion !== r.candidate.version ||
       q.source !== source || q.reference !== baseline || q.suite !== r.suite.id ||
-      (isAddedCandidate(q.candidate) ? q.suite !== "full" || q.candidate !== r.candidate.id
+      (isAddedCandidate(q.candidate) ? !supportsSuite(q.candidate, q.suite) || q.candidate !== r.candidate.id
         : !sameCombination(indexEntry(r), legacyCandidates[q.candidate], reference, suites[q.suite])) ||
       !isString(q.corpus) || !/^microsoft\/TypeScript@[a-f0-9]{40}$/.test(q.corpus) || !isHash(q.planSha256) || !isHash(q.harnessSha256) ||
-      !(q.suite === "fixed-120" ? isHash(q.manifestSha256) : q.manifestSha256 === null) ||
+      !(q.suite === "fixed-120" ? isHash(q.manifestSha256) : q.suite === curatedSuite.id ? q.manifestSha256 === curatedTargetHash : q.manifestSha256 === null) ||
+      (q.suite === curatedSuite.id && (q.corpus !== curatedCorpus || r.summary.sourceFiles !== curatedTargetCount ||
+        r.summary.records !== curatedTargetCount || r.summary.shards !== 1)) ||
       q.adapter !== (q.candidate.startsWith("bun-") ? "bun-check" : "tsc-cli") ||
       ![q.runner, q.platform, q.runnerImage, q.node].every((v) => isString(v) && /^[\w ()./+-]{1,120}$/.test(v)) ||
       ![q.locale, q.timezone].every((v) => v === null || (isString(v) && /^[\w.+-]{1,64}$/.test(v))) ||
@@ -368,7 +398,8 @@ export function verifyReport(value: unknown, id: string): asserts value is Repor
         r.differences.some(({ id }) => r.candidateFailures.some((failure) => failure.id === id)) ||
         r.differences.reduce((n, row) => n + row.extra, 0) > r.summary.fp ||
         r.differences.reduce((n, row) => n + row.missed, 0) > r.summary.missed ||
-        r.differences.reduce((n, row) => n + row.misanchor, 0) > r.summary.misanchor)) || hash(q) !== id) {
+        r.differences.reduce((n, row) => n + row.misanchor, 0) > r.summary.misanchor)) ||
+      (q.suite === curatedSuite.id && !validCuratedRecordIds(r.differences, current ? r.candidateFailures : [])) || hash(q) !== id) {
     throw new Error("Invalid or incomplete public report");
   }
 }
@@ -470,14 +501,15 @@ function main() {
     const [candidateArg, suiteArg, checkout, dest, dir, data, force] = args as [string, string, string, string, string, string, "--force"?];
     const candidate = asCandidate(candidateArg);
     const suite = asSuite(suiteArg);
-    if (!supportsSuite(candidate, suite)) throw new Error(`${candidate} is only selectable with the full suite`);
+    if (!supportsSuite(candidate, suite)) throw new Error(`${candidate} is not selectable with ${suite}; choose full or ${curatedSuite.id}`);
     const { config, definition, ref } = configuration();
     const corpus = verifyCorpus(checkout, ref);
     const corpusRef = corpusRefOf(config, definition)!;
-    const ids = suite === "fixed-120" ? loadManifest(join(REPO_ROOT, manifest)) : null;
-    if (ids && ids.length !== 120) throw new Error("The fixed 120 sample must have exactly 120 source files");
-    const plan = ids === null ? buildPlan(corpus, corpusRef, 8, source, [candidate]) : buildPlanForIds(corpus, corpusRef, 1, source, [candidate], ids);
-    const inputs = plan.shards.map((shard) => shardInputEvidence(corpus, shard.id, shard.units.map((unit) => unit.id)));
+    const exact = suite === curatedSuite.id ? curatedTargets() : undefined;
+    const ids = exact?.map((target) => target.source) ?? (suite === "fixed-120" ? loadManifest(join(REPO_ROOT, manifest)) : null);
+    if (suite === "fixed-120" && ids?.length !== 120) throw new Error("The fixed 120 sample must have exactly 120 source files");
+    const plan = ids === null ? buildPlan(corpus, corpusRef, 8, source, [candidate]) : buildPlanForIds(corpus, corpusRef, 1, source, [candidate], ids, exact);
+    const inputs = plan.shards.map((shard) => shardInputEvidence(corpus, shard.id, shard.units.map((unit) => unit.id), shardTargets(shard)));
     const request = makeRequest(plan, suite, installTools(candidate, resolve(dest), dir), inputs);
     const id = hash(request);
     mkdirSync(dir, { recursive: true });
@@ -494,7 +526,7 @@ function main() {
     const tools = installTools(asCandidate(request.candidate), resolve(dest), dir, request);
     const corpus = verifyCorpus(checkout, configuration().ref);
     if (hash(makeRequest(plan, asSuite(request.suite), tools, request.inputs)) !== id) throw new Error("Evaluation inputs changed after planning");
-    verifyShardInputs(request, shard.id, shardInputEvidence(corpus, shard.id, shard.units.map((unit) => unit.id)));
+    verifyShardInputs(request, shard.id, shardInputEvidence(corpus, shard.id, shard.units.map((unit) => unit.id), shardTargets(shard)));
     runShard(plan, shard, request.candidate, corpus, resolve(out), tools.bin, tools.cliArgs, tools.prepared?.environment);
     if (request.version === 3 && isAddedCandidate(request.candidate)) {
       inspectDistribution(request.candidate, join(dir, "compiler"), request.prepared.source, {

@@ -291,8 +291,8 @@ bun run probes:versions --candidate tsrs --bin "$BIN"
 ## 公开评测与报告目录（`public-evaluation.yml`）
 
 公开候选与固定版本见[候选检查器一览](CHECKERS.md)。`typescript`、`bun-1.4.4`、
-`bun-1.4.5` 和 `tsrs` 可选 `fixed-120`（120 个固定诊断样本）或 `full`；
-`ts-rust` 和 `tsz` 只能选 `full`。后者覆盖 `compiler/` 与 `conformance/`
+`bun-1.4.5` 和 `tsrs` 可以选 `fixed-120`（120 个固定诊断样本）。六个固定候选均可选 `full`
+或 `curated-difference-v1`；`ts-rust` 和 `tsz` 不支持 `fixed-120`。`full` 覆盖 `compiler/` 与 `conformance/`
 下的 TS 源用例，按配置展开后分 8 片。所有组合都对照固定提交的 TS 7.1.0-beta 官方
 `.errors.txt`。Bun 走 `bun-check`，其余走 `tsc-cli`；不用填写二进制地址或 adapter。
 
@@ -337,23 +337,33 @@ TS7／tsrs 的原生发行包（包含声明库）指纹。无论是否勾选 `f
 缺分片、参考侧执行失败、无法启动候选、进程结果无法确认或证据与计数不一致时，不新增或刷新公开报告。
 公开报告列出失败配置的 ID 和简化的进程状态；含 stdout、stderr 等信息的原始明细仅保留在本次 Actions 产物。
 
-### 并列查看兼容性差异样本 v1（只读产物）
+### 精选差异样本 v1：单候选重跑与六方对照
 
-`curated-difference-v1` 是独立的版本化比较产物，不是 `public-evaluation.yml` 的派发选项。
-它从 [#27 固定的六份全量运行证据](../config/curated-difference-v1/README.md) 提取 33 个目标配置，
-不重新运行或保存评测；其中两份是只读预演，不冒充正式发布结果。页面逐案区分兼容、有差异、无法确认和跳过，
-单列官方 CLI 与 `.errors.txt` 的差异和五个官方 TS6／TS7 校准探针。不用这组刻意挑选的用例估计总体兼容率。
+在评测选择器或 `public-evaluation.yml` 中选择 `curated-difference-v1`，即可查看单候选报告或派发运行。
+本测试集固定使用 TypeScript 提交 `3e9236361fa97a9e6c685f4833ac457ae2d8c50a` 的官方 `.errors.txt`，
+只跑 [#27 标记的 33 个「源文件 + 配置」](../config/curated-difference-v1/README.md)；不会执行同源的其他配置。
+请求 ID 还绑定这份规范列表的 SHA-256，与 `fixed-120` 和 `full` 分开。旧报告和旧请求仍可核验；执行器变更后的新请求按原有指纹规则判断是否能复用。
 
 ```sh
-# 写入本地暂存根目录，不写入公开数据分支，也不触发部署。
-bun scripts/curated-comparison.ts .cache/curated-web
+# 具有仓库写权限的维护者可派发；预演只产出 Actions 报告。
+gh workflow run public-evaluation.yml -R hax/tsc-compa --ref main \
+  -f candidate=typescript -f suite=curated-difference-v1 -f preview=true
+
+# 本地重跑：先安装依赖，并按上文设置指向固定测试集的 TS71_CASES。
+OUT=.cache/curated-v1-local
+mkdir -p "$OUT"
+bun scripts/public-evaluation-curated.ts > "$OUT/targets.json"
+TSC_COMPA_ADAPTER_ARGS='' bun src/run.ts --baseline 7.1.0-beta-official \
+  --corpus "$TS71_CASES" --case-targets "$OUT/targets.json" \
+  --expectation-source official-baseline --option-strategy aligned \
+  --adapter tsc-cli:node_modules/typescript-7-1/bin/tsc --out "$OUT" --report-out "$OUT"
 ```
 
-入口为暂存根目录下的 `reports/curated-difference-v1/index.html`，相邻的 `comparison.json` 提供同一份数据。
-脚本校验已审阅的 v1 输入字节，不覆盖同名产物，也不修改现有目录、报告索引或历史报告。
-Pages 发布工作流在暂存公开目录和历史报告后生成此页。部署完成后可从首页链接打开；它不会出现在评测选择器中。
-要重跑源文件或校准探针，请用[本地复现命令](../config/curated-difference-v1/README.md#本地跑选中的源文件)。
-本地运行会展开同文件的配置；按「源文件 + 目标配置」筛选才能与只读产物对照。
+单候选报告区分通过、差异、未确认和跳过；这组刻意选出的用例不能用来估计总体兼容率或排名。
+五个官方 TS6／TS7 校准探针不计入这 33 条，可用 `bun run probes:versions` 单独重跑。
+首页的六方对照页仍是固定全量运行的只读摘录（含两份只读预演）；派发单候选不会更新它。
+要本地暂存六方页面，可运行 `bun scripts/curated-comparison.ts .cache/curated-web`，输出在
+`reports/curated-difference-v1/index.html` 和 `comparison.json`；不会写公开数据分支或部署。
 
 ### 新增候选：全量评测顺序
 
