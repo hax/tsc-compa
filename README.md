@@ -316,7 +316,7 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 
 - 使用和维护：[项目文档](docs/README.md) · [测试配置](config/README.md) · [维护脚本](scripts/README.md)
 - 开发：[运行器和适配器](src/README.md) · [自动化测试](test/README.md)
-- 报告和自动化：[公开报告站点](site/README.md) · [GitHub 配置和工作流](.github/README.md)
+- 报告和自动化：[公开报告站点](site/README.md) · [GitHub 配置和工作流](.github/OVERVIEW.md)
 
 ## 可选性能附录
 

@@ -299,9 +299,9 @@ CI 规则复核（本地按 #11 后的 workflow 命令等值运行）：
 - `6.0.3` 官方结果子集 191 例 + `--gate-max-fp 12 --gate-max-miss 4
   --gate-min-coverage 0.99`：fp 12 条、miss 4 条、覆盖 99.7%，门禁通过——阈值正好
   卡在实测值上，pin 对齐没有改变它们；
-- `ts7-official.yml` 尚未在 GitHub 实际 dispatch（本地按同一命令跑通），合并后需手动
-  触发一次，才算 #7 的「CI 用新 pin 跑通」验收完成；在那之前 `smoke.yml` 的
-  7.1.0-beta-official 档已覆盖同一组 28 例。
+- 2026-11-16（北京时间），当时的 `ts7-official.yml` 用新提交在 GitHub Actions 手动运行两次，
+  均成功（[最后一次运行](https://github.com/hax/tsc-compa/actions/runs/43770932909)）。该工作流已移除，
+  同一组 28 例仍由 `smoke.yml` 的 `7.1.0-beta-official` 档执行。
 
 ## 结论 12：两档比较的固定版本验证（2026-11-27）
 
