@@ -1,17 +1,5 @@
-# 公开仓：接收远程二进制并跑兼容性套件（native-suite）
-#
-# 两种入口：
-#   1) repository_dispatch（自动，event_type = checker-binary，由实现侧 CI
-#      发起）：payload 带 implementation / source_sha / release_tag /
-#      asset_name / platform / baseline。
-#   2) workflow_dispatch（手动回退）：release_tag + asset_name 从本仓 release
-#      下载；或 binary_url 直接下载任意实现的二进制。
-#
-# 本仓只用自己的 GITHUB_TOKEN 下载本仓的 release asset，不需要额外凭据。
-#
-# 用法示例（手动回退）：
-#   release_tag: binary-checker-<sha>-linux-x64
-#   asset_name:  checker-<sha>-linux-x64
+# Trusted binaries from this public repository's Releases only.
+# Payload, trust boundary and private-CI alternative: docs/NATIVE-CHECKERS.md
 name: native-suite
 
 on:
@@ -20,127 +8,144 @@ on:
   workflow_dispatch:
     inputs:
       implementation:
-        description: "实现名（报告用）"
+        description: "公开报告中的实现名"
         default: "checker"
       release_tag:
-        description: "本仓 release tag（binary-<impl>-<sha>-<platform>）"
-        default: ""
+        description: "本仓已发布 Release 的准确 tag"
+        required: true
       asset_name:
-        description: "release 里的 asset 文件名"
-        default: ""
-      binary_url:
-        description: "直接下载二进制的 URL（给了它则忽略 release_tag）"
-        default: ""
+        description: "Release 中的准确文件名"
+        required: true
+      source_sha:
+        description: "可公开的源码提交 SHA（可选）"
+      sha256:
+        description: "二进制 SHA-256（64 位十六进制，可选）"
       baseline:
-        description: "tsc 基线与对应语料"
+        description: "tsc 参考配置与对应测试集"
         type: choice
         options: ["7.1.0-beta", "6.0.3", "5.9.3"]
         default: "7.1.0-beta"
       mode:
-        description: "fixed（固定 strict+esnext 口径，实现只支持这个时用）或 official"
+        description: "fixed（默认）或 official；checker-batch 均不可作兼容性结论"
         type: choice
         options: ["fixed", "official"]
         default: "fixed"
       limit:
-        description: "只跑前 N 个用例（0 = 该基线的冒烟集全部）"
+        description: "只跑前 N 个源用例（0 = 该参考配置的默认冒烟集全部）"
         default: "0"
 
-permissions:
-  contents: read
+permissions: {}
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  suite:
+  retrieve:
+    if: github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      IN_IMPL: ${{ github.event.client_payload.implementation || inputs.implementation || 'checker' }}
-      IN_SHA: ${{ github.event.client_payload.source_sha || '' }}
-      IN_TAG: ${{ github.event.client_payload.release_tag || inputs.release_tag }}
-      IN_ASSET: ${{ github.event.client_payload.asset_name || inputs.asset_name }}
-      IN_URL: ${{ github.event.client_payload.binary_url || inputs.binary_url }}
-      IN_BASELINE: ${{ github.event.client_payload.baseline || inputs.baseline || '7.1.0-beta' }}
-      IN_MODE: ${{ inputs.mode || 'fixed' }}
-      IN_LIMIT: ${{ inputs.limit || '0' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      plan: ${{ steps.resolve.outputs.plan }}
+      corpus_ref: ${{ steps.resolve.outputs.corpus_ref }}
     steps:
+      # Actions expression equality ignores case; Git branch names do not.
+      - name: Require the exact default branch ref
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ -z "$DEFAULT_BRANCH" ] || [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+            echo 'native-suite must run from the exact default branch ref' >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
+          no-cache: true
+          token: ""
 
-      - name: Resolve corpus ref from baseline
-        id: corpus
-        run: |
-          REF=$(bun -e 'const c=require("./config/baselines.json"); const b=c.baselines.find((x)=>x.id===process.env.IN_BASELINE); if(!b){console.error("unknown baseline: "+process.env.IN_BASELINE);process.exit(1)}; console.log(c.corpora[b.corpus].ref)')
-          echo "ref=$REF" >> "$GITHUB_OUTPUT"
-          echo "baseline=$IN_BASELINE corpus_ref=$REF"
-
-      - name: Checkout TypeScript corpus (${{ steps.corpus.outputs.ref }})
-        uses: actions/checkout@v4
-        with:
-          repository: microsoft/TypeScript
-          ref: ${{ steps.corpus.outputs.ref }}
-          path: reference/corpus
-
-      - name: Install deps
-        run: bun install --frozen-lockfile
-
-      - name: Fetch implementation binary
+      - name: Resolve exact Release asset and verify bytes (no execution)
+        id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p bin
-          if [ -n "$IN_URL" ]; then
-            curl -fsSL "$IN_URL" -o "bin/$IN_IMPL"
-          else
-            [ -n "$IN_TAG" ] && [ -n "$IN_ASSET" ] || { echo "需要 release_tag+asset_name 或 binary_url"; exit 1; }
-            gh release download "$IN_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$IN_ASSET" --dir bin
-            mv "bin/$IN_ASSET" "bin/$IN_IMPL"
-          fi
-          chmod +x "bin/$IN_IMPL"
-          file "bin/$IN_IMPL"
-          "bin/$IN_IMPL" --version 2>/dev/null || true
+        run: bun scripts/native-suite.ts resolve
 
-      - name: Run compatibility suite
+  suite:
+    needs: retrieve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: {}
+    steps:
+      # Both checkouts are public. Fetch the workflow commit and pinned corpus
+      # without passing a GitHub token to Git or writing one to disk.
+      - name: Check out workflow commit and corpus
+        env:
+          CORPUS_REF: ${{ needs.retrieve.outputs.corpus_ref }}
+          GIT_TERMINAL_PROMPT: "0"
         run: |
-          BIN="$GITHUB_WORKSPACE/bin/$IN_IMPL"
-          export CHECKER_BATCH_BIN="$BIN"
-          LIMIT_ARGS=""
-          if [ "${IN_LIMIT}" != "0" ] && [ -n "${IN_LIMIT}" ]; then LIMIT_ARGS="--limit ${IN_LIMIT}"; fi
-          echo "impl=$IN_IMPL sha=$IN_SHA baseline=$IN_BASELINE mode=$IN_MODE"
-          bun src/run.ts \
-            --baseline "$IN_BASELINE" \
-            --corpus "$GITHUB_WORKSPACE/reference/corpus/tests/cases" \
-            --adapter "checker-batch" \
-            --mode "$IN_MODE" \
-            $LIMIT_ARGS \
-            --out out
+          git init --quiet
+          git -c credential.helper= fetch --quiet --depth=1 --no-tags "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git checkout --quiet --detach FETCH_HEAD
+          git init --quiet reference/corpus
+          git -C reference/corpus -c credential.helper= fetch --quiet --depth=1 --no-tags https://github.com/microsoft/TypeScript.git "$CORPUS_REF"
+          git -C reference/corpus checkout --quiet --detach FETCH_HEAD
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+          no-cache: true
+          token: ""
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --cache-dir "$RUNNER_TEMP/native-bun-cache"
+
+      - name: Verify and run the native compatibility suite
+        env:
+          NATIVE_PLAN: ${{ needs.retrieve.outputs.plan }}
+        run: bun scripts/native-suite.ts run
 
       - name: Step summary
-        if: always()
+        if: ${{ !cancelled() }}
+        env:
+          NATIVE_PLAN: ${{ needs.retrieve.outputs.plan }}
         run: |
           {
-            echo "## native-suite: $IN_IMPL"
-            echo ""
-            echo "- source SHA: ${IN_SHA:-unknown}"
-            echo "- baseline: $IN_BASELINE"
-            echo "- mode: $IN_MODE"
-            echo ""
-            if [ -f out/metrics.json ]; then
+            echo '## native-suite'
+            echo
+            jq -r '.request | "- Implementation: `\(.implementation)`\n- Source SHA (caller-supplied): `\(.sourceSha // "unknown")`\n- Baseline: `\(.baseline)`\n- Mode: `\(.mode)`; limit: `\(.limit)`"' <<< "$NATIVE_PLAN"
+            if [ -f out/native-suite/provenance.json ]; then
+              jq -r '"- Release asset ID: `\(.assetId)`\n- Verified binary SHA-256: `\(.binarySha256)`"' <<< "$NATIVE_PLAN"
+            fi
+            if [ -f out/native-suite/metrics.json ]; then
+              echo
+              echo 'See the artifact for the complete Markdown and HTML reports and per-case details.'
+              echo
               echo '```json'
-              jq '{verdictEligible: .meta.verdictEligible, totals: .totals, fpByCode: .byCode.fp, missByCode: .byCode.miss, skips: .skips}' out/metrics.json 2>/dev/null || head -c 2000 out/metrics.json
+              jq '{selectedCases: .meta.selectedCases, verdictEligible: .meta.verdictEligible, executionFailures: (.meta.executionFailures | length), totals: (.totals | {cases, ran, skipped, fpTotal, missTotal, misanchorTotal, coverage}), comparison: {compatibility: .comparison.compatibility, strict: .comparison.strict}}' out/native-suite/metrics.json
               echo '```'
             else
-              echo "（没有 metrics.json，运行失败或超时）"
+              echo
+              echo 'No metrics were produced. Check job status and any fallback report.'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload metrics
-        if: always()
+      - name: Upload reports and provenance
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: metrics-${{ env.IN_IMPL }}-${{ env.IN_BASELINE }}
+          name: metrics-${{ fromJSON(needs.retrieve.outputs.plan).request.implementation }}-${{ fromJSON(needs.retrieve.outputs.plan).request.baseline }}
           path: |
-            out/metrics.json
-            out/details.json
+            out/native-suite/metrics.json
+            out/native-suite/details.json
+            out/native-suite/report.md
+            out/native-suite/report.html
+            out/native-suite/provenance.json
+            out/native-suite/run-status.json
+          if-no-files-found: ignore
           retention-days: 30

@@ -1,0 +1,216 @@
+name: public-evaluation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/public-evaluation.yml
+      - scripts/public-evaluation*.ts
+      - test/public-evaluation*.test.ts
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Pinned public candidate
+        type: choice
+        options: [typescript, bun-1.4.4, bun-1.4.5, tsrs]
+        default: typescript
+      suite:
+        description: TS7 official baseline test suite
+        type: choice
+        options: [fixed-120, full]
+        default: fixed-120
+      preview:
+        description: Read-only preview (never write to the public data branch)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  TZ: UTC
+  LC_ALL: C.UTF-8
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      id: ${{ steps.plan.outputs.id }}
+      cached: ${{ steps.plan.outputs.cached }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      corpus-repo: ${{ steps.pin.outputs.repo }}
+      corpus-ref: ${{ steps.pin.outputs.ref }}
+    steps:
+      - name: Check workflow code ref
+        env:
+          DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+          PREVIEW: ${{ inputs.preview }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" != "$DEFAULT_REF" && "$PREVIEW" != true ]]; then
+            echo 'Publishing requires the default branch. Select preview for a read-only run.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+      - id: pin
+        run: bun scripts/public-evaluation.ts pin
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.ref }}
+          path: reference/corpus
+          sparse-checkout: |
+            tsc/testdata/tests/cases
+            tsc/testdata/baselines/reference
+          persist-credentials: false
+      - run: bun install --frozen-lockfile
+      - name: Read durable public data if initialized
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          mkdir public-data
+          # A successful query with no matching ref means this is the first evaluation.
+          ref=$(git ls-remote --heads origin refs/heads/public-report-data)
+          if [[ -n "$ref" ]]; then
+            git fetch --no-tags --depth=1 origin refs/heads/public-report-data
+            if git cat-file -e FETCH_HEAD:reports; then git archive FETCH_HEAD reports/ | tar -x -C public-data; fi
+          fi
+      - name: Plan shards and look for exact completed evidence
+        id: plan
+        env:
+          CANDIDATE: ${{ inputs.candidate || 'typescript' }}
+          SUITE: ${{ inputs.suite || 'fixed-120' }}
+        run: bun scripts/public-evaluation.ts plan "$CANDIDATE" "$SUITE" reference/corpus .cache/public-tools request public-data
+      - name: Report cache hit
+        if: steps.plan.outputs.cached == 'true'
+        env:
+          ID: ${{ steps.plan.outputs.id }}
+        run: printf 'Exact public report `%s` already exists; no cases will be re-run.\n' "$ID" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: steps.plan.outputs.cached != 'true'
+        with:
+          name: public-evaluation-request
+          path: request/
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14
+
+  evaluate:
+    needs: plan
+    if: needs.plan.outputs.cached == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    name: shard ${{ matrix.shard }}
+    env:
+      SHARD: ${{ matrix.shard }}
+      REQUEST_ID: ${{ needs.plan.outputs.id }}
+      CANDIDATE: ${{ inputs.candidate || 'typescript' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.plan.outputs.corpus-repo }}
+          ref: ${{ needs.plan.outputs.corpus-ref }}
+          path: reference/corpus
+          sparse-checkout: |
+            tsc/testdata/tests/cases
+            tsc/testdata/baselines/reference
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: public-evaluation-request
+          path: request
+      - run: bun install --frozen-lockfile
+      - name: Evaluate shard
+        run: bun scripts/public-evaluation.ts run request "$REQUEST_ID" "$SHARD" reference/corpus .cache/public-tools out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-${{ inputs.candidate || 'typescript' }}-${{ matrix.shard }}
+          path: out/
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 14
+
+  report:
+    needs: [plan, evaluate]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.cached == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - uses: actions/download-artifact@v4
+        with:
+          name: public-evaluation-request
+          path: request
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: full-*
+          path: shard-results
+      - name: Verify completeness and build compact report
+        env:
+          REQUEST_ID: ${{ needs.plan.outputs.id }}
+          MATRIX_RESULT: ${{ needs.evaluate.result }}
+        run: |
+          if [[ "$MATRIX_RESULT" != success ]]; then
+            echo 'The execution matrix did not complete successfully; no public report will be created.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          bun scripts/public-evaluation.ts report request "$REQUEST_ID" shard-results bundle "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-evaluation-report
+          path: bundle/
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14
+
+  persist:
+    needs: [plan, report]
+    if: >-
+      always() && github.event_name == 'workflow_dispatch' && !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && needs.plan.result == 'success' && needs.report.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - uses: actions/download-artifact@v4
+        with:
+          name: public-evaluation-report
+          path: bundle
+      - name: Append verified result to public-report-data
+        env:
+          PUSH_TOKEN: ${{ github.token }}
+          REQUEST_ID: ${{ needs.plan.outputs.id }}
+        run: bash scripts/persist-public-evaluation.sh bundle "$REQUEST_ID"

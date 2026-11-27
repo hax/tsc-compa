@@ -1,0 +1,86 @@
+name: Publish public reports to Pages
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions: {}
+
+concurrency:
+  group: public-reports-pages
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # Do not deploy site code selected from a feature branch or pull request.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - name: Require the exact default-branch ref
+        shell: bash
+        env:
+          DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          if ! [[ "$GITHUB_REF" == "$DEFAULT_REF" ]]; then
+            echo '::error::Pages deployments require the exact default-branch ref'
+            exit 1
+          fi
+      - name: Check out site code at the triggering default-branch commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          sparse-checkout: |
+            site
+            scripts
+            src
+            config
+          persist-credentials: false
+      - name: Check out published report data
+        uses: actions/checkout@v4
+        with:
+          ref: refs/heads/public-report-data
+          path: data
+          sparse-checkout: reports
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - name: Validate and stage Pages artifact
+        run: |
+          set -euo pipefail
+          mkdir _site
+          for asset in index.html styles.css app.js catalog.js; do
+            path="source/site/$asset"
+            test -f "$path" && test ! -L "$path" || exit 1
+            cp "$path" _site/
+          done
+          bun source/scripts/stage-public-reports.ts data _site/reports
+      - name: Check Pages configuration
+        uses: actions/configure-pages@v5
+        with:
+          enablement: false
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    # Also restrict this environment to the exact default branch in repo settings.
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4

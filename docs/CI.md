@@ -1,49 +1,8 @@
-# 接收检查器二进制并运行兼容性测试（native-suite）
+# 持续集成与兼容性报告
 
-本文说明 CI 操作。设计与术语见 [DESIGN.md](DESIGN.md)，
-参数和比较规则见 [REFERENCE.md](REFERENCE.md)，
-当前能力和限制见 [STATUS.md](STATUS.md)，历史变化见 [HISTORY.md](HISTORY.md)。
-
-实现侧 CI 构建二进制后，会把它作为本仓的 Release Asset 上传，并发送 `repository_dispatch`（`event_type = checker-binary`）触发本 workflow。本仓用自带的 `GITHUB_TOKEN` 下载自己的 release asset，不需要额外凭据。
-
-## 触发
-
-1. `repository_dispatch`（自动）：payload 形如
-
-```json
-{
-  "implementation": "checker",
-  "source_sha": "<源码提交 sha>",
-  "release_tag": "binary-checker-<sha>-linux-x64",
-  "asset_name": "checker-<sha>-linux-x64",
-  "platform": "linux-x64",
-  "baseline": "7.1.0-beta"
-}
-```
-
-2. `workflow_dispatch`（手动回退）：填 `release_tag` + `asset_name` 从本仓 release 下载；
-   或给 `binary_url` 直接下载任意实现的二进制。可指定 `baseline` / `mode` / `limit`。
-   `limit=0` 表示该基线冒烟集全部；非 0 只取前 N 项，指标里用 `meta.selectedCases`
-   和 `details.json` 记录实际范围，不能当作完整套件结果。
-
-## 做什么
-
-1. 按 `baseline` 从 `config/baselines.json` 解析测试集版本，将官方的
-   `microsoft/TypeScript` 仓库检出到 `reference/corpus`；
-2. 下载 release asset 并校验可执行；
-3. 用 `checker-batch` 适配器跑该参考配置的默认冒烟集（`meta.selectedCases` 记录实际数量）；
-4. 上传 `metrics-<impl>-<baseline>` artifact，并在 job summary 里贴
-   多报错误／漏报／覆盖率／跳过／`verdictEligible` 摘要。
-
-`native-suite.yml` 把 `--corpus` 固定指向 `reference/corpus/tests/cases`；
-选择 `7.1.0-beta-official` 时，该 workflow 没有改写为 TS7 Go 的
-`tsc/testdata/tests/cases` 布局，因此不能直接照搬为官方结果对照任务。
-`checker-batch` 在工厂里固定 `supportsOptions=false`；`mode=official` 不会被这个
-workflow 转成可作兼容性结论。该 workflow 当前没有接 `--gate`，也没有逐档
-Markdown／HTML 报告：它上传的是 `metrics.json` / `details.json`，失败运行不会
-回填报告占位。
-`ts7-official.yml` 只在 `limit=0` 时使用清单和门禁；非零 `limit` 是评估范围，
-不能拿来代替完整回归。
+本文说明如何运行门禁、查看公开评测和发布报告。通过受控 Release 接入自有检查器的流程见
+[接入自有检查器](NATIVE-CHECKERS.md)；该入口不参与公开报告部署。
+设计与术语见 [DESIGN.md](DESIGN.md)，参数和比较规则见 [REFERENCE.md](REFERENCE.md)。
 
 ## CI 兼容性门禁（`smoke.yml`）
 
@@ -183,23 +142,19 @@ bun src/run.ts --baseline 7.1.0-beta-official \
 
 ## 当前限制
 
-- `native-suite.yml` 的默认冒烟集来自参考配置；当前任务描述中的 28 例不能
-  推广到所有基线或 `--limit`。全量样本仍走批量协议，尚未把 12k 用例作为本 workflow
-  的默认输入。
 - `smoke.yml` 的六档运行纳入 `compat-gate`。手动任务中，`ts7-official.yml` 在不限制
   用例数时启用兼容档门禁；`third-party.yml` 仅在官方结果对照已有「实现 × 参考配置」
-  回归记录且 `limit=0` 时启用门禁。`native-suite.yml` 不启用门禁。
+  回归记录且 `limit=0` 时启用门禁。
 - 每日 cron 的变化检测只覆盖上表列出的输入：范围版本、非 GitHub 获取源、无网络/API
   限流时按「未变化」处理；上游发了新版本但 pin 未改不会触发重跑（需要人工改 pin，
   走推送门禁）。无变化时当天不产出新的兼容性指标，历史指标以最近一次运行为准。
-- 目前只接 linux-x64；其它平台在实现侧加构建矩阵即可，本 workflow 不区分平台。
 - 本地实测不等于远端 CI 通过。当前仓库记录没有证明 GitHub Actions 上已经跑过
   `smoke.yml` 的六档、`ts7-official.yml` 或 `third-party.yml`；远端状态需以对应 run
   的 Summary 与 artifact 为准。
 
 ## TS7 官方结果文件对照（`ts7-official.yml`）
 
-与上面「接收二进制」的流程独立，手动触发，直接读取 TS7 官方仓库的 errors 结果文件：
+该任务手动触发，直接读取 TS7 官方仓库的 errors 结果文件：
 
 - 测试集提交：`config/baselines.json` 的 `ts71-official` 配置（当前 `3e92363`，= npm
   `typescript@7.1.0-beta` 的 gitHead；workflow 现场解析 ref，不硬编码）。Go 布局：cases 在
@@ -315,3 +270,62 @@ bun run probes:versions --candidate tsrs --bin "$BIN"
 `unsupported` 是配置或诊断不可比较，`execution-error` 是执行或采集失败，均保留原因和已有的原始输出，
 不当作空诊断。没有校准成功的探针不会给候选贴版本标签。只有官方断言失败会令命令非零退出；
 候选结果供诊断，不进入兼容性门禁，也不拿几例探针推断候选的整体版本或兼容性。
+
+## 公开评测与报告目录（`public-evaluation.yml`）
+
+公开评测只接受已登记的公开候选：`typescript`（7.1.0-beta）、`bun-1.4.4`、
+`bun-1.4.5`、`tsrs`（0.25.0-ts7.1.0-beta）。不用填写二进制地址或 adapter：
+官方 TypeScript 和 tsrs 走 `tsc-cli`，Bun 走 `bun-check`。所有组合都对照固定提交的
+TS 7.1.0-beta 官方 `.errors.txt`。`fixed-120` 是 120 个固定诊断样本；`full` 是
+`compiler/` 与 `conformance/` 下的 TS 源用例，按配置展开后分 8 片。两者不是同一覆盖口径。
+
+有仓库写权限的维护者在 **Actions → public-evaluation → Run workflow** 选默认分支、候选和测试集；
+也可以用 CLI（下面以本仓 `main` 为例）：
+
+```sh
+gh workflow run public-evaluation.yml -R hax/tsc-compa --ref main \
+  -f candidate=typescript -f suite=fixed-120
+```
+
+选非默认分支时，只有勾选 `preview` 才允许运行；预演产物留在本次 Actions，永远不写公开报告分支。
+公开评测 workflow 须先存在于默认分支，才能从 GitHub 手动派发。修改评测 workflow 或相关脚本、测试的 PR
+会自动用 `typescript` / `fixed-120` 做只读验证，不读写公开数据分支。
+
+`plan` 用固定版本与可执行文件指纹、语料提交、用例清单／分片计划、参考来源、执行器代码、
+平台与关键选项计算请求 ID。规划与执行都校验检出的语料和官方基线字节；请求还绑定各分片的输入摘要及
+TS7／tsrs 的原生发行包（包含声明库）指纹。只有当前目录有效，且同一 ID 的索引、HTML 和精简 JSON 都一致，
+才会跳过评测；
+历史报告仍可浏览，但不能代替条件已变化的运行。重复运行时即使命中，仍会核对输入与二进制身份，
+不会重跑测试用例。没有缓存时，只有分片和配置记录全部核对、且无执行异常，才保存新的公开报告。
+不兼容和明确跳过会计入结果：分片齐全不表示所有用例都能比较，更不表示全部通过。
+分片缺失、编译进程崩溃或超时不会生成公开索引项。排查用的逐案明细留在本次 Actions 产物，
+不进入 Git 数据分支或网站，并按产物保留期限过期。
+
+### 首次发布与更新
+
+1. 在默认分支非预演运行一次 `typescript` / `fixed-120`。评测通过后，`persist` job
+   用仓库 `GITHUB_TOKEN` 初始化或快进更新 `public-report-data`。不用手工创建空分支，
+   也不用把仓库的默认 token 权限调为可写；组织策略若阻止该 job 推送，先检查策略。
+   写入冲突时会以最新分支为基础重试，不使用强推。数据分支只保存 `reports/` 下的公开目录、
+   结果索引、HTML 和精简 JSON；目录列出已支持的组合，索引只列出完成的结果。
+2. 管理员在 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
+   发布 workflow 不会替维护者启用 Pages；不把 `public-report-data` 设为「Deploy from a branch」。
+   在 `github-pages` 部署环境的分支策略中只允许默认分支（本仓为 `main`），不需要为此改动 PR 分支保护策略。
+3. 在默认分支手动运行 **Publish public reports to Pages**（`publish-public-reports.yml`）。
+   它将默认分支的站点与数据分支的 `reports/` 一起部署，站点地址见部署结果。
+   之后保存新报告后再运行该发布任务，评测不会自动部署。
+
+### 验收
+
+- 在独立测试仓库，选择包含 workflow 的非默认分支：不勾 `preview` 应在规划前退出；
+  勾选后用 `typescript` / `fixed-120` 应只生成 Actions 产物，不改变 `public-report-data`。
+- 默认分支首次运行同一组合：检查只有 1 个执行任务，`persist` 写入 1 条索引，
+  `catalog.json` 有 8 个组合；再次派发相同请求，检查 `plan` 命中且不启动执行分片，分支不变。
+- 再用 `full`：检查只跑所选候选、总共 8 片。缺片或有执行异常时，检查无新增索引；
+  齐全时检查报告分别列出计划、完成、跳过和诊断命中数。
+- 部署后，在 Pages 选择已运行与未运行的组合，分别看到报告入口和「未运行」。
+
+自有检查器建议在本地或自己的仓库用 `bun src/run.ts` 生成报告，不需要运行公开评测 workflow。
+检查器按协议选择 adapter：兼容 `tsc` 命令行的二进制可以用 `tsc-cli:<bin>`，
+实现批量协议的可以用 `checker-batch`。自行托管结果时，只发布你确定可公开的文件。
+本仓受控的 `native-suite` Release 入口仍独立运行，不接入公开评测、报告索引或 Pages。

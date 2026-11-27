@@ -8,13 +8,13 @@ import { isValidCaseId, readCase } from "../src/discover.ts";
 import { identifyTool, sha256 } from "../src/provenance.ts";
 import type { Metrics, ToolIdentity } from "../src/compare.ts";
 
-const baseline = "7.1.0-beta-official";
+export const baseline = "7.1.0-beta-official";
 const candidates = ["typescript", "bun-1.4.4", "bun-1.4.5", "tsrs"] as const;
-type Candidate = typeof candidates[number];
+export type Candidate = typeof candidates[number];
 type Source = "official-baseline" | "tsc";
 type Unit = { id: string; records: string[] };
 type Shard = { id: string; units: Unit[]; estimatedCost: number };
-interface Plan {
+export interface Plan {
   version: 1;
   corpusRef: string;
   source: Source;
@@ -46,9 +46,13 @@ export function compilerCaseIds(corpus: string): string[] {
 }
 
 export function buildPlan(corpus: string, corpusRef: string, n: number, source: Source, selected = [...candidates]): Plan {
+  return buildPlanForIds(corpus, corpusRef, n, source, selected, compilerCaseIds(corpus));
+}
+
+export function buildPlanForIds(corpus: string, corpusRef: string, n: number, source: Source, selected: Candidate[], ids: string[]): Plan {
   if (!Number.isInteger(n) || n < 1 || n > 32) throw new Error("Shard count must be between 1 and 32");
   const allRecordIds = new Set<string>();
-  const units = compilerCaseIds(corpus).map((id) => {
+  const units = ids.map((id) => {
     const parsed = readCase(corpus, id);
     const expanded = parsed.skip === null && parsed.unknown.length === 0 ? expandCaseVariants(parsed) : null;
     const runnable = expanded?.status === "ok";
@@ -74,7 +78,7 @@ export function buildPlan(corpus: string, corpusRef: string, n: number, source: 
   return { version: 1, corpusRef, source, candidates: selected, shards };
 }
 
-function verifyVersion(candidate: Candidate, bin: string): void {
+export function verifyVersion(candidate: Candidate, bin: string): void {
   const result = spawnSync(bin, ["--version"], { encoding: "utf8", timeout: 10_000 });
   const expected = candidate === "typescript" ? "Version 7.1.0-beta"
     : candidate === "tsrs" ? "Version 7.1.0-beta (tsrs 0.25.0-ts7.1.0-beta, microsoft/TypeScript@3e9236361fa9)"
@@ -82,7 +86,7 @@ function verifyVersion(candidate: Candidate, bin: string): void {
   if (result.status !== 0 || result.stdout?.trim() !== expected) throw new Error(`${candidate}: expected ${expected}, got ${result.stdout || result.stderr || result.error}`);
 }
 
-function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus: string, dir: string, binArg?: string): void {
+export function runShard(plan: Plan, shard: Shard, candidate: Candidate, corpus: string, dir: string, binArg?: string): void {
   const config = loadBaselines();
   const referenceWrapper = resolveBaselineTsc(findBaseline(config, baseline));
   // Bypass the npm JavaScript launcher for each case, not the pinned native compiler.

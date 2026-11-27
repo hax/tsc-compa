@@ -1,0 +1,56 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  line-height: 1.55;
+  --surface: #fff;
+  --canvas: #f2f5f9;
+  --text: #162132;
+  --subtle: #48566c;
+  --border: #c5cfdb;
+  --accent: #184d8d;
+  --focus: #864200;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #131d2b;
+    --canvas: #0b111b;
+    --text: #e6edf7;
+    --subtle: #b4c0d0;
+    --border: #435167;
+    --accent: #9acaff;
+    --focus: #ffc27a;
+  }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--canvas); color: var(--text); }
+a { color: var(--accent); text-underline-offset: 0.16em; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
+p, dd, li { overflow-wrap: anywhere; }
+p { margin-block: 0.65em; }
+h1, h2 { line-height: 1.2; margin-block: 0 0.55em; }
+h1 { font-size: clamp(1.9rem, 5vw, 3rem); }
+h2 { font-size: 1.2rem; }
+.shell { width: min(70rem, 100% - 2rem); margin-inline: auto; }
+.masthead { display: flex; justify-content: space-between; gap: 1rem; padding: 1.1rem 0; }
+.brand { font-weight: 750; text-decoration: none; }
+.intro { margin-block: 1.5rem 1.2rem; }
+.intro p, .note, .meta { color: var(--subtle); }
+.panel { padding: clamp(1rem, 3vw, 1.55rem); margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 0.7rem; background: var(--surface); }
+.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 0.85rem; }
+.filters label { min-width: 0; font-weight: 650; }
+select { display: block; width: 100%; min-height: 2.75rem; margin-top: 0.35rem; padding: 0.4rem; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 0.35rem; font: inherit; font-weight: 400; }
+.note, .meta { font-size: 0.925rem; }
+.note:empty { display: none; }
+.share { display: inline-block; }
+.report-main { font-weight: 700; }
+.provenance { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.25rem 0.75rem; font-size: 0.95rem; }
+.provenance dt { color: var(--subtle); }
+.provenance dd { margin: 0; }
+.report-id { font-size: 0.9em; }
+details { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.7rem; }
+summary { cursor: pointer; width: fit-content; }
+.history-list { padding-inline-start: 1.45em; }
+.history-list li { margin-block: 0.6rem; }
