@@ -22,7 +22,10 @@ import type { Adapter, CaseInput, CaseOutcome, CompilerOptions, Diagnostic } fro
 import { parsePlainDiagnostics } from "./plain-diagnostics.ts";
 
 /** 只控制 harness/输出、不属于 tsconfig 的 CLI 选项。 */
-const HARNESS_ONLY = new Set(["ignoreconfig", "noemit", "pretty", "extendeddiagnostics", "project", "all", "timing", "threads"]);
+const HARNESS_ONLY = new Set([
+  "ignoreconfig", "noemit", "pretty", "extendeddiagnostics", "project",
+  "no-script", "no-pretty", "all", "timing", "threads",
+]);
 
 /** tsconfig 里必须是数组的选项；CLI 用逗号连接。 */
 const LIST_OPTIONS = new Set(["lib", "types", "typeroots"]);
