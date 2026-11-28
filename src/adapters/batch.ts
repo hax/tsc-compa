@@ -19,8 +19,8 @@
 //   {"protocol":1,"type":"result","id":"...","status":"skip","skipReason":"@jsx"}
 //   {"protocol":1,"type":"result","id":"...","status":"crash","message":"..."}
 //   {"protocol":1,"type":"hello","implementation":{"name":"checker","version":"..."}}
-// checker-batch 可以在 hello 或第一条有效的配对结果中被动声明 capabilities；
-// 声明字段可放顶层或 capabilities 对象。不发送探测帧。在协商模式下，
+// checker-batch 可以在启动 hello 或第一条有效的配对结果中被动声明 capabilities；
+// 首条配对结果或超时之后忽略 hello。声明可放顶层或 capabilities 对象，不发送探测帧。在协商模式下，
 // 只有 skip/error 搭配认可的选项拒绝码才是结构化拒绝。
 //
 // 约定：行列 0-based（shim 负责把实现自己的 1-based 位置换算过来）；诊断文件
@@ -143,6 +143,7 @@ export class BatchAdapter implements Adapter {
   private negotiatedCapabilities?: AdapterCapabilities;
   private implementation?: Readonly<{ name?: string; version?: string }>;
   private protocolError?: string;
+  private startupHelloOpen = true;
   private checkQueue = Promise.resolve();
   get optionNegotiation(): OptionNegotiation | undefined { return this.negotiateOptions ? this.negotiation : undefined; }
   get capabilities(): AdapterCapabilities | undefined { return this.negotiatedCapabilities; }
@@ -176,6 +177,7 @@ export class BatchAdapter implements Adapter {
     this.negotiatedCapabilities = undefined;
     this.implementation = undefined;
     this.protocolError = undefined;
+    this.startupHelloOpen = true;
     this.stderrBuf = "";
     const proc = spawn(this.command, this.args, { stdio: ["pipe", "pipe", "pipe"] });
     this.proc = proc;
@@ -254,6 +256,7 @@ export class BatchAdapter implements Adapter {
   }
 
   private finishTimeout(pending: Pending): void {
+    this.startupHelloOpen = false;
     if (this.negotiation === "pending") this.negotiation = "failed";
     pending.resolve({ id: pending.input.id, status: "timeout", diagnostics: [],
       skipReason: "实现超时", message: `批量适配器 ${this.timeoutMs}ms 未应答` });
@@ -289,6 +292,14 @@ export class BatchAdapter implements Adapter {
   }
 
   private handleHello(row: Record<string, unknown>): void {
+    if (this.negotiateOptions) {
+      // An unsolicited frame after the first paired result cannot amend or
+      // invalidate it. Decide by NDJSON order, not by stdout chunk boundaries.
+      if (!this.startupHelloOpen || this.negotiation === "failed") return;
+      for (const [id, pending] of this.pending) {
+        if (performance.now() >= pending.deadline) { this.expire(id); return; }
+      }
+    }
     const impl = row.implementation === undefined ? {} : row.implementation;
     if (!object(impl) || !displayField(impl.name) || !displayField(impl.version)) {
       if (this.negotiateOptions) this.failNegotiation("批量适配器的 hello 实现信息无效");
@@ -296,10 +307,6 @@ export class BatchAdapter implements Adapter {
     }
     const implementation = { ...(typeof impl.name === "string" && { name: impl.name }), ...(typeof impl.version === "string" && { version: impl.version }) };
     if (!this.negotiateOptions) { this.onHello?.(implementation); return; }
-    // A timed-out first case must not be upgraded by a late hello either.
-    const firstPending = this.negotiation === "pending" ? this.pending.keys().next().value : undefined;
-    if (firstPending !== undefined && performance.now() >= this.pending.get(firstPending)!.deadline) this.expire(firstPending);
-    if (this.negotiation === "failed") return;
     const caps = readCapabilities(row);
     if (caps === undefined || !this.acceptDeclaration(caps)) {
       this.failNegotiation("批量适配器的能力声明无效、迟到或与会话声明冲突");
@@ -321,6 +328,7 @@ export class BatchAdapter implements Adapter {
     if (row.type !== "result" || typeof row.id !== "string") return;
     const pending = this.pending.get(row.id);
     if (!pending) return;
+    this.startupHelloOpen = false;
     if (performance.now() >= pending.deadline) { this.expire(row.id); return; }
     this.pending.delete(row.id);
     clearTimeout(pending.timer);

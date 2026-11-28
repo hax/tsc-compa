@@ -6,6 +6,7 @@ import { expect, test } from "bun:test";
 import { BatchAdapter } from "../src/adapters/batch.ts";
 import { toTscArgs } from "../src/case.ts";
 import type { CaseInput, CompilerOptions } from "../src/types.ts";
+import { finalizeOptionAssessment } from "../src/verdict.ts";
 import { capabilities, rejectionCode, strictSource, targetSource, type WorkerMode } from "./fixtures/batch-options-worker.ts";
 
 const root = join(import.meta.dir, "..");
@@ -325,3 +326,49 @@ test("announced diagnostic fields do not substitute for actual fields", async ()
     expect(adapter.capabilities).toBeUndefined();
   });
 });
+
+for (const delivery of ["same-write", "split"] as const) {
+  for (const firstDeclares of [true, false]) {
+    test(`${delivery}: unsolicited hello after a ${firstDeclares ? "negotiating" : "legacy"} result cannot change assessment`, async () => {
+      const adapter = new BatchAdapter({ name: "late-hello-worker", command: process.execPath, negotiateOptions: true,
+        args: ["-e", `import { createInterface } from "node:readline";
+          const caps = ${JSON.stringify(capabilities)};
+          let first = true;
+          for await (const line of createInterface({ input: process.stdin })) {
+            const request = JSON.parse(line);
+            if (request.type === "shutdown") break;
+            if (request.type !== "check") throw new Error("unexpected client probe");
+            const result = { protocol: 1, type: "result", id: request.id, status: "ok", diagnostics: [] };
+            if (!first) { console.log(JSON.stringify(result)); continue; }
+            first = false;
+            if (${firstDeclares}) result.capabilities = caps;
+            const late = [{ protocol: 1, type: "hello", implementation: { version: "too-late" },
+              capabilities: { ...caps, version: "conflicting-version" } },
+              { protocol: 1, type: "hello", implementation: { version: 42 } }];
+            const lateFrames = late.map(row => JSON.stringify(row) + "\\n").join("");
+            const resultFrame = JSON.stringify(result) + "\\n";
+            if (${delivery === "split"}) {
+              process.stdout.write(resultFrame);
+              await new Promise(resolve => setTimeout(resolve, 100));
+              process.stdout.write(lateFrames);
+            } else process.stdout.write(resultFrame + lateFrames);
+          }`] });
+      const negotiation = firstDeclares ? "negotiated" : "legacy";
+      const assess = (compared: number) => finalizeOptionAssessment("official", adapter, {
+        compared, negotiatedComparisons: adapter.supportsOptions ? compared : 0, candidateOverrideComparisons: 0,
+      });
+      try {
+        expect((await adapter.check(emptyOptionsCase("first"))).status).toBe("ok");
+        expect(assess(1).assessment).toMatchObject({ negotiation, supportsOptions: firstDeclares,
+          comparedSubsetEligible: firstDeclares, gateAuthorized: false, ratchetWriteAuthorized: false });
+        // The worker sends both hello frames before answering this request, so
+        // the split variant checks state after delivery, not after a guessed wait.
+        expect((await adapter.check(emptyOptionsCase("second"))).status).toBe("ok");
+        expect(assess(2).assessment).toMatchObject({ negotiation, supportsOptions: firstDeclares,
+          comparedSubsetEligible: firstDeclares, gateAuthorized: false, ratchetWriteAuthorized: false });
+        expect(adapter.capabilities?.version).toBe(firstDeclares ? capabilities.version : undefined);
+        expect(adapter.batchImplementation).toBeUndefined();
+      } finally { await adapter.close(); }
+    });
+  }
+}
