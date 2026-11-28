@@ -470,10 +470,35 @@ npm 发布的平台原生程序。该目录的 `bun.lock` 固定 SDK 和各平�
 客户端不会把 `related: []` 改成缺失，也不会给缺字段补空对象。协议自检实现
 `mock-batch` 的 `FAKE_RICH` 覆盖这些字段，实际实现的字段完整度仍需逐项核对。
 
-`hello` 可提供实现自报名称和版本；只有名称和版本时不改变选项支持口径。
-收到 `shutdown` 后实现应结束进程。未协商选项支持的旧 `checker-batch` 仍可运行
-`fixed` 或 `official`，两种模式都不能作为兼容性结论。批量客户端出现 crash 或超时后
-按 SKIP 保留原因，不进入诊断分母。`checker-batch` 不使用 `TSC_COMPA_ADAPTER_ARGS`；
+#### 批量选项协商
+
+检查器可在启动 `hello` 或首个正常配对的 `result` 中声明能力。字段可写在消息顶层，
+也可放进 `capabilities`。例如：
+
+```jsonl
+{"protocol":1,"type":"hello","supportsOptions":true,"supportedOptions":["strict","target"],"responseFields":["file","line","col","code","severity"],"version":"checker 1.0.0"}
+{"protocol":1,"type":"result","id":"case-1","status":"skip","errorCode":"unsupportedOption","option":{"name":"module","value":"commonjs"},"message":"module is not supported"}
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `supportsOptions` | 是否接受逐案编译选项。`false` 时 `supportedOptions` 必须为空。 |
+| `supportedOptions` | 支持的规范选项名，不带 `--`。空数组表示不支持任何显式选项，不是通配。 |
+| `responseFields` | 检查器声明会返回的字段；比较只看实际响应。接受逐案选项的检查器须为每条诊断提供 `file`、`line`、`col`、`code` 和 `severity`。 |
+| `version` | 能力声明的自报版本，不替代可执行文件指纹。 |
+
+客户端不发探测消息。首个配对响应或超时之后不再处理 `hello`；后续响应可省略能力，
+重复声明须与会话一致。没有声明则保持旧协议行为。请求沿用 `options` 数组和
+`args` 字符串数组；检查器要让这些设置仅影响本次请求。`args` 使用 `--name value`
+形式；布尔选项可单独传 `--name`，也可显式传 `true` 或 `false`。接收方应按参数顺序
+应用覆盖，并拒绝 `options` 与最终 `args` 对同一选项给出不同值的请求。
+
+不支持的选项或值用 `skip` 或 `error` 返回，带 `unsupportedOption` 或
+`unsupportedValue` 错误码（也接受对应的短横线拼写）和原因；推荐用 `option`
+给出选项名及取值。客户端会复核首案，之后可提前记录未声明的选项拒绝；不会裁剪
+选项后重跑。拒绝原因及原请求记录在 `details.json`，不计入诊断比较分母。
+
+收到 `shutdown` 后检查器应结束进程。`checker-batch` 不使用 `TSC_COMPA_ADAPTER_ARGS`；
 应通过 `--adapter-arg` 提供候选额外参数（两侧参数不同时只作对照实验）。
 
 `bun-check` 收到 `declaration=true`、`emitDeclarationOnly=true` 或 `composite=true` 时，
