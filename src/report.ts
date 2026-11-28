@@ -16,7 +16,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { TIERS, type Tier } from "./compare.ts";
+import { TIERS, type Metrics, type Tier } from "./compare.ts";
 import {
   comparisonFields,
   diagnosticFields,
@@ -27,7 +27,8 @@ import {
   type Verdict,
 } from "./comparison.ts";
 import type { GateReport } from "./gate.ts";
-import type { CompilerOption, Diagnostic } from "./types.ts";
+import type { CompilerOption, Diagnostic, OptionNegotiation, OptionRejection } from "./types.ts";
+import { VERDICT_BASIS_TEXT, type VerdictBasis } from "./verdict.ts";
 
 export const REPORT_MD_FILENAME = "report.md";
 export const REPORT_HTML_FILENAME = "report.html";
@@ -124,6 +125,7 @@ export interface CaseDetail {
   id: string;
   status: "ran" | "skip";
   skipReason: string | null;
+  optionRejection?: Pick<OptionRejection, "kind" | "source" | "reason" | "option">;
   className: string[];
   /** 兼容旧 details 的计数；新 details 的 expected/actual 是完整诊断数组。 */
   expected: number;
@@ -359,6 +361,7 @@ export interface RunProvenance {
   sharedArgs: string[];
   candidateArgs: string[];
   candidateEnvArgs: string[];
+  candidateEnvArgsIgnored?: true;
   filters: string[];
   runner: string | null;
   platform: string | null;
@@ -427,6 +430,8 @@ export interface ReportModel {
   baseline: string | null;
   mode: string;
   verdictEligible: boolean;
+  optionAssessment?: { negotiation: OptionNegotiation; basis: VerdictBasis; comparedSubsetEligible: boolean; declarationVersion: string | null };
+  optionCoverage?: NonNullable<Metrics["optionCoverage"]>;
   /** 适配器原始标识（可能含 `:<bin>`）。 */
   adapter: string | null;
   /** 实现显示名：中性名（适配器类型），可用 --report-impl-name 覆盖。 */
@@ -509,10 +514,12 @@ function normalizeDetails(v: unknown, source: string | null): CaseDetail[] {
     const status = item.status === "skip" ? "skip" : "ran";
     const expectedDiagnostics = Array.isArray(item.expected) ? diagnosticsOf(item.expected) : null;
     const actualDiagnostics = Array.isArray(item.actual) ? diagnosticsOf(item.actual) : null;
+    const optionRejection = status === "skip" ? normalizeOptionRejection(item.optionRejection) : undefined;
     details.push({
       id,
       status,
       skipReason: text(item.skipReason),
+      ...(optionRejection !== undefined && { optionRejection }),
       className: strList(item.classes),
       expected: expectedDiagnostics?.length ?? int(item.expected),
       actual: actualDiagnostics?.length ?? int(item.actual),
@@ -534,6 +541,15 @@ function normalizeDetails(v: unknown, source: string | null): CaseDetail[] {
     });
   }
   return details;
+}
+
+function normalizeOptionRejection(value: unknown): CaseDetail["optionRejection"] {
+  const { kind, source, reason, option } = obj(value);
+  if (kind !== "unsupported-option" && kind !== "unsupported-value" && kind !== "unrecognized-argument") return undefined;
+  if (source !== "preflight" && source !== "worker" && source !== "unchecked-result") return undefined;
+  if (typeof reason !== "string") return undefined;
+  const [normalizedOption] = optionsOf([option]);
+  return { kind, source, reason, ...(normalizedOption !== undefined && { option: normalizedOption }) };
 }
 
 function diagnosticsOf(v: unknown[]): Diagnostic[] {
@@ -788,6 +804,9 @@ function normalizeProvenance(meta: Record<string, unknown>, adapter: string | nu
   const referenceNative = obj(referenceTool.native);
   const candidateNative = obj(candidateTool.native);
   const candidateSdk = obj(candidateTool.sdk);
+  const recordedEnvArgs = strList(optionDef.candidateEnvArgs);
+  // Also correct reports regenerated from older checker-batch run JSON.
+  const envArgsIgnored = adapter === "checker-batch" && (optionDef.candidateEnvArgsIgnored === true || recordedEnvArgs.length > 0);
   const strategy = text(meta.optionPolicy ?? meta.optionStrategy ?? optionDef.strategy ?? provenance.optionPolicy);
   const optionPolicy = strategy === "defaults"
     ? "默认设置（参考与候选各自使用默认值，未显式对齐）"
@@ -815,7 +834,8 @@ function normalizeProvenance(meta: Record<string, unknown>, adapter: string | nu
     referenceBaseArgs: strList(optionDef.referenceBaseArgs),
     sharedArgs: strList(optionDef.sharedArgs),
     candidateArgs: strList(optionDef.candidateArgs),
-    candidateEnvArgs: strList(optionDef.candidateEnvArgs),
+    candidateEnvArgs: envArgsIgnored ? [] : recordedEnvArgs,
+    ...(envArgsIgnored && { candidateEnvArgsIgnored: true }),
     filters: [
       ...strList(optionDef.onlyClasses).map((name) => `只含 ${name}`),
       ...strList(optionDef.excludeClasses).map((name) => `排除 ${name}`),
@@ -973,6 +993,25 @@ function normalizeComparisonSummary(metrics: Record<string, unknown>, details: C
   };
 }
 
+function normalizeOptionAssessment(meta: Record<string, unknown>): ReportModel["optionAssessment"] {
+  const assessment = obj(meta.optionAssessment);
+  const { negotiation, basis } = assessment;
+  if (negotiation !== "pending" && negotiation !== "legacy" && negotiation !== "negotiated" && negotiation !== "failed") return undefined;
+  if (typeof basis !== "string" || !Object.hasOwn(VERDICT_BASIS_TEXT, basis)) return undefined;
+  return {
+    negotiation, basis: basis as VerdictBasis, declarationVersion: text(obj(assessment.capabilities).version),
+    comparedSubsetEligible: meta.mode === "official" && negotiation === "negotiated" &&
+      basis === "negotiated-compared-subset" && assessment.comparedSubsetEligible === true,
+  };
+}
+
+function normalizeOptionCoverage(metrics: Record<string, unknown>): ReportModel["optionCoverage"] {
+  const { compared, rejected, byCategory } = obj(metrics.optionCoverage);
+  const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  if (!count(compared) || !count(rejected)) return undefined;
+  return { compared, rejected, byCategory: countPairs(byCategory) };
+}
+
 function normalizeModel(data: RunData, options: ReportOptions, previous: ReportModel | null): ReportModel {
   const metrics = obj(data.metrics);
   const meta = obj(metrics.meta);
@@ -993,6 +1032,8 @@ function normalizeModel(data: RunData, options: ReportOptions, previous: ReportM
     baseline,
     mode: text(meta.mode) ?? "unknown",
     verdictEligible: meta.verdictEligible === true,
+    optionAssessment: normalizeOptionAssessment(meta),
+    optionCoverage: normalizeOptionCoverage(metrics),
     adapter,
     implName: options.implName ?? neutralImplName(adapter),
     implBin: implBinResolved !== null && implBinSha !== null ? implBinResolved : null,
@@ -1080,6 +1121,18 @@ function scopeOf(previous: ReportModel, current: ReportModel): DeltaScope {
   compare("官方基线输入", previous.provenance.officialInputsSha, current.provenance.officialInputsSha);
   compare("期望源", previous.expectationSource, current.expectationSource);
   compare("选项策略", previous.provenance.optionStrategy, current.provenance.optionStrategy);
+  const optionScope = (model: ReportModel): string | null => {
+    const basis = model.optionAssessment?.basis;
+    // Keep comparability with pre-negotiation legacy/fixed batch reports.
+    return basis === undefined || basis === "legacy-batch" || basis === "fixed-mode" ? null : basis;
+  };
+  compare("选项协商口径", optionScope(previous), optionScope(current));
+  if (optionScope(previous) !== null || optionScope(current) !== null) {
+    // Same manifest and equal counts can still hide a changed compared subset.
+    const comparedIds = (model: ReportModel): string | null => model.details.length === 0 ? null
+      : JSON.stringify(model.details.filter((case_) => case_.status === "ran" && case_.comparison !== null).map((case_) => case_.id).sort());
+    compare("实际比较配置", comparedIds(previous), comparedIds(current));
+  }
   return { v2: true, comparable: reasons.length === 0, reasons };
 }
 
@@ -1313,6 +1366,12 @@ interface SummaryCard {
 function summaryCards(model: ReportModel): SummaryCard[] {
   const t = model.totals;
   const cards: SummaryCard[] = [];
+  if (model.optionCoverage !== undefined) {
+    const { compared, rejected } = model.optionCoverage;
+    cards.push({ label: "实际比较", value: `${compared} 项`, tone: "neutral", note: "两档诊断比较的分母" }, {
+      label: "选项拒绝", value: `${rejected} 项`, tone: "neutral", note: "属于跳过；未取得候选诊断，不进入比较分母",
+    });
+  }
   if (hasNewComparison(model)) {
     const compatibility = model.comparison.compatibility;
     const strict = model.comparison.strict;
@@ -1324,13 +1383,13 @@ function summaryCards(model: ReportModel): SummaryCard[] {
         label: "兼容档",
         value: compatibilityKnown === null ? "未提供" : verdictCountText(compatibilityKnown),
         note: "参考诊断是否都能在同一文件、同一起点找到对应",
-        tone: compatibilityKnown === null ? "neutral" : verdictToneOf(compatibilityKnown),
+        tone: compatibilityKnown === null || model.optionCoverage?.compared === 0 ? "neutral" : verdictToneOf(compatibilityKnown),
       },
       {
         label: "严格一致档",
         value: strictKnown === null ? "未提供" : verdictCountText(strictKnown),
         note: "全部诊断信息和输出相同；不等同于旧 T3 全文",
-        tone: strictKnown === null ? "neutral" : verdictToneOf(strictKnown),
+        tone: strictKnown === null || model.optionCoverage?.compared === 0 ? "neutral" : verdictToneOf(strictKnown),
       },
     );
     if (compatibilityKnown === null || strictKnown === null || compatibilityKnown.unknown > 0 || strictKnown.unknown > 0) {
@@ -1545,13 +1604,49 @@ const maxList = (items: string[], cap: number): string[] => {
   return shown;
 };
 
+function reportEligibility(model: ReportModel): string {
+  if (model.optionAssessment !== undefined) return model.optionAssessment.comparedSubsetEligible
+    ? "仅已比较子集可作本地兼容性证据" : "不可作兼容性结论";
+  return model.verdictEligible ? "可作兼容性结论" : "不可作兼容性结论";
+}
+
+function optionAssessmentRows(model: ReportModel): [string, string][] {
+  const assessment = model.optionAssessment;
+  const rows: [string, string][] = [];
+  if (assessment !== undefined) {
+    rows.push(["选项协商", `${assessment.negotiation}：${VERDICT_BASIS_TEXT[assessment.basis]}`]);
+    if (assessment.declarationVersion !== null) rows.push(["能力声明版本（自报）", assessment.declarationVersion]);
+    rows.push(["授权", "选项协商不授权门禁或回归记录写回"]);
+  }
+  if (model.provenance.candidateEnvArgsIgnored) rows.push(["候选环境参数", "checker-batch 不使用 TSC_COMPA_ADAPTER_ARGS"]);
+  return rows;
+}
+
+const OPTION_REJECTION_LIMIT = 30;
+const OPTION_REJECTION_COLUMNS = ["配置 ID", "分类", "来源", "选项", "原因"];
+function optionRejectionEvidence(rowCount: number): string {
+  const truncation = rowCount > OPTION_REJECTION_LIMIT ? `报告只列前 ${OPTION_REJECTION_LIMIT} 项。` : "";
+  return `${truncation}完整逐案记录及请求参数见运行输出的 details.json 中的 optionRejection。`;
+}
+
+function optionRejectionRows(model: ReportModel): string[][] {
+  return model.details.flatMap(({ id, optionRejection: rejection }) => rejection === undefined ? [] : [[
+    id, rejection.kind, rejection.source,
+    rejection.option === undefined ? "未提供" : `${rejection.option.name}=${JSON.stringify(rejection.option.value)}`,
+    rejection.reason,
+  ]]);
+}
+
 function renderHeaderMd(model: ReportModel): string[] {
   const lines: string[] = [];
   const route: string[] = [];
   lines.push(`| 项 | 值 |`);
   lines.push(`| --- | --- |`);
   lines.push(`| 生成时间 | ${mdCell(model.generatedAt ?? "n/a")} |`);
-  lines.push(`| 套件 / 模式 | ${mdCell(model.suite)} / ${mdCell(model.mode)}${model.verdictEligible ? "（可作兼容性结论）" : "（不可作兼容性结论）"} |`);
+  lines.push(`| 套件 / 模式 | ${mdCell(model.suite)} / ${mdCell(model.mode)}（${reportEligibility(model)}） |`);
+  for (const [label, value] of optionAssessmentRows(model)) {
+    lines.push(`| ${label} | ${label === "能力声明版本（自报）" ? mdCode(value) : mdCell(value)} |`);
+  }
   lines.push(`| 基线 | ${mdCell(model.baseline ?? "n/a")} |`);
   const implBinPart =
     model.implBin !== null && model.implBinSha !== null
@@ -2276,6 +2371,19 @@ export function renderMarkdown(model: ReportModel): string {
       lines.push(...section);
     }
   }
+  const optionReasons = model.optionCoverage?.byCategory ?? [];
+  if (optionReasons.length > 0) {
+    lines.push("", "## 选项拒绝分类", "", "| 分类 | 配置数 |", "| --- | --- |");
+    for (const [kind, count] of optionReasons) lines.push(`| ${mdCode(kind)} | ${count} |`);
+  }
+  const rejections = optionRejectionRows(model);
+  if (rejections.length > 0) {
+    lines.push("", "| " + OPTION_REJECTION_COLUMNS.join(" | ") + " |", "| --- | --- | --- | --- | --- |");
+    for (const row of rejections.slice(0, OPTION_REJECTION_LIMIT)) lines.push(`| ${row.map(mdCode).join(" | ")} |`);
+  }
+  if ((model.optionCoverage?.rejected ?? 0) > 0 || rejections.length > 0) {
+    lines.push("", optionRejectionEvidence(rejections.length));
+  }
   if (model.skips.length > 0) {
     lines.push("");
     lines.push("## 跳过分类");
@@ -2823,7 +2931,8 @@ export function renderHtml(model: ReportModel): string {
   if (model.tscVersion !== null) route.push(`tsc ${model.tscVersion}`);
   const headerRows: string[][] = [
     ["生成时间", model.generatedAt ?? "n/a"],
-    ["套件 / 模式", `${model.suite} / ${model.mode}${model.verdictEligible ? "（可作兼容性结论）" : "（不可作兼容性结论）"}`],
+    ["套件 / 模式", `${model.suite} / ${model.mode}（${reportEligibility(model)}）`],
+    ...optionAssessmentRows(model),
     ["基线", model.baseline ?? "n/a"],
     [
       "实现",
@@ -2940,6 +3049,15 @@ export function renderHtml(model: ReportModel): string {
       blocks.push(htmlTable(["漏报错误码", "条数"], model.missByCode.slice(0, 15).map(([c, n]) => [c, String(n)])));
     }
     sections.push(`<h2>错误码分布</h2>\n${blocks.join("\n")}`);
+  }
+  const optionReasons = model.optionCoverage?.byCategory ?? [];
+  if (optionReasons.length > 0) {
+    sections.push(`<h2>选项拒绝分类</h2>\n${htmlTable(["分类", "配置数"], optionReasons.map(([kind, count]) => [kind, String(count)]))}`);
+  }
+  const rejections = optionRejectionRows(model);
+  if (rejections.length > 0) sections.push(htmlTable(OPTION_REJECTION_COLUMNS, rejections.slice(0, OPTION_REJECTION_LIMIT)));
+  if ((model.optionCoverage?.rejected ?? 0) > 0 || rejections.length > 0) {
+    sections.push(`<p class="note">${escapeHtml(optionRejectionEvidence(rejections.length))}</p>`);
   }
   if (model.skips.length > 0) {
     sections.push(`<h2>跳过分类</h2>\n${htmlTable(["原因", "例数"], model.skips.map(([r, n]) => [r, String(n)]))}`);

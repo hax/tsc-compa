@@ -99,6 +99,28 @@ export type CandidateProcessFailure =
   | { kind: "signal"; signal: string }
   | { kind: "exit"; exitCode: number };
 
+/** A batch peer's declaration, not proof of diagnostic fields or gate eligibility. */
+export interface AdapterCapabilities {
+  readonly supportsOptions: boolean;
+  readonly supportedOptions: readonly string[];
+  readonly responseFields: readonly string[];
+  readonly version: string;
+}
+
+export type OptionNegotiation = "pending" | "legacy" | "negotiated" | "failed";
+
+export interface OptionRejection {
+  kind: "unsupported-option" | "unsupported-value" | "unrecognized-argument";
+  source: "preflight" | "worker" | "unchecked-result";
+  reason: string;
+  /** Omitted if the peer did not identify an option and it cannot be inferred unambiguously. */
+  option?: CompilerOption;
+  /** Wire evidence as sent, even when an effective option can be inferred. */
+  args: string[];
+  options: CompilerOptions;
+  errorCode?: string;
+}
+
 export type OutcomeStatus = "ok" | "skip" | "crash" | "timeout";
 
 /** 适配器对一个用例的答复。非 ok 状态按 SKIP 分类统计，不进入兼容性分母。 */
@@ -108,6 +130,7 @@ export interface CaseOutcome {
   diagnostics: Diagnostic[];
   skipReason?: string;
   message?: string;
+  optionRejection?: OptionRejection;
   /** Evidence from the per-case subprocess, not inferred from diagnostic text. */
   processFailure?: CandidateProcessFailure;
   /**
@@ -155,8 +178,12 @@ export interface ToolIdentity {
 export interface Adapter {
   readonly name: string;
   readonly kind: "per-case" | "batch" | "api";
-  /** false 表示实现不接受外部编译选项（例如固定 strict+esnext 的实现）。 */
+  /** 是否接受逐案选项；批量协商结果为对端声明，不等于门禁授信。 */
   readonly supportsOptions: boolean;
+  readonly capabilities?: AdapterCapabilities;
+  readonly optionNegotiation?: OptionNegotiation;
+  /** Self-reported peer identity, separate from binary provenance. */
+  readonly batchImplementation?: Readonly<{ name?: string; version?: string }>;
   /** 适配器自行选择后端时，提供与启动参数相同的工具来源。 */
   readonly toolIdentity?: ToolIdentity;
   /**

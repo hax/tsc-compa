@@ -74,7 +74,7 @@ bun src/run.ts --baseline 7.1.0-beta-official --corpus "$TSC_COMPA_CORPUS" \
 
 # 用同一测试集测试另一个检查器（批量适配器）
 CHECKER_BATCH_BIN=/path/to/checker \
-bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter checker-batch
+bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter checker-batch --mode official
 # 对照：同一个二进制用逐案 CLI 模式
 CHECKER_BIN=/path/to/checker bun src/run.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --adapter checker-cli
 ```
@@ -269,10 +269,10 @@ bun scripts/select-smoke.ts --baseline 6.0.3 --corpus "$TSC_COMPA_CORPUS" --out 
 批量 NDJSON 客户端会透传诊断级 `width`、`messageChain`、`related`、`attributes`、
 `fullText`、`raw`，以及结果级 `fullText`、`exitCode`、`checkMs`、`rawOutput`。
 实现侧不提供这些字段时，报告保持「未提供」，不会补出虚假的结构或空输出。
-`checker-batch` 在工厂里固定 `supportsOptions=false`；即使传 `--mode official`，
-也不能据此给出兼容性结论。它适合用 `--mode fixed` 验证远端二进制的批量管线，
-真实实现的字段完整度和 Check 耗时仍要逐项核对。`mock-batch` 是协议自检实现，
-不是真实检查器。
+`checker-batch` 从启动消息或首案响应读取检查器的选项支持范围。用 `--mode official`
+比较检查器实际接受的配置，报告会单列选项拒绝；旧检查器仍可用 `--mode fixed`
+核对回归结果。接入时参见[批量协议](docs/REFERENCE.md#82-ndjson-消息)。
+`mock-batch` 是协议自检实现，不是真实检查器。
 
 
 ## 第三方实现

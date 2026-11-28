@@ -7,7 +7,8 @@ import { comparisonFields, compareDiagnostics, type ComparisonField, type Compar
 import { summaryBlockOf } from "./officialBaseline.ts";
 import type { GateProfile, GateReport } from "./gate.ts";
 import type { RatchetStateRegression } from "./ratchet.ts";
-import type { CaseOutcome, CompilerOptions, Diagnostic, ToolIdentity } from "./types.ts";
+import type { CaseOutcome, CompilerOptions, Diagnostic, OptionRejection, ToolIdentity } from "./types.ts";
+import { verdictBasisText, type OptionAssessment } from "./verdict.ts";
 export type { ToolIdentity } from "./types.ts";
 
 /**
@@ -42,6 +43,8 @@ export interface CaseRecord {
   id: string;
   status: "ran" | "skip";
   skipReason?: string;
+  /** Structured evidence that the candidate declined this configuration. */
+  optionRejection?: OptionRejection;
   /** 静态 + 运行期标签，见 src/classify.ts。 */
   classes: string[];
   expected: Diagnostic[];
@@ -232,8 +235,10 @@ export interface RunMeta {
   corpus: string;
   adapter: string;
   mode: "official" | "fixed";
-  /** false 表示这次运行的结果不能作为兼容性结论（口径被刻意对齐/实现忽略选项）。 */
+  /** Diagnostic verdict eligibility; for negotiated batch, only the compared subset. */
   verdictEligible: boolean;
+  /** Local option negotiation evidence; absent for static adapters and old reports. */
+  optionAssessment?: OptionAssessment;
   tscVersion: string;
   tscBin: string;
   /** 基线名（config/baselines.json 的 id）；不指定时为空。 */
@@ -246,7 +251,7 @@ export interface RunMeta {
   selectedCases: number;
   executionFailures?: { id: string; side: "reference" | "candidate"; status: "crash" | "timeout"; reason: string }[];
   manifest?: { path: string; sha256: string; selectedIdsSha256: string; selectedTargetsSha256?: string; parsedInputsSha256: string; officialInputsSha256?: string };
-  options?: { strategy: "defaults" | "aligned"; referenceBaseArgs: string[]; sharedArgs: string[]; candidateArgs: string[]; candidateEnvArgs: string[]; onlyClasses: string[]; excludeClasses: string[] };
+  options?: { strategy: "defaults" | "aligned"; referenceBaseArgs: string[]; sharedArgs: string[]; candidateArgs: string[]; candidateEnvArgs: string[]; candidateEnvArgsIgnored?: true; onlyClasses: string[]; excludeClasses: string[] };
   tools?: { runner: string; platform: string; reference: ToolIdentity; candidate: ToolIdentity | null };
   /** 设置了 --ratchet / --ratchet-impl 时的对比结果。 */
   ratchet?: {
@@ -318,6 +323,8 @@ export interface Metrics {
     t3Failures: [string, number][];
   };
   comparison: ComparisonTotals;
+  /** Option rejections are a subset of skipped, not diagnostic failures or compared configurations. */
+  optionCoverage?: { compared: number; rejected: number; byCategory: [string, number][] };
   /** 按标签聚合；标签正交，数字不可相加。 */
   byClass: Record<string, ClassTotals>;
   byCode: { fp: [string, number][]; miss: [string, number][] };
@@ -350,6 +357,9 @@ interface ClassAcc {
 
 export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
   let ran = 0;
+  let compared = 0;
+  let rejected = 0;
+  const rejections = new Map<OptionRejection["kind"], number>();
   let passCases = 0;
   let fpFreeCases = 0;
   let fpCases = 0;
@@ -434,12 +444,18 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
     }
 
     if (r.status === "skip") {
+      if (r.optionRejection !== undefined) {
+        const { kind } = r.optionRejection;
+        rejected++;
+        rejections.set(kind, (rejections.get(kind) ?? 0) + 1);
+      }
       const reason = r.skipReason ?? "unknown";
       skips.set(reason, (skips.get(reason) ?? 0) + 1);
       continue;
     }
     ran++;
     if (r.comparison !== null) {
+      compared++;
       comparison.compatibility[r.comparison.compatibility]++;
       comparison.strict[r.comparison.strict]++;
       for (const field of comparisonFields) comparison.fields[field][r.comparison.fields[field]]++;
@@ -512,6 +528,9 @@ export function summarize(records: CaseRecord[], meta: RunMeta): Metrics {
       t3Failures: [...t3Reasons.entries()].sort((a, b) => b[1] - a[1]),
     },
     comparison,
+    ...(meta.optionAssessment !== undefined || rejected > 0 ? { optionCoverage: {
+      compared, rejected, byCategory: [...rejections.entries()].sort(([a], [b]) => a.localeCompare(b)),
+    } } : {}),
     byClass,
     byCode: { fp: topEntries(fpByCode, 15), miss: topEntries(missByCode, 15) },
     skips: [...skips.entries()].sort((a, b) => b[1] - a[1]),
@@ -538,11 +557,20 @@ export function formatSummary(m: Metrics): string {
     );
   }
   if (m.skips.length > 0) lines.push(`skip：${m.skips.map(([r, n]) => `${r}×${n}`).join("、")}`);
+  if (m.optionCoverage !== undefined) {
+    const { compared, rejected, byCategory } = m.optionCoverage;
+    lines.push(`选项口径：实际比较 ${compared} 项；选项拒绝 ${rejected} 项（属于跳过，不进入比较分母）` +
+      (byCategory.length === 0 ? "" : `：${byCategory.map(([reason, count]) => `${JSON.stringify(reason)}×${count}`).join("、")}`));
+  }
+  if (m.meta.optionAssessment !== undefined) {
+    lines.push(`选项协商：${m.meta.optionAssessment.negotiation}；${verdictBasisText(m.meta.optionAssessment.basis)}；不授权门禁或回归记录写回`);
+  }
   lines.push(
     `口径：adapter=${m.meta.adapter} mode=${m.meta.mode}` +
       (m.meta.baseline !== undefined ? ` baseline=${m.meta.baseline}` : "") +
       ` tsc=${m.meta.tscVersion}` +
-      (m.meta.verdictEligible ? "" : "（本次运行不能作为兼容性结论）"),
+      (m.meta.optionAssessment?.comparedSubsetEligible ? "（仅已比较子集可作本地兼容性证据）"
+        : m.meta.verdictEligible ? "" : "（本次运行不能作为兼容性结论）"),
   );
   return lines.join("\n");
 }

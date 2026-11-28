@@ -50,13 +50,20 @@ tsc 版本为 `7.1.0-beta`（当前 `7.1.0-beta` 与 `7.1.0-beta-official` 都�
 读取官方诊断基线时，模式或额外参数不会重新生成基线内容；
 修改候选选项后，需重新核对保存的参考结果与输入配置是否一致。
 
-字段 `meta.verdictEligible` 表示运行模式和适配器是否满足门禁的比较条件：
+静态适配器保持原规则：`official` 模式且 `adapter.supportsOptions=true` 时，
+`meta.verdictEligible=true`；门禁另行检查完成数量和诊断差异。
+对 `checker-batch`，只在测试集结束后记录 `meta.optionAssessment`：
+包含协商状态、能力与实现自报标识（如果提供）、判定依据、`gateAuthorized` 和
+`ratchetWriteAuthorized`。协商成功且支持外部选项时，合格的实际比较子集可标为
+`meta.verdictEligible=true`。`fixed`、
+未完成协商、没有完成比较，或仅传给候选的 `--adapter-arg` 造成两侧比较参数不同时，
+不作兼容性结论。
 
-```text
-mode = official 且 adapter.supportsOptions = true
-```
-
-门禁要求此字段为 true；用例完成数量和错误数量另行检查。
+`optionCoverage.compared` 是两档诊断比较的分母；`optionCoverage.rejected` 及
+`byCategory` 单独统计选项拒绝。拒绝仍属于跳过，不是诊断不一致，也不是零诊断。
+逐案记录将拒绝证据写入 `details.json` 的 `optionRejection`，候选诊断 `actual`
+为 `null`，不生成 `comparison`。人类报告显示自报能力版本和逐案拒绝摘要；
+完整请求以 `details.json` 为准。
 
 ### 1.3 选项来源与优先级
 
@@ -354,7 +361,8 @@ T3 未达原因分为 `missing`、`extra`、`diagnostics`、`order`、
 ### 7.2 初始化与更新
 
 - `--ratchet <path>` 需要已有文件；首次可加 `--ratchet-init`。`--ratchet-impl <id>` 按参考配置推导路径并可初始化，二者不能同时使用。
-- 非门禁且可作结论的运行可写入改善，不覆盖已经验证为通过或相同的要求。
+- 有写回授权的非门禁运行可记录改善，不覆盖已经验证为通过或相同的要求。
+- `checker-batch` 可以读取现有 ratchet 并报告对照结果，但不初始化或更新清单（即使给出 `--ratchet-init`）；`--gate` 执行后报告不获授权并返回非零。
 - `--gate` 仅读取已存在的记录；所选保护档必须至少已有一个通过用例。不要把有限的 `--limit` 当作完整回归验证。
 
 ### 7.3 CI 检查
@@ -462,10 +470,37 @@ npm 发布的平台原生程序。该目录的 `bun.lock` 固定 SDK 和各平�
 客户端不会把 `related: []` 改成缺失，也不会给缺字段补空对象。协议自检实现
 `mock-batch` 的 `FAKE_RICH` 覆盖这些字段，实际实现的字段完整度仍需逐项核对。
 
-`hello` 可提供实现名称和版本，不改变 `supportsOptions`。
-收到 `shutdown` 后实现应结束进程。
-`checker-batch` 工厂固定 `supportsOptions=false`，只能配 `--mode fixed`；
-批量客户端出现 crash 或超时后按 SKIP 保留原因，不进入诊断分母。
+#### 批量选项协商
+
+检查器可在启动 `hello` 或首个正常配对的 `result` 中声明能力。字段可写在消息顶层，
+也可放进 `capabilities`。例如：
+
+```jsonl
+{"protocol":1,"type":"hello","supportsOptions":true,"supportedOptions":["strict","target"],"responseFields":["file","line","col","code","severity"],"version":"checker 1.0.0"}
+{"protocol":1,"type":"result","id":"case-1","status":"skip","errorCode":"unsupportedOption","option":{"name":"module","value":"commonjs"},"message":"module is not supported"}
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `supportsOptions` | 是否接受逐案编译选项。`false` 时 `supportedOptions` 必须为空。 |
+| `supportedOptions` | 支持的规范选项名，不带 `--`。空数组表示不支持任何显式选项，不是通配。 |
+| `responseFields` | 检查器声明会返回的字段；比较只看实际响应。接受逐案选项的检查器须为每条诊断提供 `file`、`line`、`col`、`code` 和 `severity`。 |
+| `version` | 能力声明的自报版本，不替代可执行文件指纹。 |
+
+客户端不发探测消息。首个配对响应或超时之后不再处理 `hello`；后续响应可省略能力，
+重复声明须与会话一致。没有声明则保持旧协议行为。请求沿用 `options` 数组和
+`args` 字符串数组；检查器要让这些设置仅影响本次请求。`args` 使用 `--name value`
+形式；布尔选项可单独传 `--name`，也可显式传 `true` 或 `false`。接收方应按参数顺序
+应用覆盖，并拒绝 `options` 与最终 `args` 对同一选项给出不同值的请求。
+
+不支持的选项或值用 `skip` 或 `error` 返回，并给出拒绝原因。不支持选项的错误码为
+`unsupportedOption` 或 `unsupported-option`；不支持取值的错误码为 `unsupportedValue`、
+`unsupported-value` 或 `unsupportedOptionValue`。推荐用 `option` 给出选项名及取值；未提供时，
+客户端保留原始请求，不从自由文本猜测选项名或值。客户端会复核首案，之后可提前拒绝
+未声明的选项，不会裁剪选项后重跑。拒绝原因及原请求记录在 `details.json`，不计入诊断比较分母。
+
+收到 `shutdown` 后检查器应结束进程。`checker-batch` 不使用 `TSC_COMPA_ADAPTER_ARGS`；
+应通过 `--adapter-arg` 提供候选额外参数（两侧参数不同时只作对照实验）。
 
 `bun-check` 收到 `declaration=true`、`emitDeclarationOnly=true` 或 `composite=true` 时，
 将该配置标为跳过；它不提供声明生成阶段的诊断。

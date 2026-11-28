@@ -131,7 +131,10 @@ bun src/run.ts --baseline 6.0.3 --corpus /path/to/strada/tests/cases \
 - 行列转 0-based，宽度取 `end - start`；
 - 超时（30s）记为 skip，异常退出/非 JSON 输出记为 crash，不静默通过。
 
-适配器不支持外部编译选项（`supportsOptions=false`），因此默认用 `--mode fixed`（固定 strict+esnext 设置）运行；`official` 模式会打印警告并标 `verdictEligible=false`。
+`checker-cli` 使用固定编译选项，适合用 `--mode fixed`（固定 strict+esnext 设置）验证；
+`official` 模式会打印警告并标 `verdictEligible=false`。同一个检查器若实现了
+[批量选项协商](REFERENCE.md#82-ndjson-消息)，可改用 `checker-batch` 在 `official` 模式
+采集已比较配置的兼容性结果。
 
 ## 当前限制
 

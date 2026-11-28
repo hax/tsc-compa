@@ -43,6 +43,7 @@ import {
   type ReferenceRun,
 } from "./perf.ts";
 import type { Adapter, CaseFile, CaseOutcome } from "./types.ts";
+import { finalizeOptionAssessment, verdictBasisText } from "./verdict.ts";
 
 const DEFAULT_BASE_ARGS = ["--noEmit", "--ignoreConfig", "--pretty", "false"];
 
@@ -360,6 +361,7 @@ async function runPerfAppendix(opts: {
   tscBin: string;
   perfBaseArgs: string[];
   perfCandidateBaseArgs: string[];
+  candidateEnvArgs: string[];
   implWalls: Map<string, number>;
   implCheckMs: Map<string, number>;
   reference: Map<string, ReferenceRun>;
@@ -368,9 +370,9 @@ async function runPerfAppendix(opts: {
   records: CaseRecord[];
   failed: number;
 }): Promise<ReturnType<typeof buildPerfReport>> {
-  const { adapter, args, tscBin, perfBaseArgs, perfCandidateBaseArgs, implWalls, implCheckMs, reference, meta, order, records, failed } = opts;
+  const { adapter, args, tscBin, perfBaseArgs, perfCandidateBaseArgs, candidateEnvArgs, implWalls, implCheckMs, reference, meta, order, records, failed } = opts;
   const warnings: string[] = [];
-  if (args.optionStrategy !== "aligned" || args.adapterArgsExtra.length > 0 || process.env.TSC_COMPA_ADAPTER_ARGS?.trim()) {
+  if (args.optionStrategy !== "aligned" || args.adapterArgsExtra.length > 0 || candidateEnvArgs.length > 0) {
     warnings.push("参考和候选的默认设置或附加参数可能不同；请结合运行配置解读性能比值");
   }
   if (args.expectationSource === "ts7-api") warnings.push("诊断参考为 TS7 API，性能参考仍为逐案 tsc CLI");
@@ -501,7 +503,7 @@ async function main(): Promise<void> {
   if (args.mode === "fixed" && adapter.fixedOptions === undefined) {
     throw new Error(`适配器 ${adapter.name} 没有声明 fixedOptions，不能用 --mode fixed`);
   }
-  if (args.mode === "official" && !adapter.supportsOptions) {
+  if (args.mode === "official" && adapter.name !== "checker-batch" && !adapter.supportsOptions) {
     console.warn(
       `警告：适配器 ${adapter.name} 不接受外部编译选项，official 模式下 case 指令会被实现忽略；本次结果不能作为兼容性结论。`,
     );
@@ -511,7 +513,10 @@ async function main(): Promise<void> {
   const ids = exact?.map((target) => target.source) ?? loadManifest(casesPath).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
   const parsedInputs = createHash("sha256");
   const officialInputs = createHash("sha256");
-  const candidateEnvArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter(Boolean);
+  const requestedCandidateEnvArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter(Boolean);
+  // checker-batch consumes the per-case NDJSON args, not this CLI env override.
+  const candidateEnvArgsIgnored = adapter.name === "checker-batch" && requestedCandidateEnvArgs.length > 0;
+  const candidateEnvArgs = candidateEnvArgsIgnored ? [] : requestedCandidateEnvArgs;
   const adapterTarget = (args.adapter.includes(":") ? args.adapter.slice(args.adapter.indexOf(":") + 1) : ({
     "tsc-cli": process.env.TSC_COMPA_ADAPTER_TSC ?? process.env.TSC_BIN,
     "bun-check": process.env.BUN_CHECK_BIN,
@@ -581,6 +586,9 @@ async function main(): Promise<void> {
   const executionFailures: NonNullable<RunMeta["executionFailures"]> = [];
   const candidateProcessFailures = new Map<string, NonNullable<CaseOutcome["processFailure"]>>();
   let optionDirectiveIgnored = 0;
+  let compared = 0;
+  let negotiatedComparisons = 0;
+  let candidateOverrideComparisons = 0;
   let excludedStatic = 0;
   let excludedRuntime = 0;
   // 性能附录的数据在正常兼容跑里免费收集：实现每案 wall + 参考 tsc 需要的输入。
@@ -669,6 +677,14 @@ async function main(): Promise<void> {
     const implStarted = performance.now();
     const outcome = await adapter.check({ id, files: parsed.files, options, args: adapterArgs });
     const implWallMs = performance.now() - implStarted;
+    const { optionRejection } = outcome;
+    if (outcome.status === "skip" && optionRejection !== undefined) {
+      records.push({ ...skipRecord(id, `选项拒绝：${optionRejection.kind}`, tags),
+        optionRejection: structuredClone(optionRejection), expected: expectation.diagnostics, expectedRawOutput: expectation.rawOutput,
+        expectedOutput: expectation.fullText ?? null, expectedExitCode: expectation.exitCode ?? null,
+        options, expectedArgs: expectationArgs, actualArgs: adapterArgs });
+      continue;
+    }
     if (args.perfRatio && outcome.status === "ok") {
       perfImplWalls.set(id, implWallMs);
       if (typeof outcome.checkMs === "number") perfImplChecks.set(id, outcome.checkMs);
@@ -710,6 +726,23 @@ async function main(): Promise<void> {
       );
     }
     records.push(record);
+    compared++;
+    if (adapter.optionNegotiation === "negotiated" && adapter.supportsOptions) {
+      negotiatedComparisons++;
+      // Do not infer option equivalence from mismatched argument vectors. The
+      // historical defaults/aligned policy still applies in the absence of an
+      // explicit candidate-only override, and static adapters are unchanged.
+      if (args.adapterArgsExtra.length > 0 &&
+          (adapterArgs.length !== expectationArgs.length || adapterArgs.some((arg, i) => arg !== expectationArgs[i]))) {
+        candidateOverrideComparisons++;
+      }
+    }
+  }
+  // Performance probes are not suite configurations and cannot establish their
+  // option coverage or retroactively upgrade their eligibility.
+  const { policy, assessment } = finalizeOptionAssessment(args.mode, adapter, { compared, negotiatedComparisons, candidateOverrideComparisons });
+  if (args.mode === "official" && assessment?.negotiation === "legacy") {
+    console.warn(`警告：适配器 ${adapter.name} 不接受外部编译选项，official 模式下 case 指令会被实现忽略；本次结果不能作为兼容性结论。`);
   }
   let perf: ReturnType<typeof buildPerfReport> | undefined;
   if (args.perfRatio) {
@@ -719,6 +752,7 @@ async function main(): Promise<void> {
       tscBin,
       perfBaseArgs,
       perfCandidateBaseArgs: candidateBaseArgs,
+      candidateEnvArgs,
       implWalls: perfImplWalls,
       implCheckMs: perfImplChecks,
       reference: perfReference,
@@ -734,7 +768,8 @@ async function main(): Promise<void> {
     corpus: args.corpus,
     adapter: adapter.name,
     mode: args.mode,
-    verdictEligible: args.mode === "official" && adapter.supportsOptions,
+    verdictEligible: policy.comparedSubsetEligible,
+    ...(assessment === undefined ? {} : { optionAssessment: assessment }),
     tscVersion,
     tscBin,
     baseline: args.baseline,
@@ -750,7 +785,8 @@ async function main(): Promise<void> {
       officialInputsSha256: args.expectationSource === "official-baseline" ? officialInputs.digest("hex") : undefined,
     },
     options: { strategy: args.optionStrategy, referenceBaseArgs: baseArgs, sharedArgs: args.baseArgsExtra, candidateArgs: candidateBaseArgs,
-      candidateEnvArgs, onlyClasses: args.onlyClasses, excludeClasses: args.excludeClasses },
+      candidateEnvArgs, ...(candidateEnvArgsIgnored && { candidateEnvArgsIgnored: true }),
+      onlyClasses: args.onlyClasses, excludeClasses: args.excludeClasses },
     tools: { runner: `Bun ${Bun.version} (${Bun.revision})`, platform: `${process.platform}/${process.arch}`, reference: referenceIdentity, candidate: candidateIdentity === null ? null : { ...candidateIdentity, ...bunIdentity } },
   };
   const metrics = summarize(records, meta) as Metrics & { perf?: ReturnType<typeof buildPerfReport> };
@@ -773,7 +809,7 @@ async function main(): Promise<void> {
     ratchetGateInput = { path: ratchetPath, registered: previous.size, protected: protectedCountsOf(previous), regressions: check.regressions };
     let wrote = false;
     // 门禁模式只读；只升不降的记录保留旧证据，完整本次结果在 details.json。
-    if ((check.changed || !existed) && !args.gate && meta.verdictEligible) {
+    if ((check.changed || !existed) && !args.gate && policy.ratchetWriteAuthorized) {
       mkdirSync(dirname(ratchetPath), { recursive: true });
       writeRatchetState(ratchetPath, check.next);
       wrote = true;
@@ -781,7 +817,7 @@ async function main(): Promise<void> {
     meta.ratchet = {
       path: ratchetPath,
       impl: args.ratchetImpl,
-      initialized: !existed,
+      initialized: !existed && (assessment === undefined || wrote),
       profile: args.gateProfile,
       regressions: regressionDetails.length,
       blockingRegressions,
@@ -790,7 +826,8 @@ async function main(): Promise<void> {
       wrote,
     };
     console.log(`ratchet：${regressionDetails.length} 项回归（${blockingRegressions} 项阻断），${check.improvements.length} 项改善` +
-      (wrote ? `；已写入 ${ratchetPath}` : args.gate ? "；门禁模式不写回清单" : "；清单未变"));
+      (wrote ? `；已写入 ${ratchetPath}` : args.gate ? "；门禁模式不写回清单" :
+        assessment !== undefined && !policy.ratchetWriteAuthorized ? "；批量模式不授权写回清单" : "；清单未变"));
     for (const r of regressionDetails.slice(0, 20)) {
       console.log(`  [${r.blocking ? "阻断" : "报告"}] ${r.id}：${r.reason}`);
     }
@@ -801,7 +838,8 @@ async function main(): Promise<void> {
       totals: metrics.totals,
       comparison: metrics.comparison,
       executionFailures,
-      verdictEligible: meta.verdictEligible,
+      verdictEligible: policy.gateAuthorized,
+      ...(assessment !== undefined && { verdictRefusal: `${verdictBasisText(assessment.basis)}；批量协商不授权门禁` }),
       mode: meta.mode,
       ratchet: ratchetGateInput,
       thresholds: gateThresholds,
@@ -826,12 +864,13 @@ async function main(): Promise<void> {
     configuration: namedVariants.get(r.id)?.configName,
     status: r.status,
     skipReason: r.skipReason,
+    optionRejection: r.optionRejection,
     executionFailure: failuresById.has(r.id) ? {
       ...failuresById.get(r.id)!, process: candidateProcessFailures.get(r.id),
     } : undefined,
     classes: r.classes,
     expected: r.expected,
-    actual: r.actual,
+    actual: r.optionRejection === undefined ? r.actual : null,
     comparison: r.comparison,
     expectedExitCode: r.expectedExitCode,
     actualExitCode: r.actualExitCode,
