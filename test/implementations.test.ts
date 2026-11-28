@@ -16,12 +16,13 @@ interface Registry {
       acquisition: {
         npm?: { package: string; version: string; bin: string };
         cargo?: { repo: string; command: string; bin: string };
-        release?: { repo: string; version: string; tag: string; url: string; bin: string; fallbackBin?: string };
+        release?: { repo: string; version: string; tag: string; format?: "zip" | "binary"; url: string; bin: string; fallbackBin?: string };
         localEnv?: string;
       };
       cliArgs?: string[];
       baselines: string[];
       phaseMetrics?: { flag: string; checkField: string };
+      notes?: string;
     }
   >;
 }
@@ -46,9 +47,9 @@ describe("config/implementations.json", () => {
     expect(names.length).toBeGreaterThan(0);
     for (const [name, impl] of Object.entries(registry.implementations)) {
       expect(name.length).toBeGreaterThan(0);
-      // TSC 兼容实现通过公开 CLI 驱动；Bun 内置检查器使用专用 bun-check adapter。
-      expect(["tsc-cli", "bun-check"]).toContain(impl.adapter);
-      if (impl.adapter === "bun-check") expect(impl.kind).toBe("native");
+      // TSC 兼容实现通过公开 CLI 驱动；Bun 内置检查器与批量协议实现使用专用 adapter。
+      expect(["tsc-cli", "bun-check", "checker-batch"]).toContain(impl.adapter);
+      if (impl.adapter === "bun-check" || impl.adapter === "checker-batch") expect(impl.kind).toBe("native");
       else expect(impl.kind ?? "tsc-compatible").toBe("tsc-compatible");
       const { npm, cargo, release, localEnv } = impl.acquisition;
       expect(npm !== undefined || cargo !== undefined || release !== undefined || localEnv !== undefined).toBe(true);
@@ -63,11 +64,16 @@ describe("config/implementations.json", () => {
         expect(cargo.bin.length).toBeGreaterThan(0);
       }
       if (release !== undefined) {
-        expect(release.repo).toBe("oven-sh/bun");
+        expect(release.repo.length).toBeGreaterThan(0);
         expect(release.version.length).toBeGreaterThan(0);
         expect(release.tag).toContain(release.version);
         expect(release.url).toContain("{platform}");
         expect(release.bin).toContain("{platform}");
+        expect(["zip", "binary", undefined]).toContain(release.format);
+        // Bun 的 release 资产来自上游仓库；自托管实现可指向本仓（资产由调用方
+        // 发布到本仓 Release），此时必须是单文件可执行资产。
+        if (release.repo === "oven-sh/bun") expect(release.format ?? "zip").toBe("zip");
+        else expect(release.format).toBe("binary");
       }
       expect(impl.baselines.length).toBeGreaterThan(0);
       for (const id of impl.baselines) expect(ids.has(id)).toBe(true);
@@ -95,6 +101,25 @@ describe("config/implementations.json", () => {
     expect(impl!.acquisition.release?.tag).toBe("bun-v1.4.5");
     expect(impl!.acquisition.localEnv).toBe("BUN_CHECK_BIN");
     expect(impl!.phaseMetrics?.flag).toBe("--timing");
+  });
+
+  test("maat 登记为 checker-batch 原生实现，release 指向本仓", () => {
+    const impl = loadRegistry().implementations["maat"];
+    expect(impl).toBeDefined();
+    expect(impl!.adapter).toBe("checker-batch");
+    expect(impl!.kind).toBe("native");
+    expect(impl!.tsVersion).toBe("7.1.0-beta");
+    expect(impl!.acquisition.release).toMatchObject({
+      repo: "hax/tsc-compa",
+      version: "dac7083",
+      tag: "binary-maat-dac7083-linux-x64",
+      format: "binary",
+    });
+    expect(impl!.acquisition.release!.url).toContain("binary-maat-dac7083-{platform}");
+    expect(impl!.acquisition.release!.bin).toBe("maat-dac7083-{platform}");
+    expect(impl!.acquisition.localEnv).toBe("MAAT_BIN");
+    expect(impl!.baselines).toEqual(["7.1.0-beta-official", "7.1.0-beta"]);
+    expect(impl!.notes).toContain("supportsOptions");
   });
 
   test("tsrs 登记了 npm 获取方式与相位字段", () => {

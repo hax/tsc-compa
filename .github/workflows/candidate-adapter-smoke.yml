@@ -103,11 +103,17 @@ jobs:
           set -euo pipefail
           BIN=$(bun scripts/install-impl.ts --name "$IMPL" --source "$SOURCE" --dest .tools | tail -n 1)
           test -x "$BIN"
+          if [ "$ADAPTER" = "checker-batch" ]; then
+            echo "CHECKER_BATCH_BIN=$BIN" >> "$GITHUB_ENV"
+            ADAPTER_SPEC="$ADAPTER"
+          else
+            ADAPTER_SPEC="$ADAPTER:$BIN"
+          fi
           bun src/run.ts \
             --baseline 7.1.0-beta-official \
             --corpus reference/corpus/tsc/testdata/tests/cases \
             --cases "$CASES" --expectation-source official-baseline \
-            --mode official --option-strategy aligned --adapter "$ADAPTER:$BIN" \
+            --mode official --option-strategy aligned --adapter "$ADAPTER_SPEC" \
             --out out --report-out out --report-impl-name "$IMPL"
           # Compare diagnostics for the report; do not make agreement a condition of adapter health.
           jq -e --argjson selected "$(jq length "$CASES")" '

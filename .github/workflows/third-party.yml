@@ -125,6 +125,9 @@ jobs:
           BIN=$(bun scripts/install-impl.ts --name "$IN_IMPL" --dest .tools | tail -1)
           echo "bin=$BIN" >> "$GITHUB_OUTPUT"
           "$BIN" --version || true
+          if [ "${{ steps.plan.outputs.adapter }}" = "checker-batch" ]; then
+            echo "CHECKER_BATCH_BIN=$BIN" >> "$GITHUB_ENV"
+          fi
           if [ "${{ steps.plan.outputs.adapter }}" = "bun-check" ]; then
             echo "BUN_CHECK_BIN=$BIN" >> "$GITHUB_ENV"
             "$BIN" --revision
@@ -149,10 +152,13 @@ jobs:
           else
             echo "模式：评估报告，不写 tracked 清单"
           fi
+          ADAPTER="${{ steps.plan.outputs.adapter }}"
+          ADAPTER_SPEC="$ADAPTER"
+          if [ "$ADAPTER" != "checker-batch" ]; then ADAPTER_SPEC="$ADAPTER:${{ steps.impl.outputs.bin }}"; fi
           bun src/run.ts \
             --baseline "$IN_BASELINE" \
             --corpus "$CORPUS" \
-            --adapter "${{ steps.plan.outputs.adapter }}:${{ steps.impl.outputs.bin }}" \
+            --adapter "$ADAPTER_SPEC" \
             --mode official \
             --expectation-source "$EXPECT" \
             --option-strategy aligned \
