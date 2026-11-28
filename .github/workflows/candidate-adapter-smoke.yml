@@ -104,7 +104,8 @@ jobs:
           BIN=$(bun scripts/install-impl.ts --name "$IMPL" --source "$SOURCE" --dest .tools | tail -n 1)
           test -x "$BIN"
           if [ "$ADAPTER" = "checker-batch" ]; then
-            echo "CHECKER_BATCH_BIN=$BIN" >> "$GITHUB_ENV"
+            # 同一 step 内必须 export；写入 GITHUB_ENV 只对后续 step 生效。
+            export CHECKER_BATCH_BIN="$BIN"
             ADAPTER_SPEC="$ADAPTER"
           else
             ADAPTER_SPEC="$ADAPTER:$BIN"
