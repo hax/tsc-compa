@@ -27,7 +27,7 @@ import {
   type Verdict,
 } from "./comparison.ts";
 import type { GateReport } from "./gate.ts";
-import type { CompilerOption, Diagnostic, OptionNegotiation } from "./types.ts";
+import type { CompilerOption, Diagnostic, OptionNegotiation, OptionRejection } from "./types.ts";
 import { VERDICT_BASIS_TEXT, type VerdictBasis } from "./verdict.ts";
 
 export const REPORT_MD_FILENAME = "report.md";
@@ -125,6 +125,7 @@ export interface CaseDetail {
   id: string;
   status: "ran" | "skip";
   skipReason: string | null;
+  optionRejection?: Pick<OptionRejection, "kind" | "source" | "reason" | "option">;
   className: string[];
   /** 兼容旧 details 的计数；新 details 的 expected/actual 是完整诊断数组。 */
   expected: number;
@@ -360,6 +361,7 @@ export interface RunProvenance {
   sharedArgs: string[];
   candidateArgs: string[];
   candidateEnvArgs: string[];
+  candidateEnvArgsIgnored?: true;
   filters: string[];
   runner: string | null;
   platform: string | null;
@@ -428,7 +430,7 @@ export interface ReportModel {
   baseline: string | null;
   mode: string;
   verdictEligible: boolean;
-  optionAssessment?: { negotiation: OptionNegotiation; basis: VerdictBasis; comparedSubsetEligible: boolean };
+  optionAssessment?: { negotiation: OptionNegotiation; basis: VerdictBasis; comparedSubsetEligible: boolean; declarationVersion: string | null };
   optionCoverage?: NonNullable<Metrics["optionCoverage"]>;
   /** 适配器原始标识（可能含 `:<bin>`）。 */
   adapter: string | null;
@@ -512,10 +514,12 @@ function normalizeDetails(v: unknown, source: string | null): CaseDetail[] {
     const status = item.status === "skip" ? "skip" : "ran";
     const expectedDiagnostics = Array.isArray(item.expected) ? diagnosticsOf(item.expected) : null;
     const actualDiagnostics = Array.isArray(item.actual) ? diagnosticsOf(item.actual) : null;
+    const optionRejection = status === "skip" ? normalizeOptionRejection(item.optionRejection) : undefined;
     details.push({
       id,
       status,
       skipReason: text(item.skipReason),
+      ...(optionRejection !== undefined && { optionRejection }),
       className: strList(item.classes),
       expected: expectedDiagnostics?.length ?? int(item.expected),
       actual: actualDiagnostics?.length ?? int(item.actual),
@@ -537,6 +541,15 @@ function normalizeDetails(v: unknown, source: string | null): CaseDetail[] {
     });
   }
   return details;
+}
+
+function normalizeOptionRejection(value: unknown): CaseDetail["optionRejection"] {
+  const { kind, source, reason, option } = obj(value);
+  if (kind !== "unsupported-option" && kind !== "unsupported-value" && kind !== "unrecognized-argument") return undefined;
+  if (source !== "preflight" && source !== "worker" && source !== "unchecked-result") return undefined;
+  if (typeof reason !== "string") return undefined;
+  const [normalizedOption] = optionsOf([option]);
+  return { kind, source, reason, ...(normalizedOption !== undefined && { option: normalizedOption }) };
 }
 
 function diagnosticsOf(v: unknown[]): Diagnostic[] {
@@ -791,6 +804,9 @@ function normalizeProvenance(meta: Record<string, unknown>, adapter: string | nu
   const referenceNative = obj(referenceTool.native);
   const candidateNative = obj(candidateTool.native);
   const candidateSdk = obj(candidateTool.sdk);
+  const recordedEnvArgs = strList(optionDef.candidateEnvArgs);
+  // Also correct reports regenerated from older checker-batch run JSON.
+  const envArgsIgnored = adapter === "checker-batch" && (optionDef.candidateEnvArgsIgnored === true || recordedEnvArgs.length > 0);
   const strategy = text(meta.optionPolicy ?? meta.optionStrategy ?? optionDef.strategy ?? provenance.optionPolicy);
   const optionPolicy = strategy === "defaults"
     ? "默认设置（参考与候选各自使用默认值，未显式对齐）"
@@ -818,7 +834,8 @@ function normalizeProvenance(meta: Record<string, unknown>, adapter: string | nu
     referenceBaseArgs: strList(optionDef.referenceBaseArgs),
     sharedArgs: strList(optionDef.sharedArgs),
     candidateArgs: strList(optionDef.candidateArgs),
-    candidateEnvArgs: strList(optionDef.candidateEnvArgs),
+    candidateEnvArgs: envArgsIgnored ? [] : recordedEnvArgs,
+    ...(envArgsIgnored && { candidateEnvArgsIgnored: true }),
     filters: [
       ...strList(optionDef.onlyClasses).map((name) => `只含 ${name}`),
       ...strList(optionDef.excludeClasses).map((name) => `排除 ${name}`),
@@ -982,7 +999,7 @@ function normalizeOptionAssessment(meta: Record<string, unknown>): ReportModel["
   if (negotiation !== "pending" && negotiation !== "legacy" && negotiation !== "negotiated" && negotiation !== "failed") return undefined;
   if (typeof basis !== "string" || !Object.hasOwn(VERDICT_BASIS_TEXT, basis)) return undefined;
   return {
-    negotiation, basis: basis as VerdictBasis,
+    negotiation, basis: basis as VerdictBasis, declarationVersion: text(obj(assessment.capabilities).version),
     comparedSubsetEligible: meta.mode === "official" && negotiation === "negotiated" &&
       basis === "negotiated-compared-subset" && assessment.comparedSubsetEligible === true,
   };
@@ -1595,11 +1612,29 @@ function reportEligibility(model: ReportModel): string {
 
 function optionAssessmentRows(model: ReportModel): [string, string][] {
   const assessment = model.optionAssessment;
-  if (assessment === undefined) return [];
-  return [
-    ["选项协商", `${assessment.negotiation}：${VERDICT_BASIS_TEXT[assessment.basis]}`],
-    ["授权", "选项协商不授权门禁或回归记录写回"],
-  ];
+  const rows: [string, string][] = [];
+  if (assessment !== undefined) {
+    rows.push(["选项协商", `${assessment.negotiation}：${VERDICT_BASIS_TEXT[assessment.basis]}`]);
+    if (assessment.declarationVersion !== null) rows.push(["能力声明版本（自报）", assessment.declarationVersion]);
+    rows.push(["授权", "选项协商不授权门禁或回归记录写回"]);
+  }
+  if (model.provenance.candidateEnvArgsIgnored) rows.push(["候选环境参数", "checker-batch 不使用 TSC_COMPA_ADAPTER_ARGS"]);
+  return rows;
+}
+
+const OPTION_REJECTION_LIMIT = 30;
+const OPTION_REJECTION_COLUMNS = ["配置 ID", "分类", "来源", "选项", "原因"];
+function optionRejectionEvidence(rowCount: number): string {
+  const truncation = rowCount > OPTION_REJECTION_LIMIT ? `报告只列前 ${OPTION_REJECTION_LIMIT} 项。` : "";
+  return `${truncation}完整逐案记录及请求参数见运行输出的 details.json 中的 optionRejection。`;
+}
+
+function optionRejectionRows(model: ReportModel): string[][] {
+  return model.details.flatMap(({ id, optionRejection: rejection }) => rejection === undefined ? [] : [[
+    id, rejection.kind, rejection.source,
+    rejection.option === undefined ? "未提供" : `${rejection.option.name}=${JSON.stringify(rejection.option.value)}`,
+    rejection.reason,
+  ]]);
 }
 
 function renderHeaderMd(model: ReportModel): string[] {
@@ -1609,7 +1644,9 @@ function renderHeaderMd(model: ReportModel): string[] {
   lines.push(`| --- | --- |`);
   lines.push(`| 生成时间 | ${mdCell(model.generatedAt ?? "n/a")} |`);
   lines.push(`| 套件 / 模式 | ${mdCell(model.suite)} / ${mdCell(model.mode)}（${reportEligibility(model)}） |`);
-  for (const [label, value] of optionAssessmentRows(model)) lines.push(`| ${label} | ${mdCell(value)} |`);
+  for (const [label, value] of optionAssessmentRows(model)) {
+    lines.push(`| ${label} | ${label === "能力声明版本（自报）" ? mdCode(value) : mdCell(value)} |`);
+  }
   lines.push(`| 基线 | ${mdCell(model.baseline ?? "n/a")} |`);
   const implBinPart =
     model.implBin !== null && model.implBinSha !== null
@@ -2339,6 +2376,14 @@ export function renderMarkdown(model: ReportModel): string {
     lines.push("", "## 选项拒绝分类", "", "| 分类 | 配置数 |", "| --- | --- |");
     for (const [kind, count] of optionReasons) lines.push(`| ${mdCode(kind)} | ${count} |`);
   }
+  const rejections = optionRejectionRows(model);
+  if (rejections.length > 0) {
+    lines.push("", "| " + OPTION_REJECTION_COLUMNS.join(" | ") + " |", "| --- | --- | --- | --- | --- |");
+    for (const row of rejections.slice(0, OPTION_REJECTION_LIMIT)) lines.push(`| ${row.map(mdCode).join(" | ")} |`);
+  }
+  if ((model.optionCoverage?.rejected ?? 0) > 0 || rejections.length > 0) {
+    lines.push("", optionRejectionEvidence(rejections.length));
+  }
   if (model.skips.length > 0) {
     lines.push("");
     lines.push("## 跳过分类");
@@ -3008,6 +3053,11 @@ export function renderHtml(model: ReportModel): string {
   const optionReasons = model.optionCoverage?.byCategory ?? [];
   if (optionReasons.length > 0) {
     sections.push(`<h2>选项拒绝分类</h2>\n${htmlTable(["分类", "配置数"], optionReasons.map(([kind, count]) => [kind, String(count)]))}`);
+  }
+  const rejections = optionRejectionRows(model);
+  if (rejections.length > 0) sections.push(htmlTable(OPTION_REJECTION_COLUMNS, rejections.slice(0, OPTION_REJECTION_LIMIT)));
+  if ((model.optionCoverage?.rejected ?? 0) > 0 || rejections.length > 0) {
+    sections.push(`<p class="note">${escapeHtml(optionRejectionEvidence(rejections.length))}</p>`);
   }
   if (model.skips.length > 0) {
     sections.push(`<h2>跳过分类</h2>\n${htmlTable(["原因", "例数"], model.skips.map(([r, n]) => [r, String(n)]))}`);

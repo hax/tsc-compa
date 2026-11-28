@@ -15,7 +15,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function fixture(worker: string) {
+function fixture(worker: string, env: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "tsc-batch-options-"));
   dirs.push(dir);
   const corpus = join(dir, "tests/cases");
@@ -41,7 +41,7 @@ function fixture(worker: string) {
       "--mode", "official", "--adapter", "checker-batch", "--expectation-source", "official-baseline", "--tsc", tsVersion,
       "--out", out, "--report-out", out, ...extra], {
       cwd: root,
-      env: { PATH: process.env.PATH, CHECKER_BATCH_BIN: bin },
+      env: { PATH: process.env.PATH, CHECKER_BATCH_BIN: bin, ...env },
       encoding: "utf8", timeout: 15_000,
     });
     if (!existsSync(join(out, "metrics.json"))) throw new Error(result.error?.message ?? result.stderr ?? result.stdout);
@@ -205,6 +205,14 @@ test("Euler's first-result worker: repeatable official subset, fixed reason, and
       args: ["--module", "esnext"], options: [{ name: "module", value: "esnext" }],
     } });
   expect(run.markdown).toContain("仅已比较子集可作本地兼容性证据");
+  for (const report of [run.markdown, run.html]) {
+    expect(report).toContain("能力声明版本（自报）");
+    expect(report).toContain(eulerCapabilities.version);
+    expect(report).toContain("compiler/rejected.ts");
+    expect(report).toContain("preflight");
+    expect(report).toContain("未声明支持编译选项 module");
+    expect(report).toContain("details.json");
+  }
   expect(existsSync(f.ratchet)).toBe(false);
   const repeat = f.run("--ratchet", f.ratchet, "--ratchet-init");
   const withoutTime = (m: Metrics) => ({ ...m, meta: { ...m.meta, generatedAt: undefined } });
@@ -221,12 +229,18 @@ test("Euler's first-result worker: repeatable official subset, fixed reason, and
   expect(fixed.markdown).toContain("fixed 模式只验证调用流水线");
   expect(fixed.details[0]?.options).toContainEqual({ name: "strict", value: true });
 
-  const gate = f.run("--gate");
+  // Existing ratchet can report a comparison regression, but cannot be updated.
+  const original = "# tier ratchet\ncompiler/rejected.ts\tfull\n";
+  writeFileSync(f.ratchet, original);
+  const readOnly = f.run("--ratchet", f.ratchet);
+  expect(readOnly.status).toBe(0);
+  expect(readOnly.metrics.meta.ratchet).toMatchObject({ wrote: false, regressions: 1 });
+  const gate = f.run("--gate", "--ratchet", f.ratchet);
   expect(gate.status).toBe(1);
   expect(gate.metrics.meta.verdictEligible).toBe(true);
   expect(gate.metrics.meta.gate?.checks).toContainEqual({ name: "口径", ok: false,
     detail: expect.stringContaining("不授权门禁") });
-  expect(existsSync(f.ratchet)).toBe(false);
+  expect(readFileSync(f.ratchet, "utf8")).toBe(original);
 });
 
 test("negotiated non-support, candidate-only overrides, and no compared cases cannot qualify", () => {
@@ -247,4 +261,29 @@ test("negotiated non-support, candidate-only overrides, and no compared cases ca
   expect(rejected.metrics.meta.optionAssessment?.basis).toBe("negotiated-no-comparisons");
   expect(rejected.metrics.optionCoverage).toMatchObject({ compared: 0, rejected: 1 });
   expect(rejected.details[0]).toMatchObject({ actual: null, optionRejection: { source: "unchecked-result" } });
+});
+
+
+test("checker-batch omits ignored environment overrides from effective options and human reports", () => {
+  const ignored = "--target never-forward-this";
+  const f = fixture(worker("", `
+    if (request.args.includes("never-forward-this") || process.argv.includes("never-forward-this")) {
+      throw new Error("unexpected environment override in candidate arguments");
+    }
+    ${lazyDeclaration}
+  `), { TSC_COMPA_ADAPTER_ARGS: ignored });
+  const run = f.run();
+  expect(run.status).toBe(0);
+  expect(run.metrics.meta.verdictEligible).toBe(true);
+  expect(run.metrics.meta.options).toMatchObject({ candidateEnvArgs: [], candidateEnvArgsIgnored: true });
+  expect(run.details[0]?.actualArgs).toEqual(["--strict", "false"]);
+  for (const report of [run.markdown, run.html]) {
+    expect(report).toContain("checker-batch 不使用 TSC_COMPA_ADAPTER_ARGS");
+    expect(report).not.toContain("never-forward-this");
+  }
+  // A report regenerated from the formerly mislabelled raw metrics is corrected too.
+  const oldOptions = { ...run.metrics.meta.options, candidateEnvArgs: ignored.split(" "), candidateEnvArgsIgnored: undefined };
+  const oldReport = generateReport({ metrics: { ...run.metrics, meta: { ...run.metrics.meta, options: oldOptions } }, details: run.details });
+  expect(oldReport.html).toContain("checker-batch 不使用 TSC_COMPA_ADAPTER_ARGS");
+  expect(oldReport.html).not.toContain("never-forward-this");
 });

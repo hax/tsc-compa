@@ -361,6 +361,7 @@ async function runPerfAppendix(opts: {
   tscBin: string;
   perfBaseArgs: string[];
   perfCandidateBaseArgs: string[];
+  candidateEnvArgs: string[];
   implWalls: Map<string, number>;
   implCheckMs: Map<string, number>;
   reference: Map<string, ReferenceRun>;
@@ -369,9 +370,9 @@ async function runPerfAppendix(opts: {
   records: CaseRecord[];
   failed: number;
 }): Promise<ReturnType<typeof buildPerfReport>> {
-  const { adapter, args, tscBin, perfBaseArgs, perfCandidateBaseArgs, implWalls, implCheckMs, reference, meta, order, records, failed } = opts;
+  const { adapter, args, tscBin, perfBaseArgs, perfCandidateBaseArgs, candidateEnvArgs, implWalls, implCheckMs, reference, meta, order, records, failed } = opts;
   const warnings: string[] = [];
-  if (args.optionStrategy !== "aligned" || args.adapterArgsExtra.length > 0 || process.env.TSC_COMPA_ADAPTER_ARGS?.trim()) {
+  if (args.optionStrategy !== "aligned" || args.adapterArgsExtra.length > 0 || candidateEnvArgs.length > 0) {
     warnings.push("参考和候选的默认设置或附加参数可能不同；请结合运行配置解读性能比值");
   }
   if (args.expectationSource === "ts7-api") warnings.push("诊断参考为 TS7 API，性能参考仍为逐案 tsc CLI");
@@ -512,7 +513,10 @@ async function main(): Promise<void> {
   const ids = exact?.map((target) => target.source) ?? loadManifest(casesPath).slice(0, args.limit ?? Number.POSITIVE_INFINITY);
   const parsedInputs = createHash("sha256");
   const officialInputs = createHash("sha256");
-  const candidateEnvArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter(Boolean);
+  const requestedCandidateEnvArgs = (process.env.TSC_COMPA_ADAPTER_ARGS ?? "").split(/\s+/).filter(Boolean);
+  // checker-batch consumes the per-case NDJSON args, not this CLI env override.
+  const candidateEnvArgsIgnored = adapter.name === "checker-batch" && requestedCandidateEnvArgs.length > 0;
+  const candidateEnvArgs = candidateEnvArgsIgnored ? [] : requestedCandidateEnvArgs;
   const adapterTarget = (args.adapter.includes(":") ? args.adapter.slice(args.adapter.indexOf(":") + 1) : ({
     "tsc-cli": process.env.TSC_COMPA_ADAPTER_TSC ?? process.env.TSC_BIN,
     "bun-check": process.env.BUN_CHECK_BIN,
@@ -748,6 +752,7 @@ async function main(): Promise<void> {
       tscBin,
       perfBaseArgs,
       perfCandidateBaseArgs: candidateBaseArgs,
+      candidateEnvArgs,
       implWalls: perfImplWalls,
       implCheckMs: perfImplChecks,
       reference: perfReference,
@@ -780,7 +785,8 @@ async function main(): Promise<void> {
       officialInputsSha256: args.expectationSource === "official-baseline" ? officialInputs.digest("hex") : undefined,
     },
     options: { strategy: args.optionStrategy, referenceBaseArgs: baseArgs, sharedArgs: args.baseArgsExtra, candidateArgs: candidateBaseArgs,
-      candidateEnvArgs, onlyClasses: args.onlyClasses, excludeClasses: args.excludeClasses },
+      candidateEnvArgs, ...(candidateEnvArgsIgnored && { candidateEnvArgsIgnored: true }),
+      onlyClasses: args.onlyClasses, excludeClasses: args.excludeClasses },
     tools: { runner: `Bun ${Bun.version} (${Bun.revision})`, platform: `${process.platform}/${process.arch}`, reference: referenceIdentity, candidate: candidateIdentity === null ? null : { ...candidateIdentity, ...bunIdentity } },
   };
   const metrics = summarize(records, meta) as Metrics & { perf?: ReturnType<typeof buildPerfReport> };

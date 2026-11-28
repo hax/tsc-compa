@@ -55,14 +55,15 @@ tsc 版本为 `7.1.0-beta`（当前 `7.1.0-beta` 与 `7.1.0-beta-official` 都�
 对 `checker-batch`，只在测试集结束后记录 `meta.optionAssessment`：
 包含协商状态、能力与实现自报标识（如果提供）、判定依据、`gateAuthorized` 和
 `ratchetWriteAuthorized`。协商成功且支持外部选项时，合格的实际比较子集可标为
-`meta.verdictEligible=true`。候选自报不授予门禁或回归记录写回权限。`fixed`、
+`meta.verdictEligible=true`。`fixed`、
 未完成协商、没有完成比较，或仅传给候选的 `--adapter-arg` 造成两侧比较参数不同时，
 不作兼容性结论。
 
 `optionCoverage.compared` 是两档诊断比较的分母；`optionCoverage.rejected` 及
 `byCategory` 单独统计选项拒绝。拒绝仍属于跳过，不是诊断不一致，也不是零诊断。
 逐案记录将拒绝证据写入 `details.json` 的 `optionRejection`，候选诊断 `actual`
-为 `null`，不生成 `comparison`。
+为 `null`，不生成 `comparison`。人类报告显示自报能力版本和逐案拒绝摘要；
+完整请求以 `details.json` 为准。
 
 ### 1.3 选项来源与优先级
 
@@ -360,7 +361,8 @@ T3 未达原因分为 `missing`、`extra`、`diagnostics`、`order`、
 ### 7.2 初始化与更新
 
 - `--ratchet <path>` 需要已有文件；首次可加 `--ratchet-init`。`--ratchet-impl <id>` 按参考配置推导路径并可初始化，二者不能同时使用。
-- 非门禁且可作结论的运行可写入改善，不覆盖已经验证为通过或相同的要求。
+- 有写回授权的非门禁运行可记录改善，不覆盖已经验证为通过或相同的要求。
+- `checker-batch` 可以读取现有 ratchet 并报告对照结果，但不初始化或更新清单（即使给出 `--ratchet-init`）；`--gate` 执行后报告不获授权并返回非零。
 - `--gate` 仅读取已存在的记录；所选保护档必须至少已有一个通过用例。不要把有限的 `--limit` 当作完整回归验证。
 
 ### 7.3 CI 检查
@@ -471,7 +473,8 @@ npm 发布的平台原生程序。该目录的 `bun.lock` 固定 SDK 和各平�
 `hello` 可提供实现自报名称和版本；只有名称和版本时不改变选项支持口径。
 收到 `shutdown` 后实现应结束进程。未协商选项支持的旧 `checker-batch` 仍可运行
 `fixed` 或 `official`，两种模式都不能作为兼容性结论。批量客户端出现 crash 或超时后
-按 SKIP 保留原因，不进入诊断分母。
+按 SKIP 保留原因，不进入诊断分母。`checker-batch` 不使用 `TSC_COMPA_ADAPTER_ARGS`；
+应通过 `--adapter-arg` 提供候选额外参数（两侧参数不同时只作对照实验）。
 
 `bun-check` 收到 `declaration=true`、`emitDeclarationOnly=true` 或 `composite=true` 时，
 将该配置标为跳过；它不提供声明生成阶段的诊断。
