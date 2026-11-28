@@ -50,13 +50,19 @@ tsc 版本为 `7.1.0-beta`（当前 `7.1.0-beta` 与 `7.1.0-beta-official` 都�
 读取官方诊断基线时，模式或额外参数不会重新生成基线内容；
 修改候选选项后，需重新核对保存的参考结果与输入配置是否一致。
 
-字段 `meta.verdictEligible` 表示运行模式和适配器是否满足门禁的比较条件：
+静态适配器保持原规则：`official` 模式且 `adapter.supportsOptions=true` 时，
+`meta.verdictEligible=true`；门禁另行检查完成数量和诊断差异。
+对 `checker-batch`，只在测试集结束后记录 `meta.optionAssessment`：
+包含协商状态、能力与实现自报标识（如果提供）、判定依据、`gateAuthorized` 和
+`ratchetWriteAuthorized`。协商成功且支持外部选项时，合格的实际比较子集可标为
+`meta.verdictEligible=true`。候选自报不授予门禁或回归记录写回权限。`fixed`、
+未完成协商、没有完成比较，或仅传给候选的 `--adapter-arg` 造成两侧比较参数不同时，
+不作兼容性结论。
 
-```text
-mode = official 且 adapter.supportsOptions = true
-```
-
-门禁要求此字段为 true；用例完成数量和错误数量另行检查。
+`optionCoverage.compared` 是两档诊断比较的分母；`optionCoverage.rejected` 及
+`byCategory` 单独统计选项拒绝。拒绝仍属于跳过，不是诊断不一致，也不是零诊断。
+逐案记录将拒绝证据写入 `details.json` 的 `optionRejection`，候选诊断 `actual`
+为 `null`，不生成 `comparison`。
 
 ### 1.3 选项来源与优先级
 
@@ -462,10 +468,10 @@ npm 发布的平台原生程序。该目录的 `bun.lock` 固定 SDK 和各平�
 客户端不会把 `related: []` 改成缺失，也不会给缺字段补空对象。协议自检实现
 `mock-batch` 的 `FAKE_RICH` 覆盖这些字段，实际实现的字段完整度仍需逐项核对。
 
-`hello` 可提供实现名称和版本，不改变 `supportsOptions`。
-收到 `shutdown` 后实现应结束进程。
-`checker-batch` 工厂固定 `supportsOptions=false`，只能配 `--mode fixed`；
-批量客户端出现 crash 或超时后按 SKIP 保留原因，不进入诊断分母。
+`hello` 可提供实现自报名称和版本；只有名称和版本时不改变选项支持口径。
+收到 `shutdown` 后实现应结束进程。未协商选项支持的旧 `checker-batch` 仍可运行
+`fixed` 或 `official`，两种模式都不能作为兼容性结论。批量客户端出现 crash 或超时后
+按 SKIP 保留原因，不进入诊断分母。
 
 `bun-check` 收到 `declaration=true`、`emitDeclarationOnly=true` 或 `composite=true` 时，
 将该配置标为跳过；它不提供声明生成阶段的诊断。

@@ -91,7 +91,9 @@ export interface GateRatchetInput {
 export interface GateInputV2 {
   profile: GateProfile;
   totals: GateTotals;
+  /** Independent runner authorization, not eligibility of a negotiated subset. */
   verdictEligible: boolean;
+  verdictRefusal?: string;
   mode: "official" | "fixed";
   comparison: GateComparisonCounts;
   executionFailures?: readonly { id: string; side: "reference" | "candidate"; status: "crash" | "timeout"; reason: string }[];
@@ -216,7 +218,7 @@ export function evaluateGateV2(input: GateInputV2): GateReport {
     ok: input.verdictEligible,
     detail: input.verdictEligible
       ? `可作兼容性结论（mode=${input.mode}）`
-      : `不可作兼容性结论（mode=${input.mode}，或适配器不接受外部选项），门禁拒绝`,
+      : input.verdictRefusal ?? `不可作兼容性结论（mode=${input.mode}，或适配器不接受外部选项），门禁拒绝`,
   });
 
   checks.push({

@@ -39,8 +39,9 @@ Release asset 可公开下载；Actions 日志、步骤摘要和报告 artifact 
 
 维护者也可在默认分支通过 Actions 手动触发，填写 `release_tag` 和 `asset_name`，
 并可提供 `source_sha`、`sha256`，或选择参考配置、`mode` 和 `limit`。
-手动 `mode=official` 保留，但 `checker-batch` 不支持按用例切换编译选项，
-两种模式的 `meta.verdictEligible` 都为 `false`；任务不启用兼容性门禁。
+`fixed` 模式不产生兼容性结论。手动 `mode=official` 时，旧版 `checker-batch` 若未协商
+选项支持，仍不产生兼容性结论；报告若标明具备资格，也只限实际比较的配置，不含选项拒绝。
+任务不启用兼容性门禁，批量检查器自报的选项能力也不授权回归记录写回。
 旧的手动 `binary_url` 入口不再提供：只检查 HTTPS 无法限定下载来源，也无法保证重定向满足本仓的信任边界。
 
 ## 下载、执行与结果
