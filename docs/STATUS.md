@@ -144,7 +144,7 @@
 | `ts7-api` | API（客户端在 Bun，后端为持久子进程） | 支持 | TS7 async API；可同时作参考与候选 |
 | `bun-check`／`bun-check:<bin>` | 逐案 | 支持 | 为固定版本的 `bun check` 写独立 tsconfig；需要声明生成阶段诊断时显式跳过 |
 | `checker-cli`／`checker-cli:<bin>` | 逐案 | 固定选项 | 检查器 JSON 输出，适合 fixed 模式验证 |
-| `checker-batch` | 批量 | 固定选项 | 同一检查器的 `--batch` NDJSON 模式 |
+| `checker-batch` | 批量 | 按会话协商 | `--batch` NDJSON；已比较配置和选项拒绝分别报告 |
 | `cli:<bin>` | 逐案 | 声明为不支持 | 通用 CLI；不能据此给出 official 模式的合格结论 |
 | `none` | 无实际进程 | 声明为支持 | 不报告诊断，用于测试多报错误／漏报路径 |
 | `mock-batch` | 批量 | 支持 | 批量协议参考实现 |
