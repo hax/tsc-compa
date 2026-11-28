@@ -111,12 +111,12 @@ describe("config/implementations.json", () => {
     expect(impl!.tsVersion).toBe("7.1.0-beta");
     expect(impl!.acquisition.release).toMatchObject({
       repo: "hax/tsc-compa",
-      version: "dac7083",
-      tag: "binary-maat-dac7083-linux-x64",
+      version: "497f09f",
+      tag: "binary-maat-497f09f-linux-x64",
       format: "binary",
     });
-    expect(impl!.acquisition.release!.url).toContain("binary-maat-dac7083-{platform}");
-    expect(impl!.acquisition.release!.bin).toBe("maat-dac7083-{platform}");
+    expect(impl!.acquisition.release!.url).toContain("binary-maat-497f09f-{platform}");
+    expect(impl!.acquisition.release!.bin).toBe("maat-497f09f-{platform}");
     expect(impl!.acquisition.localEnv).toBe("MAAT_BIN");
     expect(impl!.baselines).toEqual(["7.1.0-beta-official", "7.1.0-beta"]);
     expect(impl!.notes).toContain("supportsOptions");
