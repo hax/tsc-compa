@@ -1,11 +1,15 @@
 # 批量选项协商：验收用例
 
 [`batch-options-worker.ts`](batch-options-worker.ts) 是合成 NDJSON 进程，不是 TypeScript 实现。
-[`batch-options-contract.test.ts`](../batch-options-contract.test.ts) 已核对消息、逐案选项切换，以及当前运行器的旧版 `official` / `fixed` 行为。下表的「待接入断言」用于实现协商时接到 `BatchAdapter` 或 `run.ts`；当前测试不把合成进程的输出当成生产端已经执行的校验。
+[`batch-options-contract.test.ts`](../batch-options-contract.test.ts) 已核对消息、逐案选项切换，以及当前运行器的旧版 `official` / `fixed` 行为。下表列出可复用的断言。`BatchAdapter` 已有消费者测试；报告和门禁接入仍是后续运行器验收。
 
-从仓库根目录运行 `bun test ./test/batch-options-contract.test.ts`。适配器测试可用 `process.execPath` 启动 `[workerPath, mode, "--batch"]`，按表依次 `check`；运行器测试可复用临时可执行包装，调用导出的 `runWorker(mode)`。请求继续使用 `options: [{name, value}]` 和 `args: string[]`，用同一进程连续跑同一段源文本。`capabilities`、`errorCode` 和合成错误值表达测试语义，不锁定尚未确认的外部线格式或别名。
+从仓库根目录运行 `bun test ./test/batch-options-contract.test.ts`。适配器测试可用 `process.execPath` 启动 `[workerPath, mode, "--batch"]`，按表依次 `check`；运行器测试可复用临时可执行包装，调用导出的 `runWorker(mode)`。请求继续使用 `options: [{name, value}]` 和 `args: string[]`，用同一进程连续跑同一段源文本。协商使用顶层或嵌套 `capabilities`，能力的 `version` 与可选的 `implementation.version` 分开。
+客户端校验 v1 `args` 中已知、规范拼写的 `--name value` 分离 token，布尔量还接受裸 `--name`；
+不推测短别名、大小写变体、`--name=value`、响应文件或位置参数，也不改写已经发送的参数。
+结构化拒绝只接受 `skip` 或 `error` 搭配 `unsupportedOption` / `unsupported-option` 或 `unsupportedValue` / `unsupported-value`。
+已知选项的字符串值原样交给 checker，不按较旧 TypeScript 的枚举限制。
 
-| 测试模式 | 请求或事件 | 待接入断言 |
+| 测试模式 | 请求或事件 | 验收断言 |
 | --- | --- | --- |
 | `legacy` | 不发 `hello`；正常回答原有 `check` | 不发送新探测帧，不把 `options` 数组换成对象；选项支持未声明，行为不变。 |
 | `hello` | 子进程首次主动声明；同一进程序列 `strict=true → false → true`，`target=es2015 → es2020 → es2015` | 能力冻结；诊断码依次为 `2322 / 无 / 2322`、`2737 / 无 / 2737`，请求之间不继承设置。 |

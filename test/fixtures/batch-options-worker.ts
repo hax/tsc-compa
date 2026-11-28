@@ -11,7 +11,7 @@ export const capabilities = {
   version: "synthetic-1",
 };
 export const rejectionCode = "unsupported-option"; // A fixture token, not a production alias list.
-const modes = ["legacy", "hello", "first-result", "bad-ok", "unmatched", "late", "changed", "unknown-code", "wrong-status"] as const;
+const modes = ["legacy", "hello", "top-hello", "first-result", "bad-ok", "unmatched", "late", "changed", "unknown-code", "wrong-status", "malformed-result", "camel-rejection", "error-alias", "late-declaration"] as const;
 export type WorkerMode = typeof modes[number];
 type Reply = Record<string, unknown>;
 
@@ -33,7 +33,8 @@ function input(value: unknown): asserts value is { protocol: 1; type: "shutdown"
 export function createWorker(mode: WorkerMode) {
   let checks = 0;
   let delayed: Reply | undefined;
-  const startup = mode === "hello" ? [{ protocol: 1, type: "hello", implementation: { name: "synthetic-batch", version: capabilities.version }, capabilities }] : [];
+  const startup = mode === "hello" ? [{ protocol: 1, type: "hello", implementation: { name: "synthetic-batch", version: "display-2" }, capabilities }]
+    : mode === "top-hello" ? [{ protocol: 1, type: "hello", implementation: { name: "synthetic-batch" }, ...capabilities }] : [];
   return {
     startup,
     receive(value: unknown): Reply[] | null {
@@ -51,9 +52,12 @@ export function createWorker(mode: WorkerMode) {
         : name === "target" ? !["es2015", "es2020", "esnext"].includes(String(v)) : true);
       let reply: Reply = { ...base, status: "ok", diagnostics: [] };
       if (mode !== "legacy" && unsupported && mode !== "bad-ok") {
-        reply = { ...reply, status: mode === "wrong-status" ? "ok" : "skip", skipReason: "Synthetic unsupported option",
-          errorCode: mode === "unknown-code" ? "unsupported-option-typo" : rejectionCode,
-          option: { name: unsupported[0], value: unsupported[1] } };
+        reply = { ...reply, status: mode === "wrong-status" ? "ok" : mode === "error-alias" ? "error" : "skip",
+          errorCode: mode === "unknown-code" ? "unsupported-option-typo" : mode === "camel-rejection" ? "unsupportedOption"
+            : mode === "error-alias" ? "unsupported-value" : rejectionCode,
+          ...(mode === "camel-rejection" ? { message: "Requested mode not implemented" } : {
+            skipReason: "Synthetic unsupported option", option: { name: unsupported[0], value: unsupported[1] },
+          }) };
       } else if (!unsupported || mode === "legacy") {
         const strict = mode === "legacy" || effective.get("strict") === true || effective.get("strict") === "true";
         const diagnostics = files.flatMap(file => {
@@ -63,7 +67,9 @@ export function createWorker(mode: WorkerMode) {
         });
         reply.diagnostics = diagnostics;
       }
-      if (first && ["first-result", "bad-ok", "changed", "unknown-code", "wrong-status"].includes(mode)) reply.capabilities = capabilities;
+      if (first && ["first-result", "bad-ok", "changed", "unknown-code", "wrong-status", "malformed-result", "camel-rejection", "error-alias"].includes(mode)) reply.capabilities = capabilities;
+      if (mode === "malformed-result" && first) reply.fullText = 123;
+      if (mode === "late-declaration" && !first) reply.capabilities = capabilities;
       if (mode === "changed" && !first) reply.capabilities = { ...capabilities, supportedOptions: ["strict", "target", "module"] };
       if (mode === "unmatched" && first) return [{ ...reply, id: `${id}:not-pending`, capabilities }, reply];
       // Release the expired response on request 2, not on a wall clock. This
