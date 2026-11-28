@@ -291,6 +291,25 @@ async function withOneReply(reply: Record<string, unknown>, check: (adapter: Bat
   try { await check(adapter); } finally { await adapter.close(); }
 }
 
+test("unsupportedOptionValue preserves strict=false without deriving a structured option from text", async () => {
+  const input = strict("strict-off", false);
+  const reply = { status: "skip", errorCode: "unsupportedOptionValue", capabilities,
+    skipReason: "unsupportedOptionValue: strict=false is not supported", message: "strict=false is not supported" };
+  await withOneReply(reply, async adapter => {
+    const outcome = await adapter.check(input);
+    expect(outcome).toMatchObject({ id: input.id, status: "skip", diagnostics: [], skipReason: reply.skipReason,
+      optionRejection: { source: "worker", kind: "unsupported-value", errorCode: reply.errorCode, reason: reply.skipReason,
+        args: ["--strict", "false"], options: [{ name: "strict", value: false }] } });
+    expect(outcome.optionRejection).not.toHaveProperty("option");
+    expect(adapter.optionNegotiation).toBe("negotiated");
+  });
+  await withOneReply({ ...reply, errorCode: "unsupportedOptionValueTypo" }, async adapter => {
+    const outcome = await adapter.check(input);
+    expect(outcome.status).toBe("crash");
+    expect(outcome.optionRejection).toBeUndefined();
+  });
+});
+
 test("identical reordered declarations are accepted; contradictory top and nested declarations are not", async () => {
   const reordered = { ...capabilities, supportedOptions: [...capabilities.supportedOptions].reverse() };
   await withOneReply({ status: "ok", diagnostics: [], ...capabilities, capabilities: reordered }, async adapter => {

@@ -6,7 +6,7 @@
 从仓库根目录运行 `bun test ./test/batch-options-contract.test.ts`。适配器测试可用 `process.execPath` 启动 `[workerPath, mode, "--batch"]`，按表依次 `check`；运行器测试可复用临时可执行包装，调用导出的 `runWorker(mode)`。请求继续使用 `options: [{name, value}]` 和 `args: string[]`，用同一进程连续跑同一段源文本。协商使用顶层或嵌套 `capabilities`，能力的 `version` 与可选的 `implementation.version` 分开。
 客户端校验 v1 `args` 中已知、规范拼写的 `--name value` 分离 token，布尔量还接受裸 `--name`；
 不推测短别名、大小写变体、`--name=value`、响应文件或位置参数，也不改写已经发送的参数。
-结构化拒绝只接受 `skip` 或 `error` 搭配 `unsupportedOption` / `unsupported-option` 或 `unsupportedValue` / `unsupported-value`。
+结构化拒绝只接受 `skip` 或 `error` 搭配 `unsupportedOption` / `unsupported-option` 或 `unsupportedValue` / `unsupported-value` / `unsupportedOptionValue`。
 已知选项的字符串值原样交给 checker，不按较旧 TypeScript 的枚举限制。
 
 | 测试模式 | 请求或事件 | 验收断言 |

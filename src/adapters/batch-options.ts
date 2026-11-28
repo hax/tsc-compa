@@ -25,7 +25,7 @@ const validName = (name: unknown): name is string => typeof name === "string" &&
 const canonicalName = (name: string) => (flags.get(normalizedName(name))?.name ?? name) === name;
 export const rejectionKind = (code: unknown) => {
   if (code === "unsupportedOption" || code === "unsupported-option") return "unsupported-option";
-  if (code === "unsupportedValue" || code === "unsupported-value") return "unsupported-value";
+  if (code === "unsupportedValue" || code === "unsupported-value" || code === "unsupportedOptionValue") return "unsupported-value";
   return undefined;
 };
 

@@ -493,10 +493,11 @@ npm 发布的平台原生程序。该目录的 `bun.lock` 固定 SDK 和各平�
 形式；布尔选项可单独传 `--name`，也可显式传 `true` 或 `false`。接收方应按参数顺序
 应用覆盖，并拒绝 `options` 与最终 `args` 对同一选项给出不同值的请求。
 
-不支持的选项或值用 `skip` 或 `error` 返回，带 `unsupportedOption` 或
-`unsupportedValue` 错误码（也接受对应的短横线拼写）和原因；推荐用 `option`
-给出选项名及取值。客户端会复核首案，之后可提前记录未声明的选项拒绝；不会裁剪
-选项后重跑。拒绝原因及原请求记录在 `details.json`，不计入诊断比较分母。
+不支持的选项或值用 `skip` 或 `error` 返回，并给出拒绝原因。不支持选项的错误码为
+`unsupportedOption` 或 `unsupported-option`；不支持取值的错误码为 `unsupportedValue`、
+`unsupported-value` 或 `unsupportedOptionValue`。推荐用 `option` 给出选项名及取值；未提供时，
+客户端保留原始请求，不从自由文本猜测选项名或值。客户端会复核首案，之后可提前拒绝
+未声明的选项，不会裁剪选项后重跑。拒绝原因及原请求记录在 `details.json`，不计入诊断比较分母。
 
 收到 `shutdown` 后检查器应结束进程。`checker-batch` 不使用 `TSC_COMPA_ADAPTER_ARGS`；
 应通过 `--adapter-arg` 提供候选额外参数（两侧参数不同时只作对照实验）。
