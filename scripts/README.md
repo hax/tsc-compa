@@ -9,4 +9,6 @@
 - [`detect-changes.ts`](detect-changes.ts) 和 [`merge-reports.ts`](merge-reports.ts) 分别负责门禁的变化检测、报告合并。
 - [`public-evaluation.ts`](public-evaluation.ts) 组织公开评测，[`persist-public-evaluation.sh`](persist-public-evaluation.sh) 保存结果，[`stage-public-reports.ts`](stage-public-reports.ts) 校验并暂存发布数据。[`native-suite.ts`](native-suite.ts) 服务独立的自有检查器入口。
 
+- [`tsc-rs-source-build.ts`](tsc-rs-source-build.ts) 为 [tsc-rs 正式标签](../docs/TSC-RS-SOURCE-BUILD.md) 准备和核验独立构建工件，不接入公开评测。
+
 命令与产物见 [CI 使用说明](../docs/CI.md)。改参数、产物或退出条件时，同时核对[工作流](../.github/workflows/README.md)与[测试](../test/README.md)；生成的报告不提交到本分支。
