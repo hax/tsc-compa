@@ -182,6 +182,25 @@
         "parallelControls": []
       },
       "notes": "目标 TS 7.0.2；构建需 CI=1 与外部 CARGO_TARGET_DIR（仓库默认会把产物写进检出）。"
+    },
+    "maat": {
+      "displayName": "maat (Zig)",
+      "adapter": "checker-batch",
+      "kind": "native",
+      "tsVersion": "7.1.0-beta",
+      "acquisition": {
+        "release": {
+          "repo": "hax/tsc-compa",
+          "version": "497f09f",
+          "tag": "binary-maat-497f09f-linux-x64",
+          "format": "binary",
+          "url": "https://github.com/hax/tsc-compa/releases/download/binary-maat-497f09f-{platform}/maat-497f09f-{platform}",
+          "bin": "maat-497f09f-{platform}"
+        },
+        "localEnv": "MAAT_BIN"
+      },
+      "baselines": ["7.1.0-beta-official", "7.1.0-beta"],
+      "notes": "Zig 原生类型检查器（maat 主线，linux-x64）。能力协商：hello 顶层声明 supportsOptions=true，supportedOptions 为 #33 规范全集（57 项，含 strict/target/module/skipLibCheck 等），supportedOptionValues.strict=[\"true\",\"false\"]、target 14 个取值，responseFields 含 message，version 带源码提交；message 按实现约定在请求要求时回传（#33 协议当前未携带该请求字段，T2 暂不可比）。Release 命名：tag binary-maat-<sha7>-linux-x64、asset maat-<sha7>-linux-x64（原始可执行文件，非 zip）。当前登记的是 batch04 发布件 binary-maat-497f09f-linux-x64（sha256 f53bf383…，源码提交 497f09fb11f9）；official native-suite 实测 verdictEligible=true（basis negotiated-compared-subset），candidate-adapter-smoke 预期绿。"
     }
   }
 }

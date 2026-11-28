@@ -194,6 +194,7 @@ bun src/run.ts --baseline 7.1.0-beta-official --corpus "$TS71_CASES" \
 - 实现按 registry 的获取方式安装：`localEnv` 优先（本地调试），其次 npm 预编译（如 `tsrs`、`ts-rust`），最后 cargo 构建（`tsc-rs`、`tsz` 等无 npm 包的实现）；`scripts/install-impl.ts` 打印二进制路径；
 - **cargo 路径（CI）**：workflow 按 `acquisition.cargo.git` 是否存在按需安装 Rust 1.99.1，并按登记的 git pin **浅拉取**源码到 `.tools/src/<impl>-<sha7>`，用外部 `CARGO_TARGET_DIR=.tools/target/<impl>` 构建，不写入仓库检出。`tsz` 额外通过 `cargo.env` 强制 `CI=1`（其仓库默认把 target 写进检出并改 `.git/config`）。cargo registry/git 与 `.tools/target` 走 actions/cache，job 超时 20 分钟、获取/构建步骤 15 分钟；
 - 新增实现时：在 `config/implementations.json` 登记 `cargo.git.url/ref`（本地开发仍可直接用 `reference/<repo>` 检出）、构建命令、产物相对 `target/` 的路径与必要的 `env`；无需改 workflow 或 adapter；
+- 批量协议实现（例如 maat）用 `adapter: "checker-batch"` 登记；workflow 安装后通过 `CHECKER_BATCH_BIN` 接线并以 `--adapter checker-batch` 运行。`release` 获取支持默认 `format: "zip"` 与 `format: "binary"`（原始可执行文件，非 zip）；`release.repo` 可以指向本仓，资产由调用方发布到本仓 Release；
 - 自动带 registry 里的固定 CLI 参数（如 `tsrs` 的 `--singleThreaded`），用 `tsc-cli` 适配器驱动；
 - 官方结果对照在已入库 `config/ratchet/<impl>-7.1.0-beta-official.tsv` 且 `limit=0` 时
   使用 `--ratchet` + `--gate`；没有记录或限制样本时进入评估报告模式，不写回 tracked 清单；

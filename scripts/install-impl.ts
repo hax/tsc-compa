@@ -34,9 +34,15 @@ interface ReleaseAcquisition {
   repo: string;
   version: string;
   tag: string;
+  /**
+   * 资产形态：`zip`（缺省，按 zip 解压后找 bin）或 `binary`（原始可执行文件，
+   * 直接下载并用 bin 作为本地文件名）。`binary` 用于本身就是单文件可执行体的
+   * Release 资产（例如 maat）。
+   */
+  format?: "zip" | "binary";
   /** 可用 {platform} 占位；默认按 install.sh 的目标名映射。 */
   url: string;
-  /** release zip 内的可执行文件路径，可用 {platform} 占位。 */
+  /** 可执行文件路径（zip 内路径或 binary 的本地文件名），可用 {platform} 占位。 */
   bin: string;
   /** 解压后顶层目录未必叫 bun-{platform} 时的候选。 */
   fallbackBin?: string;
@@ -129,14 +135,21 @@ function ensureReleaseBinary(name: string, release: ReleaseAcquisition, destAbs:
   if (fallback !== undefined && existsSync(fallback)) return fallback;
 
   mkdirSync(installDir, { recursive: true });
-  const archive = join(installDir, `bun-${platform}.zip`);
   const url = release.url.replaceAll("{platform}", platform);
+  if ((release.format ?? "zip") === "binary") {
+    console.error(`下载 ${name} ${release.tag}（${url}）`);
+    run("curl", ["--fail", "--location", "--silent", "--show-error", "--output", binPath, url], installDir);
+    run("chmod", ["755", binPath], installDir);
+    if (!existsSync(binPath)) die(`release 下载后找不到可执行文件：${binPath}`);
+    return binPath;
+  }
+  const archive = join(installDir, `bun-${platform}.zip`);
   console.error(`下载 ${name} ${release.tag}（${url}）`);
   run("curl", ["--fail", "--location", "--silent", "--show-error", "--output", archive, url], installDir);
   run("unzip", ["-o", "-q", archive, "-d", installDir], installDir);
   if (existsSync(binPath)) return binPath;
   if (fallback !== undefined && existsSync(fallback)) return fallback;
-  die(`Bun release 解压后找不到可执行文件：${binPath}`);
+  die(`release 解压后找不到可执行文件：${binPath}`);
 }
 
 function usage(): never {

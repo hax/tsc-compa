@@ -26,7 +26,7 @@ on:
         options: ["7.1.0-beta", "6.0.3", "5.9.3"]
         default: "7.1.0-beta"
       mode:
-        description: "fixed（默认）或 official；checker-batch 均不可作兼容性结论"
+        description: "fixed（默认）或 official；实现声明 supportsOptions=true 时 official 才可能 verdictEligible"
         type: choice
         options: ["fixed", "official"]
         default: "fixed"
